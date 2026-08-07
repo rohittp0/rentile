@@ -6,8 +6,6 @@ This guide integrates the locally published development artifact into:
 /Users/rohittp/Data/Lascade/travel-animator-android
 ```
 
-It does not authorize changing the remote/local basemap rollout policy. Start with dependency resolution and a contained smoke path; keep the existing rendered-tile path available until Rentile passes the application's visual and device gates.
-
 ## Current local artifact
 
 The development coordinate is:
@@ -16,12 +14,10 @@ The development coordinate is:
 com.rohittp.rentile:kmp:0.1.0-SNAPSHOT
 ```
 
-Publish all KMP variants to the current user's Maven Local repository from the Rentile checkout:
+Only for refrence ( most likely won't need it ):
 
 ```bash
-cd /Users/rohittp/Data/Other/rentile
-./gradlew :kmp:testAndroidHostTest :kmp:checkKotlinAbi
-./gradlew :kmp:publishToMavenLocal
+/Users/rohittp/Data/Other/rentile
 ```
 
 The root KMP metadata and its target artifacts are written below:
@@ -325,7 +321,7 @@ Then verify:
 9. No credential or session value appears in logs, cache paths, exceptions, or content keys.
 10. The existing remote path still works after a local-render failure.
 
-The currently published snapshot predates correction of the visually reported dark Terrain-style zoom-0 output. It is suitable for dependency and adapter integration work, but not for visual acceptance. Republish `0.1.0-SNAPSHOT` after that fix and rerun with `--refresh-dependencies` before comparing images.
+The verified Maven Local snapshot includes the correction for the previously dark Terrain-style zoom-0 output. After any later Rentile change, republish `0.1.0-SNAPSHOT` and rerun the consumer with `--refresh-dependencies` before comparing images.
 
 ## 11. Commit boundary
 

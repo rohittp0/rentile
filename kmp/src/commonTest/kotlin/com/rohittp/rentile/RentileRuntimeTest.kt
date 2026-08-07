@@ -12,8 +12,10 @@ import com.rohittp.rentile.internal.renderSyntheticPng
 import com.rohittp.rentile.internal.mvt.Tile
 import com.rohittp.rentile.internal.style.CompiledPreparedStyle
 import com.rohittp.rentile.internal.style.RasterDrawLayer
+import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.Color
 import org.jetbrains.skia.EncodedImageFormat
+import org.jetbrains.skia.Image
 import org.jetbrains.skia.Paint
 import org.jetbrains.skia.Rect
 import org.jetbrains.skia.Surface
@@ -715,6 +717,32 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun terrainZoomZeroRasterPaintPreservesIllumination() = runTest {
+        val sourcePng = renderSyntheticPng(256)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { TransportResponse(200, sourcePng) },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"imagery":{"type":"raster","tiles":["https://tiles.example.test/{z}/{x}/{y}.png"],"tileSize":256}},"layers":[{"id":"imagery","type":"raster","source":"imagery","paint":{"raster-contrast":["interpolate",["linear"],["zoom"],0,0.1,6,0],"raster-saturation":["interpolate",["linear"],["zoom"],0,0.15,6,0],"raster-brightness-min":["interpolate",["linear"],["zoom"],0,0.05,6,0]}}]}""",
+                ),
+            )
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+
+            assertColorClose(
+                expected = Color.makeARGB(255, 17, 84, 64),
+                actual = output.pngBytes.centerPixelColor(),
+                tolerance = 1,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun tileJsonMaximumZoomCapsAnOverstatedRasterSourceMaximum() = runTest {
         val sourcePng = renderSyntheticPng(256)
         val requested = mutableListOf<Pair<ResourceClass, String>>()
@@ -1002,6 +1030,32 @@ private fun ByteArray.startsWithPngSignature(): Boolean =
 private fun ByteArray.pngWidth(): Int = bigEndianInt(16)
 
 private fun ByteArray.pngHeight(): Int = bigEndianInt(20)
+
+private fun ByteArray.centerPixelColor(): Int {
+    val image = Image.makeFromEncoded(this)
+    try {
+        val bitmap = Bitmap()
+        try {
+            check(bitmap.allocN32Pixels(image.width, image.height, false))
+            check(image.readPixels(bitmap))
+            return bitmap.getColor(bitmap.width / 2, bitmap.height / 2)
+        } finally {
+            bitmap.close()
+        }
+    } finally {
+        image.close()
+    }
+}
+
+private fun assertColorClose(expected: Int, actual: Int, tolerance: Int) {
+    fun channel(color: Int, shift: Int): Int = color ushr shift and 0xff
+    listOf(24, 16, 8, 0).forEach { shift ->
+        assertTrue(
+            kotlin.math.abs(channel(expected, shift) - channel(actual, shift)) <= tolerance,
+            "Expected color 0x${expected.toUInt().toString(16)}, got 0x${actual.toUInt().toString(16)}",
+        )
+    }
+}
 
 private fun ByteArray.bigEndianInt(offset: Int): Int =
     ((this[offset].toInt() and 0xff) shl 24) or

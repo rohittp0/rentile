@@ -1782,8 +1782,8 @@ private data class EvaluatedRasterPaint(
             return null
         }
         var matrix = identityColorMatrix()
-        if (saturation != 0.0) matrix = composeColorMatrices(saturationColorMatrix(saturation), matrix)
         if (hueRotate % 360.0 != 0.0) matrix = composeColorMatrices(hueColorMatrix(hueRotate), matrix)
+        if (saturation != 0.0) matrix = composeColorMatrices(saturationColorMatrix(saturation), matrix)
         if (contrast != 0.0) matrix = composeColorMatrices(contrastColorMatrix(contrast), matrix)
         if (brightnessMinimum != 0.0 || brightnessMaximum != 1.0) {
             matrix = composeColorMatrices(brightnessColorMatrix(brightnessMinimum, brightnessMaximum), matrix)
@@ -1801,7 +1801,7 @@ private fun identityColorMatrix(): FloatArray = floatArrayOf(
 
 private fun brightnessColorMatrix(minimum: Double, maximum: Double): FloatArray {
     val scale = (maximum - minimum).toFloat()
-    val offset = (minimum * 255.0).toFloat()
+    val offset = minimum.toFloat()
     return floatArrayOf(
         scale, 0f, 0f, 0f, offset,
         0f, scale, 0f, 0f, offset,
@@ -1812,7 +1812,7 @@ private fun brightnessColorMatrix(minimum: Double, maximum: Double): FloatArray 
 
 private fun contrastColorMatrix(contrast: Double): FloatArray {
     val factor = if (contrast > 0.0) 1.0 / (1.0 - contrast.coerceAtMost(0.999)) else 1.0 + contrast
-    val offset = (0.5 * (1.0 - factor) * 255.0).toFloat()
+    val offset = (0.5 * (1.0 - factor)).toFloat()
     val scale = factor.toFloat()
     return floatArrayOf(
         scale, 0f, 0f, 0f, offset,
@@ -1823,16 +1823,17 @@ private fun contrastColorMatrix(contrast: Double): FloatArray {
 }
 
 private fun saturationColorMatrix(saturation: Double): FloatArray {
-    val factor = if (saturation > 0.0) 1.0 / (1.001 - saturation) else 1.0 + saturation
-    val inverse = 1.0 - factor
-    val red = (0.213 * inverse).toFloat()
-    val green = (0.715 * inverse).toFloat()
-    val blue = (0.072 * inverse).toFloat()
-    val scale = factor.toFloat()
+    val adjustment = if (saturation > 0.0) {
+        1.0 - 1.0 / (1.001 - saturation)
+    } else {
+        -saturation
+    }
+    val average = (adjustment / 3.0).toFloat()
+    val scale = (1.0 - adjustment).toFloat()
     return floatArrayOf(
-        red + scale, green, blue, 0f, 0f,
-        red, green + scale, blue, 0f, 0f,
-        red, green, blue + scale, 0f, 0f,
+        average + scale, average, average, 0f, 0f,
+        average, average + scale, average, 0f, 0f,
+        average, average, average + scale, 0f, 0f,
         0f, 0f, 0f, 1f, 0f,
     )
 }
@@ -1841,25 +1842,13 @@ private fun hueColorMatrix(degrees: Double): FloatArray {
     val radians = degrees * PI / 180.0
     val cosine = cos(radians)
     val sine = sin(radians)
-    val red = 0.213
-    val green = 0.715
-    val blue = 0.072
+    val first = ((2.0 * cosine + 1.0) / 3.0).toFloat()
+    val second = ((-sqrt(3.0) * sine - cosine + 1.0) / 3.0).toFloat()
+    val third = ((sqrt(3.0) * sine - cosine + 1.0) / 3.0).toFloat()
     return floatArrayOf(
-        (red + cosine * (1 - red) + sine * -red).toFloat(),
-        (green + cosine * -green + sine * -green).toFloat(),
-        (blue + cosine * -blue + sine * (1 - blue)).toFloat(),
-        0f,
-        0f,
-        (red + cosine * -red + sine * 0.143).toFloat(),
-        (green + cosine * (1 - green) + sine * 0.140).toFloat(),
-        (blue + cosine * -blue + sine * -0.283).toFloat(),
-        0f,
-        0f,
-        (red + cosine * -red + sine * -(1 - red)).toFloat(),
-        (green + cosine * -green + sine * green).toFloat(),
-        (blue + cosine * (1 - blue) + sine * blue).toFloat(),
-        0f,
-        0f,
+        first, second, third, 0f, 0f,
+        third, first, second, 0f, 0f,
+        second, third, first, 0f, 0f,
         0f,
         0f,
         0f,
