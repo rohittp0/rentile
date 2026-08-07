@@ -1,0 +1,7 @@
+# Require host-provided resource transport
+
+Rentile will require a host-provided resource transport through project-owned request and response types instead of publishing Ktor, OkHttp, Darwin, CIO, or Curl transitively. Each transport call performs one exchange with automatic redirects disabled and returns a complete `ByteArray` bounded by the per-request `maxResponseBytes`; a host may stream internally, but the returned bytes count against Rentile's scheduler memory budget. Rentile continues to own resource planning, canonicalization, redirects, provider/session decoration, cache identity, security policy, limits, metrics, and diagnostics, while each consumer adapts its existing HTTP stack without leaking transport-library types into Rentile's public API.
+
+`TransportResponse` exposes typed allowlisted metadata rather than an unrestricted response-header map: status, content type, cache validators and freshness, `Vary`, retry delay, redirect location, and wire-byte count. Cookies, authentication headers, unknown headers, and other unrestricted provider metadata never cross the transport boundary into Rentile.
+
+The transport returns the decompressed representation body and enforces `maxResponseBytes` against that decoded size, while separately reporting compressed wire bytes when available. Rentile therefore does not implement HTTP content decoding, and compressed responses cannot bypass resource memory limits.

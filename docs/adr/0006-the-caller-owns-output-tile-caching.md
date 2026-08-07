@@ -1,0 +1,3 @@
+# The caller owns output-tile caching
+
+Rentile will not own a persistent or cross-call in-memory output-PNG cache and will not accept a `RenderedTileStore`; it returns encoded PNG bytes with a stable content key, and the caller decides whether and where to retain them. Encoded output and metatile buffers live only while active callers or active single-flight work need them. Rentile may still cache raw resources, compiled styles, and decoded source data internally, while the guarantee that a warm output hit performs no network or rendering work belongs to the caller integration rather than the renderer dependency.

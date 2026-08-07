@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rentile — Headless KMP Basemap Rasterizer</title>
+  <meta name="description" content="A headless Kotlin Multiplatform dependency that turns map styles and XYZ coordinates into deterministic PNG basemap tiles." />
+  <link rel="canonical" href="https://rohittp.com/rentile/" />
+  <link rel="stylesheet" href="style.css" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Rentile" />
+  <meta property="og:title" content="Rentile — Headless KMP Basemap Rasterizer" />
+  <meta property="og:description" content="Map styles and XYZ coordinates in. Deterministic PNG tiles out. No UI or platform render loop." />
+  <meta property="og:url" content="https://rohittp.com/rentile/" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Rentile — Headless KMP Basemap Rasterizer" />
+  <meta name="twitter:description" content="Map styles and XYZ coordinates in. Deterministic PNG tiles out." />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareSourceCode",
+    "name": "Rentile",
+    "description": "A headless Kotlin Multiplatform basemap tile rasterizer.",
+    "codeRepository": "https://github.com/rohittp0/rentile",
+    "url": "https://rohittp.com/rentile/",
+    "programmingLanguage": "Kotlin",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "author": {
+      "@type": "Person",
+      "name": "Rohit T P",
+      "url": "https://rohittp.com"
+    }
+  }
+  </script>
+</head>
+<body>
+  <nav class="site-nav" aria-label="Primary navigation">
+    <div class="nav-inner">
+      <a class="nav-brand" href="index.html">Rentile</a>
+      <div class="nav-links">
+        <a href="kmp.html">KMP reference</a>
+        <a href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <section class="hero shell">
+      <div class="hero-copy">
+        <p class="eyebrow">Kotlin Multiplatform · CPU rasterization</p>
+        <h1>Map styles in.<br /><em>PNG tiles out.</em></h1>
+        <p class="hero-lead">
+          Rentile is a headless basemap renderer for background work. Give it a supported
+          style and XYZ coordinates; receive deterministic PNG bytes without a view,
+          display server, graphics context, or SDK-owned render loop.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="kmp.html">Read the KMP contract</a>
+          <a class="button secondary" href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">View source</a>
+        </div>
+      </div>
+
+      <div class="pipeline-card" aria-label="Rentile rendering pipeline">
+        <div class="pipeline-grid" aria-hidden="true"></div>
+        <div class="pipeline-content">
+          <span class="pipeline-label">RENDER PIPELINE</span>
+          <ol>
+            <li><span>01</span> Prepare style</li>
+            <li><span>02</span> Freeze resources</li>
+            <li><span>03</span> Rasterize locally</li>
+            <li><span>04</span> Encode PNG</li>
+          </ol>
+          <div class="tile-strip" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><i></i><i></i>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="shell platform-row" aria-label="Supported platforms">
+        <span>Android arm64</span>
+        <span>Android x86_64</span>
+        <span>iOS arm64</span>
+        <span>iOS Simulator arm64</span>
+        <span>Linux x64</span>
+        <span>Linux arm64</span>
+      </div>
+    </section>
+
+    <section class="section shell" id="install">
+      <div class="section-heading">
+        <p class="eyebrow">One dependency</p>
+        <h2>A platform-neutral boundary</h2>
+        <p>Consumers depend on one coordinate from common code. Platform-specific artifacts are selected by Gradle metadata.</p>
+      </div>
+
+      <div class="install-grid">
+        <div class="code-card">
+          <div class="code-head">
+            <span>build.gradle.kts</span>
+            <span class="status-pill">development</span>
+          </div>
+          <pre><code><span class="kw">kotlin</span> {
+    sourceSets {
+        commonMain.dependencies {
+            implementation(
+                <span class="str">"com.rohittp.rentile:kmp:0.1.0-SNAPSHOT"</span>
+            )
+        }
+    }
+}</code></pre>
+        </div>
+
+        <aside class="release-note">
+          <p class="note-kicker">Release policy</p>
+          <h3>Local first. Central second.</h3>
+          <p>
+            Snapshot builds stay in a local Maven repository. The first public release will
+            be <code>0.1.0</code> after clean Android, iOS, and Linux consumers pass.
+          </p>
+          <a href="https://central.sonatype.com/search?q=com.rohittp.rentile" target="_blank" rel="noopener noreferrer">Maven Central namespace <span aria-hidden="true">↗</span></a>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section shell">
+      <div class="section-heading compact">
+        <p class="eyebrow">Rendering profile</p>
+        <h2>Focused on basemaps, not map UI</h2>
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature-card accent-blue">
+          <span class="feature-index">01</span>
+          <h3>Strict style preparation</h3>
+          <p>Reachable expressions, filters, sources, sprites, and compatibility transformations are validated before tile drawing starts.</p>
+        </article>
+        <article class="feature-card accent-green">
+          <span class="feature-index">02</span>
+          <h3>Vector and raster sources</h3>
+          <p>Vector, raster, DEM, sprite, and selected GeoJSON resources share one deterministic resource-planning boundary.</p>
+        </article>
+        <article class="feature-card accent-orange">
+          <span class="feature-index">03</span>
+          <h3>Always encoded PNG</h3>
+          <p>PNG, JPEG, and WebP raster inputs are accepted where supported. Every successful public tile result is PNG.</p>
+        </article>
+        <article class="feature-card accent-purple">
+          <span class="feature-index">04</span>
+          <h3>Caller-owned orchestration</h3>
+          <p>The caller owns priority, batching, output caching, retry, and fallback. Rentile owns cancellable bounded work and diagnostics.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section shell contract-section">
+      <div class="contract-copy">
+        <p class="eyebrow">Public contract</p>
+        <h2>Prepared once.<br />Rendered without network.</h2>
+        <p>
+          Preparation freezes every byte needed by a caller-defined tile set. Drawing then
+          operates against immutable resources and exposes content keys before rasterization,
+          so the caller can consult its own output cache first.
+        </p>
+        <a class="text-link" href="kmp.html#lifecycle">Lifecycle and cancellation details <span aria-hidden="true">→</span></a>
+      </div>
+
+      <div class="code-card code-card-large">
+        <div class="code-head"><span>Common Kotlin</span><span class="status-pill">contract</span></div>
+        <pre><code><span class="kw">val</span> rasterizer = createBasemapRasterizer(config)
+
+rasterizer.use { renderer ->
+    <span class="kw">val</span> style = renderer.prepare(styleInput)
+    renderer.prepareBatch(style, tiles).use { batch ->
+        <span class="comment">// Network and store access are complete.</span>
+        <span class="kw">val</span> keys = batch.contentKeys
+        <span class="kw">val</span> result = renderer.render(batch)
+        consume(result.tiles) <span class="comment">// PNG ByteArrays</span>
+    }
+}</code></pre>
+      </div>
+    </section>
+
+    <section class="section shell boundaries">
+      <div class="section-heading compact">
+        <p class="eyebrow">Deliberate boundaries</p>
+        <h2>Clear ownership keeps the module deep</h2>
+      </div>
+      <div class="ownership-grid">
+        <div>
+          <h3>Rentile owns</h3>
+          <ul class="check-list">
+            <li>Style compilation and diagnostics</li>
+            <li>Resource closure and raw-resource caching</li>
+            <li>Bounded scheduling and single-flight work</li>
+            <li>CPU drawing and PNG encoding</li>
+            <li>Stable content identities</li>
+          </ul>
+        </div>
+        <div>
+          <h3>The caller owns</h3>
+          <ul class="check-list muted">
+            <li>Batch construction and priority</li>
+            <li>Output PNG caching</li>
+            <li>Retry, fallback, and recovery</li>
+            <li>API keys and transport implementation</li>
+            <li>Plane, globe, overlays, and presentation</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta shell">
+      <div>
+        <p class="eyebrow">Artifact reference</p>
+        <h2>Explore the versioned rendering contract</h2>
+      </div>
+      <a class="button primary" href="kmp.html">Open documentation</a>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-inner">
+      <div>
+        <a class="footer-brand" href="index.html">Rentile</a>
+        <p>Headless KMP basemap tile rasterization.</p>
+      </div>
+      <div class="footer-links">
+        <a href="kmp.html">Documentation</a>
+        <a href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">Source</a>
+        <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener noreferrer">Apache-2.0</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

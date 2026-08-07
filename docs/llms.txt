@@ -1,0 +1,21 @@
+# Rentile
+
+Rentile is a headless Kotlin Multiplatform dependency that prepares supported map styles and renders north-up XYZ basemap tiles to encoded PNG bytes.
+
+## Documentation
+
+- Home: https://rohittp.com/rentile/
+- KMP reference: https://rohittp.com/rentile/kmp.html
+- Source: https://github.com/rohittp0/rentile
+- Architecture decisions: https://github.com/rohittp0/rentile/tree/main/docs/adr
+
+## Public artifact
+
+- Coordinate: com.rohittp.rentile:kmp
+- Development version: 0.1.0-SNAPSHOT
+- First Maven Central version: 0.1.0
+- License: Apache-2.0
+
+## Scope
+
+Rentile renders a pinned, versioned basemap profile using local CPU rasterization. It supports approved vector, raster, DEM, sprite, and GeoJSON inputs and always returns PNG tiles. It does not provide a UI map view, text rendering, a platform render loop, or caller policy for batching, priority, retry, fallback, or output caching.

@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KMP Reference — Rentile</title>
+  <meta name="description" content="Public contract, supported profile, lifecycle, caching, and error semantics for com.rohittp.rentile:kmp." />
+  <link rel="canonical" href="https://rohittp.com/rentile/kmp.html" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <nav class="site-nav" aria-label="Primary navigation">
+    <div class="nav-inner">
+      <a class="nav-brand" href="index.html">Rentile</a>
+      <div class="nav-links">
+        <a class="active" href="kmp.html" aria-current="page">KMP reference</a>
+        <a href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="docs-shell">
+    <aside class="docs-sidebar" aria-label="On this page">
+      <p class="sidebar-title">KMP reference</p>
+      <a href="#overview">Overview</a>
+      <a href="#install">Installation</a>
+      <a href="#platforms">Platforms</a>
+      <a href="#profile">Compatibility profile</a>
+      <a href="#api">API shape</a>
+      <a href="#resources">Resources and credentials</a>
+      <a href="#cache">Caching</a>
+      <a href="#errors">Errors</a>
+      <a href="#lifecycle">Lifecycle and cancellation</a>
+      <a href="#status">Project status</a>
+    </aside>
+
+    <article class="docs-content">
+      <header class="docs-header" id="overview">
+        <p class="eyebrow">com.rohittp.rentile:kmp</p>
+        <h1>KMP reference</h1>
+        <p class="docs-lead">
+          The platform-neutral contract for preparing supported map styles and rendering
+          north-up XYZ basemap tiles into encoded PNG bytes.
+        </p>
+        <div class="tag-row">
+          <span class="tag">0.1.0-SNAPSHOT</span>
+          <span class="tag">Apache-2.0</span>
+          <span class="tag">Versioned profile</span>
+        </div>
+        <div class="draft-banner">
+          <strong>Preimplementation contract.</strong>
+          API names shown here reflect the approved design and may be refined before the first local artifact. Behavioral guarantees are normative once implemented.
+        </div>
+      </header>
+
+      <section class="doc-section" id="install">
+        <p class="doc-label">Installation</p>
+        <h2>Add the common dependency</h2>
+        <p>During development, resolve the snapshot from the local Maven repository used by the clean-consumer tests.</p>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>settings.gradle.kts</span></div>
+          <pre><code>dependencyResolutionManagement {
+    repositories {
+        mavenLocal()
+        mavenCentral()
+        google()
+    }
+}</code></pre>
+        </div>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>build.gradle.kts</span></div>
+          <pre><code>kotlin {
+    sourceSets {
+        commonMain.dependencies {
+            implementation(<span class="str">"com.rohittp.rentile:kmp:0.1.0-SNAPSHOT"</span>)
+        }
+    }
+}</code></pre>
+        </div>
+        <div class="callout">
+          The first Maven Central version is <code>0.1.0</code>. Snapshot versions are never uploaded to Central.
+        </div>
+      </section>
+
+      <section class="doc-section" id="platforms">
+        <p class="doc-label">Targets</p>
+        <h2>Supported platforms</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Platform</th><th>KMP target</th><th>Execution contract</th></tr></thead>
+            <tbody>
+              <tr><td>Android arm64</td><td><code>androidTarget</code></td><td>Background thread; no Looper or Android UI</td></tr>
+              <tr><td>Android x86_64</td><td><code>androidTarget</code></td><td>Background thread; emulator proof</td></tr>
+              <tr><td>iPhone/iPad</td><td><code>iosArm64</code></td><td>Background queue; no UIKit view</td></tr>
+              <tr><td>Apple Silicon Simulator</td><td><code>iosSimulatorArm64</code></td><td>Background queue</td></tr>
+              <tr><td>Linux x64</td><td><code>linuxX64</code></td><td>Headless native process</td></tr>
+              <tr><td>Linux arm64</td><td><code>linuxArm64</code></td><td>Headless native process</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="doc-section" id="profile">
+        <p class="doc-label">Compatibility</p>
+        <h2>A pinned compatibility profile</h2>
+        <p>
+          Rentile intentionally implements a pinned basemap profile rather than arbitrary
+          future MapLibre Style Specification behavior. Preparation fails when a retained
+          layer reaches unsupported syntax.
+        </p>
+        <div class="two-column-list">
+          <div>
+            <h3>Included</h3>
+            <ul>
+              <li>Background, fill, line, raster, and hillshade</li>
+              <li>Sprite-backed fill, line, and background patterns</li>
+              <li>Approved independent RGBA and SDF icons</li>
+              <li>Flattened top-down building footprints</li>
+              <li>Vector, raster, DEM, sprite, TileJSON, and selected GeoJSON resources</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Excluded</h3>
+            <ul>
+              <li>Text rendering, glyphs, fonts, shaping, and bidi</li>
+              <li>Text-coupled icons</li>
+              <li>Fog, sky, snow, root terrain, and globe presentation</li>
+              <li>Perspective extrusion and UI camera state</li>
+              <li>Feature state, fades, and wall-clock animation</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="api">
+        <p class="doc-label">API</p>
+        <h2>Prepare, inspect, render</h2>
+        <p>
+          The split API exposes deterministic output content keys after all resource access
+          completes but before drawing. A convenience method may compose the stages without
+          changing their semantics.
+        </p>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>Contract sketch</span></div>
+          <pre><code><span class="kw">interface</span> BasemapRasterizer : AutoCloseable {
+    <span class="kw">suspend fun</span> prepare(
+        style: StyleInput,
+        policy: CompatibilityPolicy = CompatibilityPolicy.Default,
+    ): PreparedStyle
+
+    <span class="kw">suspend fun</span> prepareBatch(
+        style: PreparedStyle,
+        tiles: List&lt;TileId&gt;,
+        options: RenderOptions = RenderOptions(),
+        resourceAccess: ResourceAccess = ResourceAccess.NORMAL,
+    ): PreparedBatch
+
+    <span class="kw">suspend fun</span> render(
+        batch: PreparedBatch,
+        tiles: List&lt;TileId&gt; = batch.tiles,
+    ): RenderBatch
+
+    <span class="kw">suspend fun</span> awaitClosed()
+}</code></pre>
+        </div>
+        <h3>Output boundary</h3>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>Rendered tile</span></div>
+          <pre><code><span class="kw">data class</span> RenderedTile(
+    <span class="kw">val</span> id: TileId,
+    <span class="kw">val</span> pngBytes: ByteArray,
+    <span class="kw">val</span> contentKey: String,
+    <span class="kw">val</span> diagnostics: List&lt;RenderDiagnostic&gt;,
+)</code></pre>
+        </div>
+        <p>Every successful tile is canonical RGBA8 sRGB PNG. PNG byte streams are not promised to match across platforms; decoded pixels follow the versioned tolerance contract.</p>
+      </section>
+
+      <section class="doc-section" id="resources">
+        <p class="doc-label">I/O boundary</p>
+        <h2>Host-provided transport</h2>
+        <p>
+          Rentile does not export Ktor, OkHttp, Darwin, CIO, or Curl through its public
+          surface. The host implements a bounded request/response exchange using Rentile's
+          project-owned models. Rentile owns URL canonicalization, redirect policy, resource
+          planning, session decoration, cache identity, and redacted metrics.
+        </p>
+        <h3>Credentials</h3>
+        <p>
+          Provider credentials may already be present in the style JSON. Rentile detects
+          those first. The caller supplies credentials separately only when a required
+          resource lacks them. Keys and session identifiers never enter logs, diagnostics,
+          file paths, or content identities.
+        </p>
+        <div class="callout warning">
+          Credentials are attached only to exact configured HTTPS origins and are removed on origin-changing redirects.
+        </div>
+      </section>
+
+      <section class="doc-section" id="cache">
+        <p class="doc-label">Caching</p>
+        <h2>Raw resources in Rentile, output tiles in the caller</h2>
+        <div class="ownership-grid docs-ownership">
+          <div>
+            <h3>Rentile</h3>
+            <ul class="check-list">
+              <li>Persistent encoded raw resources</li>
+              <li>Bounded in-memory compiled styles</li>
+              <li>Bounded in-memory decoded sources</li>
+              <li>In-process single-flight work</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Caller</h3>
+            <ul class="check-list muted">
+              <li>Rendered PNG storage</li>
+              <li>Output eviction policy</li>
+              <li>Cross-process output coordination</li>
+              <li>Fallback rendered-tile namespaces</li>
+            </ul>
+          </div>
+        </div>
+        <p>A failed tile never rolls back successful raw-resource cache entries acquired for other work. Partial or corrupt entries are never committed.</p>
+      </section>
+
+      <section class="doc-section" id="errors">
+        <p class="doc-label">Failures</p>
+        <h2>Typed errors, caller-owned recovery</h2>
+        <p>
+          Rentile reports full, redacted diagnostics through custom exception families. It
+          does not retry, refetch, substitute, fall back, or return partial tile batches.
+          The caller decides whether to retry, cancel, or choose another renderer.
+        </p>
+        <div class="exception-grid">
+          <code>StylePreparationException</code>
+          <code>ResourceAcquisitionException</code>
+          <code>ResourceDecodeException</code>
+          <code>RasterizationException</code>
+          <code>PngEncodingException</code>
+          <code>ResourceStoreException</code>
+          <code>SafetyLimitException</code>
+          <code>PreparedBatchClosedException</code>
+        </div>
+        <p><code>CancellationException</code> is never wrapped. The first terminal failure cancels only work owned by that call; shared work continues while another waiter remains.</p>
+      </section>
+
+      <section class="doc-section" id="lifecycle">
+        <p class="doc-label">Lifecycle</p>
+        <h2>Common Kotlin closeables</h2>
+        <p>
+          <code>BasemapRasterizer</code> and <code>PreparedBatch</code> implement common
+          <code>AutoCloseable</code>. Closing is idempotent, non-blocking, and non-throwing.
+          It prevents new operations while active leases finish safely. Call
+          <code>awaitClosed()</code> when complete native cleanup must be observed.
+        </p>
+        <p>
+          Jobs are cancellable; the caller controls priority by deciding what to submit and
+          cancel. Rentile bounds concurrent exchanges, decoding, decoded-memory residency,
+          and metatile workers without exposing a priority queue.
+        </p>
+      </section>
+
+      <section class="doc-section" id="status">
+        <p class="doc-label">Status</p>
+        <h2>Contract frozen, implementation beginning</h2>
+        <p>
+          The initial compatibility profile and architecture decisions are documented. The first
+          public artifact is not yet available. Performance profiling is intentionally
+          deferred until representative standalone rendering slices exist, while correctness,
+          safety limits, determinism, and cancellation remain immediate gates.
+        </p>
+        <div class="doc-actions">
+          <a class="button primary" href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">Follow development</a>
+          <a class="button secondary" href="https://github.com/rohittp0/rentile/tree/main/docs/adr" target="_blank" rel="noopener noreferrer">Read ADRs</a>
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-inner">
+      <div><a class="footer-brand" href="index.html">Rentile</a><p>Headless KMP basemap tile rasterization.</p></div>
+      <div class="footer-links"><a href="index.html">Home</a><a href="https://github.com/rohittp0/rentile">Source</a></div>
+    </div>
+  </footer>
+</body>
+</html>
