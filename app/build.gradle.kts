@@ -3,13 +3,13 @@ plugins {
 }
 
 android {
-    namespace = "com.lascade.rentile"
+    namespace = "com.rohittp.rentile"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.lascade.rentile"
+        applicationId = "com.rohittp.rentile"
         minSdk = 30
         targetSdk = 37
         versionCode = 1

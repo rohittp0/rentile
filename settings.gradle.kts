@@ -23,5 +23,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "rentile"
-include(":app")
- 
+include(":kmp")
+project(":kmp").projectDir = file("app")
