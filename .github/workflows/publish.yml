@@ -62,8 +62,8 @@ jobs:
           cache: gradle
       - uses: gradle/actions/setup-gradle@v6
 
-      - name: Validate pinned credential-free manifest
-        run: python3 tools/check_compatibility_manifest.py compatibility/rentile-v1.json
+      - name: Validate credential-free coverage
+        run: python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
 
       - name: Test and publish to isolated local repository
         run: >-
@@ -90,6 +90,24 @@ jobs:
           compileKotlinIosSimulatorArm64
           compileKotlinLinuxX64
           compileKotlinLinuxArm64
+
+      - name: Run complete map catalog corpus gate
+        env:
+          RENTILE_COVERAGE_MANIFEST: ${{ github.workspace }}/compatibility/rentile-v1-coverage.json
+          RENTILE_CORPUS_REPORT_DIR: ${{ github.workspace }}/build/reports/rentile-corpus
+        run: >-
+          ./gradlew --no-configuration-cache
+          :kmp:testAndroidHostTest
+          --tests com.rohittp.rentile.MapCatalogCorpusSmokeTest
+
+      - name: Upload Corpus Report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rentile-corpus-${{ needs.detect-version.outputs.version }}
+          path: build/reports/rentile-corpus
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Publish coordinated KMP artifacts
         run: ./gradlew --no-configuration-cache :kmp:publishToMavenCentral

@@ -63,8 +63,8 @@
         <div class="draft-banner">
           <strong>Rentile is pre-release.</strong>
           The public Maven artifact is not available yet. These examples match the API on
-          <code>main</code>, where the lifecycle, constant-background rendering, and first
-          inline-raster slice are implemented. See <a href="#compatibility">current renderer coverage</a>
+          <code>main</code>, where the lifecycle, raster path, strict MVT decoding, vector
+          overzoom, and the first fill/line slice are implemented. See <a href="#compatibility">current renderer coverage</a>
           before evaluating a real style.
         </div>
       </header>
@@ -353,19 +353,28 @@ rasterizer.prepareBatch(style, requestedTiles).use { batch -&gt;
         <p class="doc-label">Renderer coverage</p>
         <h2>Check your style before committing</h2>
         <p>
-          Rentile follows a pinned <code>rentile-v1</code> basemap profile. It does not promise
-          support for every current or future MapLibre Style Specification feature. A retained
-          unsupported construct fails during style preparation instead of producing a quietly
-          incomplete map.
+          Rentile follows a versioned <code>rentile-v1</code> compatibility profile validated
+          against an owner-controlled rolling style corpus. It does not promise support for every
+          current or future MapLibre Style Specification feature. A retained unsupported construct
+          fails during style preparation instead of producing a quietly incomplete map.
         </p>
         <div class="two-column-list">
           <div>
             <h3>Implemented today</h3>
             <ul>
               <li>Style version 8 validation</li>
-              <li>Constant-color background layers</li>
-              <li>Inline XYZ and TMS raster sources</li>
-              <li>Default raster paint behavior and strict PNG pass-through</li>
+              <li>Strict modern expressions, legacy functions, and legacy/modern filters required by the profile</li>
+              <li>Zoom- and feature-evaluated backgrounds, fills, and lines</li>
+              <li>Inline and TileJSON XYZ/TMS raster sources</li>
+              <li>Raster paint controls and strict pixel-equivalent PNG pass-through</li>
+              <li>Strict MVT decoding with bounded geometry and tag validation</li>
+              <li>Inline and TileJSON vector sources with source bounds</li>
+              <li>Vector overzoom through z22 with output-zoom style evaluation</li>
+              <li>Profile fill/line paint, sprite patterns, dashes, gaps, offsets, blur, and translation</li>
+              <li>Remote GeoJSON LineString sources through the common line renderer</li>
+              <li>Raster DEM hillshade with bounded neighbor acquisition</li>
+              <li>Flattened top-down extrusion footprints</li>
+              <li>Independent RGBA/SDF point and repeated-line icons without glyph requests</li>
               <li>256 px and 512 px PNG outputs</li>
               <li>Inline, remote, and prefetched style inputs</li>
             </ul>
@@ -373,12 +382,10 @@ rasterizer.prepareBatch(style, requestedTiles).use { batch -&gt;
           <div>
             <h3>Not implemented yet</h3>
             <ul>
-              <li>Vector fills and lines</li>
-              <li>TileJSON and GeoJSON source planning</li>
-              <li>Hillshade, patterns, and independent icons</li>
-              <li>Non-default raster paint expressions</li>
               <li>Text, glyphs, shaping, and text-coupled icons</li>
-              <li>Globe, terrain, fog, sky, and interactive camera state</li>
+              <li>Perspective extrusion and root terrain presentation</li>
+              <li>Arbitrary future Style Specification behavior outside <code>rentile-v1</code></li>
+              <li>Globe, fog, sky, and interactive camera state</li>
             </ul>
           </div>
         </div>

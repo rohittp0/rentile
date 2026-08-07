@@ -9,13 +9,13 @@ permissions:
   contents: read
 
 jobs:
-  compatibility-manifest:
-    name: Compatibility manifest
+  coverage-manifest:
+    name: Coverage manifest
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Validate pinned credential-free manifest
-        run: python3 tools/check_compatibility_manifest.py compatibility/rentile-v1.json
+      - name: Validate credential-free coverage
+        run: python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
 
   android-linux:
     name: Android and Linux

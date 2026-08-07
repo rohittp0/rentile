@@ -37,7 +37,7 @@ dependencyResolutionManagement {
 ## Build and verify
 
 ```text
-python3 tools/check_compatibility_manifest.py compatibility/rentile-v1.json
+python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
 ./gradlew :kmp:checkKotlinAbi
 ./gradlew :kmp:testAndroidHostTest
 ./gradlew :kmp:compileKotlinIosArm64 :kmp:compileKotlinIosSimulatorArm64
@@ -47,6 +47,8 @@ python3 tools/check_compatibility_manifest.py compatibility/rentile-v1.json
 ```
 
 Architecture decisions and the evolving contract are in [`docs/`](docs/). Public documentation is prepared for `https://rohittp.com/rentile/`.
+
+The rolling corpus is discovered from the public paginated map catalog and checked against a credential-free Coverage Manifest. See [`compatibility/README.md`](compatibility/README.md) for local and workflow usage.
 
 ## Failure contract
 

@@ -1,0 +1,44 @@
+name: Map catalog corpus
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    name: Render rolling public map catalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Validate credential-free coverage
+        run: python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
+
+      - name: Render complete Coverage Manifest
+        env:
+          RENTILE_COVERAGE_MANIFEST: ${{ github.workspace }}/compatibility/rentile-v1-coverage.json
+          RENTILE_CORPUS_REPORT_DIR: ${{ github.workspace }}/build/reports/rentile-corpus
+        run: >-
+          ./gradlew --no-configuration-cache
+          :kmp:testAndroidHostTest
+          --tests com.rohittp.rentile.MapCatalogCorpusSmokeTest
+
+      - name: Upload Corpus Report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rentile-corpus-${{ github.run_id }}
+          path: build/reports/rentile-corpus
+          if-no-files-found: warn
+          retention-days: 14

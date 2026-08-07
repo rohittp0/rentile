@@ -36,6 +36,30 @@ _Avoid_: Request queue, mutable cache contents
 A pixel-equivalent output path in which an already valid PNG source tile is returned without decoding, drawing, or re-encoding because preparation and runtime validation prove that no style operation changes it.
 _Avoid_: Raster compatibility mode, unchecked byte forwarding
 
+**Vector Overzoom**:
+Rendering an output tile above a vector source's maximum data zoom by reusing the covering maximum-zoom source tile and transforming its geometry into the requested output-tile coordinate space.
+_Avoid_: Missing high-zoom data, vector upscaling
+
+**Profile-Complete Rendering**:
+Successful rendering of every current rolling-corpus style at every supported output zoom after applying the compatibility profile's deliberate transformations and exclusions.
+_Avoid_: Unmodified style parity, zoom-zero smoke success
+
+**Coverage Manifest**:
+The immutable set of style, zoom, coordinate, source, and capability cases that proves profile-complete rendering without pretending to enumerate every possible XYZ tile.
+_Avoid_: Sample gallery, exhaustive tile set
+
+**Public Map Catalog**:
+The public paginated endpoint that supplies the current complete set of map IDs, names, and style-document URLs to corpus gates.
+_Avoid_: Private Style Index, committed style fixture
+
+**Rolling Style Corpus**:
+The latest style documents resolved from the Public Map Catalog when a corpus gate runs; intentional upstream edits become the current corpus without a digest-approval step.
+_Avoid_: Pinned style snapshot, immutable style corpus
+
+**Corpus Report**:
+A credential-free artifact from one public-catalog corpus run containing rendered PNGs, mosaics, capability coverage, and redacted failures for automated and human inspection.
+_Avoid_: Public Map Catalog response, raw-resource archive
+
 ## Deferred work
 
 Performance profiling and numeric acceptance budgets are intentionally deferred while the standalone API and renderer are being established. Before a prerelease is approved for Travel Animator integration, profile representative cold, resource-warm, and caller-output-warm workloads; record latency, throughput, peak memory, request fan-out, and release artifact size; then ratify platform-specific acceptance budgets. See [Deferred work](docs/deferred-work.md).

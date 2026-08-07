@@ -11,6 +11,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.android.kotlin.multiplatform.library)
     alias(libs.plugins.maven.publish)
+    alias(libs.plugins.wire)
 }
 
 abstract class UnpackSkikoAndroidNatives : DefaultTask() {
@@ -116,6 +117,9 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.okio)
+            implementation("com.squareup.wire:wire-runtime:${libs.versions.wire.get()}") {
+                version { strictly(libs.versions.wire.get()) }
+            }
             implementation("org.jetbrains.skiko:skiko") {
                 version { strictly(libs.versions.skiko.get()) }
             }
@@ -131,6 +135,13 @@ kotlin {
             implementation("org.jetbrains.skiko:skiko-awt-runtime-$skikoHostOs-$skikoHostArch:${libs.versions.skiko.get()}")
         }
     }
+}
+
+wire {
+    sourcePath {
+        srcDir("src/commonMain/proto")
+    }
+    kotlin { }
 }
 
 extensions.configure<KotlinMultiplatformAndroidComponentsExtension> {
@@ -182,4 +193,15 @@ publishing {
             url = uri(rootProject.layout.buildDirectory.dir("local-maven"))
         }
     }
+}
+
+val corpusManifest = providers.environmentVariable("RENTILE_COVERAGE_MANIFEST")
+val corpusReportDirectory = providers.environmentVariable("RENTILE_CORPUS_REPORT_DIR")
+val corpusStyleId = providers.environmentVariable("RENTILE_CORPUS_STYLE_ID")
+
+tasks.matching { it.name == "testAndroidHostTest" }.configureEach {
+    inputs.property("rentileCorpusManifest", corpusManifest.orElse(""))
+    inputs.property("rentileCorpusReportDirectory", corpusReportDirectory.orElse(""))
+    inputs.property("rentileCorpusStyleId", corpusStyleId.orElse(""))
+    outputs.upToDateWhen { System.getenv("RENTILE_COVERAGE_MANIFEST").isNullOrBlank() }
 }

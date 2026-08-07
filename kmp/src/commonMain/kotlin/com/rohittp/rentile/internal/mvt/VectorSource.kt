@@ -1,12 +1,12 @@
-package com.rohittp.rentile.internal.raster
+package com.rohittp.rentile.internal.mvt
 
-import com.rohittp.rentile.RenderDiagnostic
 import com.rohittp.rentile.TileId
-import com.rohittp.rentile.internal.style.CompiledRasterSource
+import com.rohittp.rentile.internal.style.CompiledVectorSource
+import com.rohittp.rentile.internal.style.TileScheme
 import com.rohittp.rentile.internal.style.intersects
 
-internal data class RasterSample(
-    val source: CompiledRasterSource,
+internal data class VectorTileSample(
+    val source: CompiledVectorSource,
     val outputTile: TileId,
     val sourceZ: Int,
     val sourceX: Int,
@@ -17,18 +17,29 @@ internal data class RasterSample(
 ) {
     val identity: String
         get() = "${source.idDigest}:$sourceZ/$sourceX/$sourceY"
+
+    fun sourceCoordinateToOutputPixels(
+        coordinate: VectorCoordinate,
+        extent: Int,
+        outputSizePx: Int,
+    ): OutputPixelCoordinate {
+        require(extent > 0)
+        require(outputSizePx > 0)
+        val localX = coordinate.x.toDouble() * childScale - childX.toDouble() * extent
+        val localY = coordinate.y.toDouble() * childScale - childY.toDouble() * extent
+        return OutputPixelCoordinate(
+            x = localX * outputSizePx / extent,
+            y = localY * outputSizePx / extent,
+        )
+    }
 }
 
-internal data class RasterResource(
-    val sample: RasterSample,
-    val bytes: ByteArray,
-    val contentDigest: String,
-    val width: Int,
-    val height: Int,
-    val diagnostics: List<RenderDiagnostic>,
+internal data class OutputPixelCoordinate(
+    val x: Double,
+    val y: Double,
 )
 
-internal fun CompiledRasterSource.sampleFor(tile: TileId): RasterSample? {
+internal fun CompiledVectorSource.sampleFor(tile: TileId): VectorTileSample? {
     if (tile.z < minZoom) return null
     if (bounds?.intersects(tile) == false) return null
     val outputDimension = 1L shl tile.z
@@ -38,7 +49,7 @@ internal fun CompiledRasterSource.sampleFor(tile: TileId): RasterSample? {
     val childScale = 1 shl zoomDelta
     val sourceX = (canonicalOutputX / childScale).toInt()
     val sourceY = tile.y / childScale
-    return RasterSample(
+    return VectorTileSample(
         source = this,
         outputTile = tile,
         sourceZ = sourceZ,
@@ -50,29 +61,19 @@ internal fun CompiledRasterSource.sampleFor(tile: TileId): RasterSample? {
     )
 }
 
-internal fun RasterSample.tileUrl(): String {
+internal fun VectorTileSample.tileUrl(): String {
     val dimension = 1L shl sourceZ
     val templateIndex = ((sourceZ.toLong() * 31L + sourceX * 17L + sourceY).floorMod(source.tileTemplates.size.toLong())).toInt()
     val template = source.tileTemplates[templateIndex].resolve()
     val requestY = when (source.scheme) {
-        com.rohittp.rentile.internal.style.TileScheme.XYZ -> sourceY
-        com.rohittp.rentile.internal.style.TileScheme.TMS -> (dimension - 1L - sourceY).toInt()
+        TileScheme.XYZ -> sourceY
+        TileScheme.TMS -> (dimension - 1L - sourceY).toInt()
     }
     return template
         .replace("{z}", sourceZ.toString())
         .replace("{x}", sourceX.toString())
         .replace("{y}", requestY.toString())
         .replace("{-y}", (dimension - 1L - sourceY).toString())
-}
-
-internal fun RasterSample.neighbor(deltaX: Int, deltaY: Int): RasterSample? {
-    val dimension = 1L shl sourceZ
-    val neighborY = sourceY.toLong() + deltaY
-    if (neighborY !in 0 until dimension) return null
-    return copy(
-        sourceX = (sourceX.toLong() + deltaX).floorMod(dimension).toInt(),
-        sourceY = neighborY.toInt(),
-    )
 }
 
 private fun Long.floorMod(divisor: Long): Long {

@@ -43,9 +43,15 @@ public sealed interface StyleInput {
 /** Closed set of rendering profiles understood by this library version. */
 public class CompatibilityPolicy private constructor(
     public val id: String,
+    public val minimumOutputZoom: Int,
+    public val maximumOutputZoom: Int,
 ) {
     public companion object {
-        public val RentileV1: CompatibilityPolicy = CompatibilityPolicy("rentile-v1")
+        public val RentileV1: CompatibilityPolicy = CompatibilityPolicy(
+            id = "rentile-v1",
+            minimumOutputZoom = 0,
+            maximumOutputZoom = 22,
+        )
         public val Default: CompatibilityPolicy = RentileV1
     }
 
@@ -105,6 +111,12 @@ public data class ResourceLimits(
     public val maxGeoJsonBytes: Long = 64L * 1024L * 1024L,
     public val maxRasterDimensionPx: Int = 8192,
     public val maxDecodedRasterBytes: Long = 256L * 1024L * 1024L,
+    public val maxMvtLayers: Int = 512,
+    public val maxMvtFeatures: Int = 500_000,
+    public val maxMvtTags: Int = 4_000_000,
+    public val maxMvtCommands: Int = 8_000_000,
+    public val maxMvtCoordinates: Int = 8_000_000,
+    public val maxMvtExtent: Int = 65_536,
     public val maxRedirects: Int = 5,
 ) {
     init {
@@ -115,6 +127,12 @@ public data class ResourceLimits(
         require(maxGeoJsonBytes > 0)
         require(maxRasterDimensionPx > 0)
         require(maxDecodedRasterBytes > 0)
+        require(maxMvtLayers > 0)
+        require(maxMvtFeatures > 0)
+        require(maxMvtTags > 0)
+        require(maxMvtCommands > 0)
+        require(maxMvtCoordinates > 0)
+        require(maxMvtExtent > 0)
         require(maxRedirects >= 0)
     }
 }

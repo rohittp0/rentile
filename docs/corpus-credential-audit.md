@@ -15,8 +15,8 @@ The credential-safe scan of the 34 style snapshots available on 2026-08-07 inspe
 
 ## API consequence
 
-Rentile does not require a separate API-key argument for the pinned corpus. Preparation extracts credentials already present in `StyleInput` into redacted ephemeral state. An optional caller credential provider is needed only for a future style whose required origin lacks an embedded credential.
+Rentile does not require a separate API-key argument for the rolling corpus. Preparation extracts credentials already present in `StyleInput` into redacted ephemeral state. An optional caller credential provider is needed only for a future style whose required origin lacks an embedded credential.
 
 ## Safety consequence
 
-Credential extraction and reuse are scoped by exact HTTPS origin and parameter name, allowing keyless same-origin sprite references to use the style's extracted credential without propagating it to another provider. Credential values never enter compatibility manifests, persistent raw resources, cache keys, content keys, diagnostics, metrics, or exception messages.
+Credential extraction and reuse are scoped by exact HTTPS origin and parameter name, allowing keyless same-origin sprite references to use the style's extracted credential without propagating it to another provider. Credential values never enter the Coverage Manifest, persistent raw resources, cache keys, content keys, diagnostics, metrics, exception messages, or Corpus Reports. Corpus gates discover style-document URLs from the public map catalog and do not require a private index or catalog secret.

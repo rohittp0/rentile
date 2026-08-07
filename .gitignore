@@ -1,13 +1,11 @@
 *.iml
 .gradle
+.kotlin
 /local.properties
 .DS_Store
 /build
 **/build
 **/.gradle
-
-# Local credential-bearing or provider-owned corpus inputs must never be committed.
-compatibility/private/
 
 # Local Python tool bytecode.
 __pycache__/

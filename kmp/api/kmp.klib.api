@@ -242,6 +242,138 @@ sealed interface com.rohittp.rentile/StyleInput { // com.rohittp.rentile/StyleIn
     }
 }
 
+final class com.rohittp.rentile.internal.mvt/Tile : com.squareup.wire/Message<com.rohittp.rentile.internal.mvt/Tile, kotlin/Nothing> { // com.rohittp.rentile.internal.mvt/Tile|null[0]
+    constructor <init>(kotlin.collections/List<com.rohittp.rentile.internal.mvt/Tile.Layer> = ..., okio/ByteString = ...) // com.rohittp.rentile.internal.mvt/Tile.<init>|<init>(kotlin.collections.List<com.rohittp.rentile.internal.mvt.Tile.Layer>;okio.ByteString){}[0]
+
+    final val layers // com.rohittp.rentile.internal.mvt/Tile.layers|{}layers[0]
+        final fun <get-layers>(): kotlin.collections/List<com.rohittp.rentile.internal.mvt/Tile.Layer> // com.rohittp.rentile.internal.mvt/Tile.layers.<get-layers>|<get-layers>(){}[0]
+
+    final fun copy(kotlin.collections/List<com.rohittp.rentile.internal.mvt/Tile.Layer> = ..., okio/ByteString = ...): com.rohittp.rentile.internal.mvt/Tile // com.rohittp.rentile.internal.mvt/Tile.copy|copy(kotlin.collections.List<com.rohittp.rentile.internal.mvt.Tile.Layer>;okio.ByteString){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile.internal.mvt/Tile.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile.internal.mvt/Tile.hashCode|hashCode(){}[0]
+    final fun newBuilder(): kotlin/Nothing // com.rohittp.rentile.internal.mvt/Tile.newBuilder|newBuilder(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile.internal.mvt/Tile.toString|toString(){}[0]
+
+    final enum class GeomType : com.squareup.wire/WireEnum, kotlin/Enum<com.rohittp.rentile.internal.mvt/Tile.GeomType> { // com.rohittp.rentile.internal.mvt/Tile.GeomType|null[0]
+        enum entry LINESTRING // com.rohittp.rentile.internal.mvt/Tile.GeomType.LINESTRING|null[0]
+        enum entry POINT // com.rohittp.rentile.internal.mvt/Tile.GeomType.POINT|null[0]
+        enum entry POLYGON // com.rohittp.rentile.internal.mvt/Tile.GeomType.POLYGON|null[0]
+        enum entry UNKNOWN // com.rohittp.rentile.internal.mvt/Tile.GeomType.UNKNOWN|null[0]
+
+        final val entries // com.rohittp.rentile.internal.mvt/Tile.GeomType.entries|#static{}entries[0]
+            final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile.internal.mvt/Tile.GeomType> // com.rohittp.rentile.internal.mvt/Tile.GeomType.entries.<get-entries>|<get-entries>#static(){}[0]
+        final val value // com.rohittp.rentile.internal.mvt/Tile.GeomType.value|{}value[0]
+            final fun <get-value>(): kotlin/Int // com.rohittp.rentile.internal.mvt/Tile.GeomType.value.<get-value>|<get-value>(){}[0]
+
+        final fun valueOf(kotlin/String): com.rohittp.rentile.internal.mvt/Tile.GeomType // com.rohittp.rentile.internal.mvt/Tile.GeomType.valueOf|valueOf#static(kotlin.String){}[0]
+        final fun values(): kotlin/Array<com.rohittp.rentile.internal.mvt/Tile.GeomType> // com.rohittp.rentile.internal.mvt/Tile.GeomType.values|values#static(){}[0]
+
+        final object Companion { // com.rohittp.rentile.internal.mvt/Tile.GeomType.Companion|null[0]
+            final val ADAPTER // com.rohittp.rentile.internal.mvt/Tile.GeomType.Companion.ADAPTER|{}ADAPTER[0]
+                final fun <get-ADAPTER>(): com.squareup.wire/ProtoAdapter<com.rohittp.rentile.internal.mvt/Tile.GeomType> // com.rohittp.rentile.internal.mvt/Tile.GeomType.Companion.ADAPTER.<get-ADAPTER>|<get-ADAPTER>(){}[0]
+
+            final fun fromValue(kotlin/Int): com.rohittp.rentile.internal.mvt/Tile.GeomType? // com.rohittp.rentile.internal.mvt/Tile.GeomType.Companion.fromValue|fromValue(kotlin.Int){}[0]
+        }
+    }
+
+    final class Feature : com.squareup.wire/Message<com.rohittp.rentile.internal.mvt/Tile.Feature, kotlin/Nothing> { // com.rohittp.rentile.internal.mvt/Tile.Feature|null[0]
+        constructor <init>(kotlin/Long? = ..., kotlin.collections/List<kotlin/Int> = ..., com.rohittp.rentile.internal.mvt/Tile.GeomType? = ..., kotlin.collections/List<kotlin/Int> = ..., okio/ByteString = ...) // com.rohittp.rentile.internal.mvt/Tile.Feature.<init>|<init>(kotlin.Long?;kotlin.collections.List<kotlin.Int>;com.rohittp.rentile.internal.mvt.Tile.GeomType?;kotlin.collections.List<kotlin.Int>;okio.ByteString){}[0]
+
+        final val geometry // com.rohittp.rentile.internal.mvt/Tile.Feature.geometry|{}geometry[0]
+            final fun <get-geometry>(): kotlin.collections/List<kotlin/Int> // com.rohittp.rentile.internal.mvt/Tile.Feature.geometry.<get-geometry>|<get-geometry>(){}[0]
+        final val id // com.rohittp.rentile.internal.mvt/Tile.Feature.id|{}id[0]
+            final fun <get-id>(): kotlin/Long? // com.rohittp.rentile.internal.mvt/Tile.Feature.id.<get-id>|<get-id>(){}[0]
+        final val tags // com.rohittp.rentile.internal.mvt/Tile.Feature.tags|{}tags[0]
+            final fun <get-tags>(): kotlin.collections/List<kotlin/Int> // com.rohittp.rentile.internal.mvt/Tile.Feature.tags.<get-tags>|<get-tags>(){}[0]
+        final val type // com.rohittp.rentile.internal.mvt/Tile.Feature.type|{}type[0]
+            final fun <get-type>(): com.rohittp.rentile.internal.mvt/Tile.GeomType? // com.rohittp.rentile.internal.mvt/Tile.Feature.type.<get-type>|<get-type>(){}[0]
+
+        final fun copy(kotlin/Long? = ..., kotlin.collections/List<kotlin/Int> = ..., com.rohittp.rentile.internal.mvt/Tile.GeomType? = ..., kotlin.collections/List<kotlin/Int> = ..., okio/ByteString = ...): com.rohittp.rentile.internal.mvt/Tile.Feature // com.rohittp.rentile.internal.mvt/Tile.Feature.copy|copy(kotlin.Long?;kotlin.collections.List<kotlin.Int>;com.rohittp.rentile.internal.mvt.Tile.GeomType?;kotlin.collections.List<kotlin.Int>;okio.ByteString){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile.internal.mvt/Tile.Feature.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // com.rohittp.rentile.internal.mvt/Tile.Feature.hashCode|hashCode(){}[0]
+        final fun newBuilder(): kotlin/Nothing // com.rohittp.rentile.internal.mvt/Tile.Feature.newBuilder|newBuilder(){}[0]
+        final fun toString(): kotlin/String // com.rohittp.rentile.internal.mvt/Tile.Feature.toString|toString(){}[0]
+
+        final object Companion { // com.rohittp.rentile.internal.mvt/Tile.Feature.Companion|null[0]
+            final const val DEFAULT_ID // com.rohittp.rentile.internal.mvt/Tile.Feature.Companion.DEFAULT_ID|{}DEFAULT_ID[0]
+                final fun <get-DEFAULT_ID>(): kotlin/Long // com.rohittp.rentile.internal.mvt/Tile.Feature.Companion.DEFAULT_ID.<get-DEFAULT_ID>|<get-DEFAULT_ID>(){}[0]
+
+            final val ADAPTER // com.rohittp.rentile.internal.mvt/Tile.Feature.Companion.ADAPTER|{}ADAPTER[0]
+                final fun <get-ADAPTER>(): com.squareup.wire/ProtoAdapter<com.rohittp.rentile.internal.mvt/Tile.Feature> // com.rohittp.rentile.internal.mvt/Tile.Feature.Companion.ADAPTER.<get-ADAPTER>|<get-ADAPTER>(){}[0]
+            final val DEFAULT_TYPE // com.rohittp.rentile.internal.mvt/Tile.Feature.Companion.DEFAULT_TYPE|{}DEFAULT_TYPE[0]
+                final fun <get-DEFAULT_TYPE>(): com.rohittp.rentile.internal.mvt/Tile.GeomType // com.rohittp.rentile.internal.mvt/Tile.Feature.Companion.DEFAULT_TYPE.<get-DEFAULT_TYPE>|<get-DEFAULT_TYPE>(){}[0]
+        }
+    }
+
+    final class Layer : com.squareup.wire/Message<com.rohittp.rentile.internal.mvt/Tile.Layer, kotlin/Nothing> { // com.rohittp.rentile.internal.mvt/Tile.Layer|null[0]
+        constructor <init>(kotlin/Int, kotlin/String, kotlin.collections/List<com.rohittp.rentile.internal.mvt/Tile.Feature> = ..., kotlin.collections/List<kotlin/String> = ..., kotlin.collections/List<com.rohittp.rentile.internal.mvt/Tile.Value> = ..., kotlin/Int? = ..., okio/ByteString = ...) // com.rohittp.rentile.internal.mvt/Tile.Layer.<init>|<init>(kotlin.Int;kotlin.String;kotlin.collections.List<com.rohittp.rentile.internal.mvt.Tile.Feature>;kotlin.collections.List<kotlin.String>;kotlin.collections.List<com.rohittp.rentile.internal.mvt.Tile.Value>;kotlin.Int?;okio.ByteString){}[0]
+
+        final val extent // com.rohittp.rentile.internal.mvt/Tile.Layer.extent|{}extent[0]
+            final fun <get-extent>(): kotlin/Int? // com.rohittp.rentile.internal.mvt/Tile.Layer.extent.<get-extent>|<get-extent>(){}[0]
+        final val features // com.rohittp.rentile.internal.mvt/Tile.Layer.features|{}features[0]
+            final fun <get-features>(): kotlin.collections/List<com.rohittp.rentile.internal.mvt/Tile.Feature> // com.rohittp.rentile.internal.mvt/Tile.Layer.features.<get-features>|<get-features>(){}[0]
+        final val keys // com.rohittp.rentile.internal.mvt/Tile.Layer.keys|{}keys[0]
+            final fun <get-keys>(): kotlin.collections/List<kotlin/String> // com.rohittp.rentile.internal.mvt/Tile.Layer.keys.<get-keys>|<get-keys>(){}[0]
+        final val name // com.rohittp.rentile.internal.mvt/Tile.Layer.name|{}name[0]
+            final fun <get-name>(): kotlin/String // com.rohittp.rentile.internal.mvt/Tile.Layer.name.<get-name>|<get-name>(){}[0]
+        final val values // com.rohittp.rentile.internal.mvt/Tile.Layer.values|{}values[0]
+            final fun <get-values>(): kotlin.collections/List<com.rohittp.rentile.internal.mvt/Tile.Value> // com.rohittp.rentile.internal.mvt/Tile.Layer.values.<get-values>|<get-values>(){}[0]
+        final val version // com.rohittp.rentile.internal.mvt/Tile.Layer.version|{}version[0]
+            final fun <get-version>(): kotlin/Int // com.rohittp.rentile.internal.mvt/Tile.Layer.version.<get-version>|<get-version>(){}[0]
+
+        final fun copy(kotlin/Int = ..., kotlin/String = ..., kotlin.collections/List<com.rohittp.rentile.internal.mvt/Tile.Feature> = ..., kotlin.collections/List<kotlin/String> = ..., kotlin.collections/List<com.rohittp.rentile.internal.mvt/Tile.Value> = ..., kotlin/Int? = ..., okio/ByteString = ...): com.rohittp.rentile.internal.mvt/Tile.Layer // com.rohittp.rentile.internal.mvt/Tile.Layer.copy|copy(kotlin.Int;kotlin.String;kotlin.collections.List<com.rohittp.rentile.internal.mvt.Tile.Feature>;kotlin.collections.List<kotlin.String>;kotlin.collections.List<com.rohittp.rentile.internal.mvt.Tile.Value>;kotlin.Int?;okio.ByteString){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile.internal.mvt/Tile.Layer.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // com.rohittp.rentile.internal.mvt/Tile.Layer.hashCode|hashCode(){}[0]
+        final fun newBuilder(): kotlin/Nothing // com.rohittp.rentile.internal.mvt/Tile.Layer.newBuilder|newBuilder(){}[0]
+        final fun toString(): kotlin/String // com.rohittp.rentile.internal.mvt/Tile.Layer.toString|toString(){}[0]
+
+        final object Companion { // com.rohittp.rentile.internal.mvt/Tile.Layer.Companion|null[0]
+            final const val DEFAULT_EXTENT // com.rohittp.rentile.internal.mvt/Tile.Layer.Companion.DEFAULT_EXTENT|{}DEFAULT_EXTENT[0]
+                final fun <get-DEFAULT_EXTENT>(): kotlin/Int // com.rohittp.rentile.internal.mvt/Tile.Layer.Companion.DEFAULT_EXTENT.<get-DEFAULT_EXTENT>|<get-DEFAULT_EXTENT>(){}[0]
+            final const val DEFAULT_VERSION // com.rohittp.rentile.internal.mvt/Tile.Layer.Companion.DEFAULT_VERSION|{}DEFAULT_VERSION[0]
+                final fun <get-DEFAULT_VERSION>(): kotlin/Int // com.rohittp.rentile.internal.mvt/Tile.Layer.Companion.DEFAULT_VERSION.<get-DEFAULT_VERSION>|<get-DEFAULT_VERSION>(){}[0]
+
+            final val ADAPTER // com.rohittp.rentile.internal.mvt/Tile.Layer.Companion.ADAPTER|{}ADAPTER[0]
+                final fun <get-ADAPTER>(): com.squareup.wire/ProtoAdapter<com.rohittp.rentile.internal.mvt/Tile.Layer> // com.rohittp.rentile.internal.mvt/Tile.Layer.Companion.ADAPTER.<get-ADAPTER>|<get-ADAPTER>(){}[0]
+        }
+    }
+
+    final class Value : com.squareup.wire/Message<com.rohittp.rentile.internal.mvt/Tile.Value, kotlin/Nothing> { // com.rohittp.rentile.internal.mvt/Tile.Value|null[0]
+        constructor <init>(kotlin/String? = ..., kotlin/Float? = ..., kotlin/Double? = ..., kotlin/Long? = ..., kotlin/Long? = ..., kotlin/Long? = ..., kotlin/Boolean? = ..., okio/ByteString = ...) // com.rohittp.rentile.internal.mvt/Tile.Value.<init>|<init>(kotlin.String?;kotlin.Float?;kotlin.Double?;kotlin.Long?;kotlin.Long?;kotlin.Long?;kotlin.Boolean?;okio.ByteString){}[0]
+
+        final val bool_value // com.rohittp.rentile.internal.mvt/Tile.Value.bool_value|{}bool_value[0]
+            final fun <get-bool_value>(): kotlin/Boolean? // com.rohittp.rentile.internal.mvt/Tile.Value.bool_value.<get-bool_value>|<get-bool_value>(){}[0]
+        final val double_value // com.rohittp.rentile.internal.mvt/Tile.Value.double_value|{}double_value[0]
+            final fun <get-double_value>(): kotlin/Double? // com.rohittp.rentile.internal.mvt/Tile.Value.double_value.<get-double_value>|<get-double_value>(){}[0]
+        final val float_value // com.rohittp.rentile.internal.mvt/Tile.Value.float_value|{}float_value[0]
+            final fun <get-float_value>(): kotlin/Float? // com.rohittp.rentile.internal.mvt/Tile.Value.float_value.<get-float_value>|<get-float_value>(){}[0]
+        final val int_value // com.rohittp.rentile.internal.mvt/Tile.Value.int_value|{}int_value[0]
+            final fun <get-int_value>(): kotlin/Long? // com.rohittp.rentile.internal.mvt/Tile.Value.int_value.<get-int_value>|<get-int_value>(){}[0]
+        final val sint_value // com.rohittp.rentile.internal.mvt/Tile.Value.sint_value|{}sint_value[0]
+            final fun <get-sint_value>(): kotlin/Long? // com.rohittp.rentile.internal.mvt/Tile.Value.sint_value.<get-sint_value>|<get-sint_value>(){}[0]
+        final val string_value // com.rohittp.rentile.internal.mvt/Tile.Value.string_value|{}string_value[0]
+            final fun <get-string_value>(): kotlin/String? // com.rohittp.rentile.internal.mvt/Tile.Value.string_value.<get-string_value>|<get-string_value>(){}[0]
+        final val uint_value // com.rohittp.rentile.internal.mvt/Tile.Value.uint_value|{}uint_value[0]
+            final fun <get-uint_value>(): kotlin/Long? // com.rohittp.rentile.internal.mvt/Tile.Value.uint_value.<get-uint_value>|<get-uint_value>(){}[0]
+
+        final fun copy(kotlin/String? = ..., kotlin/Float? = ..., kotlin/Double? = ..., kotlin/Long? = ..., kotlin/Long? = ..., kotlin/Long? = ..., kotlin/Boolean? = ..., okio/ByteString = ...): com.rohittp.rentile.internal.mvt/Tile.Value // com.rohittp.rentile.internal.mvt/Tile.Value.copy|copy(kotlin.String?;kotlin.Float?;kotlin.Double?;kotlin.Long?;kotlin.Long?;kotlin.Long?;kotlin.Boolean?;okio.ByteString){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile.internal.mvt/Tile.Value.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // com.rohittp.rentile.internal.mvt/Tile.Value.hashCode|hashCode(){}[0]
+        final fun newBuilder(): kotlin/Nothing // com.rohittp.rentile.internal.mvt/Tile.Value.newBuilder|newBuilder(){}[0]
+        final fun toString(): kotlin/String // com.rohittp.rentile.internal.mvt/Tile.Value.toString|toString(){}[0]
+
+        final object Companion { // com.rohittp.rentile.internal.mvt/Tile.Value.Companion|null[0]
+            final val ADAPTER // com.rohittp.rentile.internal.mvt/Tile.Value.Companion.ADAPTER|{}ADAPTER[0]
+                final fun <get-ADAPTER>(): com.squareup.wire/ProtoAdapter<com.rohittp.rentile.internal.mvt/Tile.Value> // com.rohittp.rentile.internal.mvt/Tile.Value.Companion.ADAPTER.<get-ADAPTER>|<get-ADAPTER>(){}[0]
+        }
+    }
+
+    final object Companion { // com.rohittp.rentile.internal.mvt/Tile.Companion|null[0]
+        final val ADAPTER // com.rohittp.rentile.internal.mvt/Tile.Companion.ADAPTER|{}ADAPTER[0]
+            final fun <get-ADAPTER>(): com.squareup.wire/ProtoAdapter<com.rohittp.rentile.internal.mvt/Tile> // com.rohittp.rentile.internal.mvt/Tile.Companion.ADAPTER.<get-ADAPTER>|<get-ADAPTER>(){}[0]
+    }
+}
+
 final class com.rohittp.rentile/BatchRenderException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/BatchRenderException|null[0]
     constructor <init>(kotlin/String, com.rohittp.rentile/RentileException, kotlin.collections/List<com.rohittp.rentile/RentileException> = ..., kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ..., kotlin.collections/List<com.rohittp.rentile/TileId> = ...) // com.rohittp.rentile/BatchRenderException.<init>|<init>(kotlin.String;com.rohittp.rentile.RentileException;kotlin.collections.List<com.rohittp.rentile.RentileException>;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>;kotlin.collections.List<com.rohittp.rentile.TileId>){}[0]
 
@@ -254,6 +386,10 @@ final class com.rohittp.rentile/BatchRenderException : com.rohittp.rentile/Renti
 final class com.rohittp.rentile/CompatibilityPolicy { // com.rohittp.rentile/CompatibilityPolicy|null[0]
     final val id // com.rohittp.rentile/CompatibilityPolicy.id|{}id[0]
         final fun <get-id>(): kotlin/String // com.rohittp.rentile/CompatibilityPolicy.id.<get-id>|<get-id>(){}[0]
+    final val maximumOutputZoom // com.rohittp.rentile/CompatibilityPolicy.maximumOutputZoom|{}maximumOutputZoom[0]
+        final fun <get-maximumOutputZoom>(): kotlin/Int // com.rohittp.rentile/CompatibilityPolicy.maximumOutputZoom.<get-maximumOutputZoom>|<get-maximumOutputZoom>(){}[0]
+    final val minimumOutputZoom // com.rohittp.rentile/CompatibilityPolicy.minimumOutputZoom|{}minimumOutputZoom[0]
+        final fun <get-minimumOutputZoom>(): kotlin/Int // com.rohittp.rentile/CompatibilityPolicy.minimumOutputZoom.<get-minimumOutputZoom>|<get-minimumOutputZoom>(){}[0]
 
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/CompatibilityPolicy.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/CompatibilityPolicy.hashCode|hashCode(){}[0]
@@ -568,7 +704,7 @@ final class com.rohittp.rentile/ResourceDecodeException : com.rohittp.rentile/Re
 }
 
 final class com.rohittp.rentile/ResourceLimits { // com.rohittp.rentile/ResourceLimits|null[0]
-    constructor <init>(kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Int = ..., kotlin/Long = ..., kotlin/Int = ...) // com.rohittp.rentile/ResourceLimits.<init>|<init>(kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Int;kotlin.Long;kotlin.Int){}[0]
+    constructor <init>(kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Int = ..., kotlin/Long = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ...) // com.rohittp.rentile/ResourceLimits.<init>|<init>(kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Int;kotlin.Long;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int){}[0]
 
     final val maxDecodedRasterBytes // com.rohittp.rentile/ResourceLimits.maxDecodedRasterBytes|{}maxDecodedRasterBytes[0]
         final fun <get-maxDecodedRasterBytes>(): kotlin/Long // com.rohittp.rentile/ResourceLimits.maxDecodedRasterBytes.<get-maxDecodedRasterBytes>|<get-maxDecodedRasterBytes>(){}[0]
@@ -576,6 +712,18 @@ final class com.rohittp.rentile/ResourceLimits { // com.rohittp.rentile/Resource
         final fun <get-maxGeoJsonBytes>(): kotlin/Long // com.rohittp.rentile/ResourceLimits.maxGeoJsonBytes.<get-maxGeoJsonBytes>|<get-maxGeoJsonBytes>(){}[0]
     final val maxMetadataBytes // com.rohittp.rentile/ResourceLimits.maxMetadataBytes|{}maxMetadataBytes[0]
         final fun <get-maxMetadataBytes>(): kotlin/Long // com.rohittp.rentile/ResourceLimits.maxMetadataBytes.<get-maxMetadataBytes>|<get-maxMetadataBytes>(){}[0]
+    final val maxMvtCommands // com.rohittp.rentile/ResourceLimits.maxMvtCommands|{}maxMvtCommands[0]
+        final fun <get-maxMvtCommands>(): kotlin/Int // com.rohittp.rentile/ResourceLimits.maxMvtCommands.<get-maxMvtCommands>|<get-maxMvtCommands>(){}[0]
+    final val maxMvtCoordinates // com.rohittp.rentile/ResourceLimits.maxMvtCoordinates|{}maxMvtCoordinates[0]
+        final fun <get-maxMvtCoordinates>(): kotlin/Int // com.rohittp.rentile/ResourceLimits.maxMvtCoordinates.<get-maxMvtCoordinates>|<get-maxMvtCoordinates>(){}[0]
+    final val maxMvtExtent // com.rohittp.rentile/ResourceLimits.maxMvtExtent|{}maxMvtExtent[0]
+        final fun <get-maxMvtExtent>(): kotlin/Int // com.rohittp.rentile/ResourceLimits.maxMvtExtent.<get-maxMvtExtent>|<get-maxMvtExtent>(){}[0]
+    final val maxMvtFeatures // com.rohittp.rentile/ResourceLimits.maxMvtFeatures|{}maxMvtFeatures[0]
+        final fun <get-maxMvtFeatures>(): kotlin/Int // com.rohittp.rentile/ResourceLimits.maxMvtFeatures.<get-maxMvtFeatures>|<get-maxMvtFeatures>(){}[0]
+    final val maxMvtLayers // com.rohittp.rentile/ResourceLimits.maxMvtLayers|{}maxMvtLayers[0]
+        final fun <get-maxMvtLayers>(): kotlin/Int // com.rohittp.rentile/ResourceLimits.maxMvtLayers.<get-maxMvtLayers>|<get-maxMvtLayers>(){}[0]
+    final val maxMvtTags // com.rohittp.rentile/ResourceLimits.maxMvtTags|{}maxMvtTags[0]
+        final fun <get-maxMvtTags>(): kotlin/Int // com.rohittp.rentile/ResourceLimits.maxMvtTags.<get-maxMvtTags>|<get-maxMvtTags>(){}[0]
     final val maxRasterDimensionPx // com.rohittp.rentile/ResourceLimits.maxRasterDimensionPx|{}maxRasterDimensionPx[0]
         final fun <get-maxRasterDimensionPx>(): kotlin/Int // com.rohittp.rentile/ResourceLimits.maxRasterDimensionPx.<get-maxRasterDimensionPx>|<get-maxRasterDimensionPx>(){}[0]
     final val maxRedirects // com.rohittp.rentile/ResourceLimits.maxRedirects|{}maxRedirects[0]
@@ -588,6 +736,11 @@ final class com.rohittp.rentile/ResourceLimits { // com.rohittp.rentile/Resource
         final fun <get-maxTileBytes>(): kotlin/Long // com.rohittp.rentile/ResourceLimits.maxTileBytes.<get-maxTileBytes>|<get-maxTileBytes>(){}[0]
 
     final fun component1(): kotlin/Long // com.rohittp.rentile/ResourceLimits.component1|component1(){}[0]
+    final fun component10(): kotlin/Int // com.rohittp.rentile/ResourceLimits.component10|component10(){}[0]
+    final fun component11(): kotlin/Int // com.rohittp.rentile/ResourceLimits.component11|component11(){}[0]
+    final fun component12(): kotlin/Int // com.rohittp.rentile/ResourceLimits.component12|component12(){}[0]
+    final fun component13(): kotlin/Int // com.rohittp.rentile/ResourceLimits.component13|component13(){}[0]
+    final fun component14(): kotlin/Int // com.rohittp.rentile/ResourceLimits.component14|component14(){}[0]
     final fun component2(): kotlin/Long // com.rohittp.rentile/ResourceLimits.component2|component2(){}[0]
     final fun component3(): kotlin/Long // com.rohittp.rentile/ResourceLimits.component3|component3(){}[0]
     final fun component4(): kotlin/Long // com.rohittp.rentile/ResourceLimits.component4|component4(){}[0]
@@ -595,7 +748,8 @@ final class com.rohittp.rentile/ResourceLimits { // com.rohittp.rentile/Resource
     final fun component6(): kotlin/Int // com.rohittp.rentile/ResourceLimits.component6|component6(){}[0]
     final fun component7(): kotlin/Long // com.rohittp.rentile/ResourceLimits.component7|component7(){}[0]
     final fun component8(): kotlin/Int // com.rohittp.rentile/ResourceLimits.component8|component8(){}[0]
-    final fun copy(kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Int = ..., kotlin/Long = ..., kotlin/Int = ...): com.rohittp.rentile/ResourceLimits // com.rohittp.rentile/ResourceLimits.copy|copy(kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Int;kotlin.Long;kotlin.Int){}[0]
+    final fun component9(): kotlin/Int // com.rohittp.rentile/ResourceLimits.component9|component9(){}[0]
+    final fun copy(kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Int = ..., kotlin/Long = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ...): com.rohittp.rentile/ResourceLimits // com.rohittp.rentile/ResourceLimits.copy|copy(kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Int;kotlin.Long;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/ResourceLimits.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/ResourceLimits.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/ResourceLimits.toString|toString(){}[0]

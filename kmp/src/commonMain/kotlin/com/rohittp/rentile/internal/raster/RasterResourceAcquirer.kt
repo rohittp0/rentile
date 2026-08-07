@@ -18,31 +18,25 @@ import com.rohittp.rentile.SafetyLimitException
 import com.rohittp.rentile.StoredRawResource
 import com.rohittp.rentile.TransportRequest
 import com.rohittp.rentile.internal.recordSafely
+import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.SingleFlight
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import org.jetbrains.skia.Image
 
 internal class RasterResourceAcquirer(
     private val configuration: RentileConfiguration,
     scope: CoroutineScope,
+    private val workCoordinator: ResourceWorkCoordinator,
 ) {
-    private val exchangePermits = Semaphore(configuration.executionPolicy.maxConcurrentExchanges)
-    private val decodePermits = Semaphore(configuration.executionPolicy.maxConcurrentDecodes)
-    private val originMutex = Mutex()
-    private val originPermits = mutableMapOf<String, Semaphore>()
     private val singleFlight = SingleFlight<RawResourceKey, RasterResource>(scope)
 
     suspend fun acquire(sample: RasterSample, accessMode: ResourceAccessMode): RasterResource {
         val url = sample.tileUrl()
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
-        val key = RawResourceKey(sanitizedId, ResourceClass.RASTER_TILE)
+        val key = RawResourceKey(sanitizedId, sample.source.resourceClass)
 
         if (accessMode != ResourceAccessMode.RELOAD) {
             val cached = readStore(key)
@@ -57,7 +51,7 @@ internal class RasterResourceAcquirer(
                 if (dimensions != null) {
                     val diagnostic = cacheDiagnostic(DiagnosticCode.RESOURCE_CACHE_HIT, sanitizedId, sample)
                     configuration.metricsSink.recordSafely(
-                        RentileMetric(MetricName.RAW_CACHE_HIT, resourceClass = ResourceClass.RASTER_TILE),
+                        RentileMetric(MetricName.RAW_CACHE_HIT, resourceClass = sample.source.resourceClass),
                     )
                     configuration.diagnosticSink.recordSafely(diagnostic)
                     return RasterResource(
@@ -72,12 +66,12 @@ internal class RasterResourceAcquirer(
                 removeStore(key)
             }
             configuration.metricsSink.recordSafely(
-                RentileMetric(MetricName.RAW_CACHE_MISS, resourceClass = ResourceClass.RASTER_TILE),
+                RentileMetric(MetricName.RAW_CACHE_MISS, resourceClass = sample.source.resourceClass),
             )
             if (accessMode == ResourceAccessMode.CACHE_ONLY) {
                 throw ResourceAcquisitionException(
                     message = "Raster resource is unavailable in cache-only mode",
-                    resourceClass = ResourceClass.RASTER_TILE,
+                    resourceClass = sample.source.resourceClass,
                     sanitizedResourceId = sanitizedId,
                     affectedTiles = listOf(sample.outputTile),
                 )
@@ -90,7 +84,7 @@ internal class RasterResourceAcquirer(
             key = key,
             onJoin = {
                 configuration.metricsSink.recordSafely(
-                    RentileMetric(MetricName.SINGLE_FLIGHT_JOIN, resourceClass = ResourceClass.RASTER_TILE),
+                    RentileMetric(MetricName.SINGLE_FLIGHT_JOIN, resourceClass = sample.source.resourceClass),
                 )
             },
         ) {
@@ -105,16 +99,15 @@ internal class RasterResourceAcquirer(
         sanitizedId: String,
         key: RawResourceKey,
     ): RasterResource {
-        val response = permitsFor(url).withPermit {
-            exchangePermits.withPermit {
+        val response = workCoordinator.exchange(url) {
                 configuration.metricsSink.recordSafely(
-                    RentileMetric(MetricName.RESOURCE_REQUEST, resourceClass = ResourceClass.RASTER_TILE),
+                    RentileMetric(MetricName.RESOURCE_REQUEST, resourceClass = sample.source.resourceClass),
                 )
                 try {
                     configuration.transport.execute(
                         TransportRequest(
                             url = url,
-                            resourceClass = ResourceClass.RASTER_TILE,
+                            resourceClass = sample.source.resourceClass,
                             maxResponseBytes = configuration.resourceLimits.maxTileBytes,
                         ),
                     )
@@ -123,17 +116,16 @@ internal class RasterResourceAcquirer(
                 } catch (_: Throwable) {
                     throw ResourceAcquisitionException(
                         message = "Raster tile transport failed",
-                        resourceClass = ResourceClass.RASTER_TILE,
+                        resourceClass = sample.source.resourceClass,
                         sanitizedResourceId = sanitizedId,
                         affectedTiles = listOf(sample.outputTile),
                     )
                 }
-            }
         }
         if (response.statusCode !in 200..299) {
             throw ResourceAcquisitionException(
                 message = "Raster tile transport returned a non-success status",
-                resourceClass = ResourceClass.RASTER_TILE,
+                resourceClass = sample.source.resourceClass,
                 sanitizedResourceId = sanitizedId,
                 statusCode = response.statusCode,
                 retryAfterMillis = response.metadata.retryAfterMillis,
@@ -171,7 +163,7 @@ internal class RasterResourceAcquirer(
             RentileMetric(
                 MetricName.RESOURCE_WIRE_BYTES,
                 value = response.metadata.wireByteCount ?: bytes.size.toLong(),
-                resourceClass = ResourceClass.RASTER_TILE,
+                resourceClass = sample.source.resourceClass,
             ),
         )
         return RasterResource(sample, bytes, digest, dimensions.width, dimensions.height, emptyList())
@@ -221,13 +213,13 @@ internal class RasterResourceAcquirer(
         bytes: ByteArray,
         sanitizedId: String,
         sample: RasterSample,
-    ): RasterDimensions = decodePermits.withPermit {
+    ): RasterDimensions = workCoordinator.decode {
         val image = try {
             Image.makeFromEncoded(bytes)
         } catch (error: Throwable) {
             throw ResourceDecodeException(
                 message = "Raster tile cannot be decoded",
-                resourceClass = ResourceClass.RASTER_TILE,
+                resourceClass = sample.source.resourceClass,
                 sanitizedResourceId = sanitizedId,
                 affectedTiles = listOf(sample.outputTile),
                 cause = error,
@@ -265,30 +257,13 @@ internal class RasterResourceAcquirer(
                 RentileMetric(
                     MetricName.RESOURCE_DECODED_BYTES,
                     value = decodedBytes,
-                    resourceClass = ResourceClass.RASTER_TILE,
+                    resourceClass = sample.source.resourceClass,
                 ),
             )
-            return RasterDimensions(image.width, image.height)
+            return@decode RasterDimensions(image.width, image.height)
         } finally {
             image.close()
         }
-    }
-
-    private suspend fun permitsFor(url: String): Semaphore {
-        val origin = originOf(url)
-        return originMutex.withLock {
-            originPermits.getOrPut(origin) {
-                Semaphore(configuration.executionPolicy.maxConcurrentExchangesPerOrigin)
-            }
-        }
-    }
-
-    private fun originOf(url: String): String {
-        val schemeEnd = url.indexOf("://")
-        if (schemeEnd <= 0) return "<invalid>"
-        val authorityStart = schemeEnd + 3
-        val authorityEnd = url.indexOf('/', authorityStart).let { if (it < 0) url.length else it }
-        return url.substring(0, authorityEnd).substringBefore('?').lowercase()
     }
 
     private data class RasterDimensions(val width: Int, val height: Int)

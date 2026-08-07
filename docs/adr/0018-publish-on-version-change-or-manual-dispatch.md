@@ -8,6 +8,10 @@ Versions ending in `-SNAPSHOT` are local-repository-only. A snapshot version may
 
 Development begins at `VERSION_NAME=0.1.0-SNAPSHOT`. After the required local-repository consumer gates pass, the first Maven Central release is `0.1.0`; there is no required alpha publication before it.
 
+The `0.1.0` release is also blocked until the versioned Coverage Manifest proves profile-complete rendering of all current styles resolved from the public map catalog through output zoom 22 on Android, iOS, Linux x64, and Linux ARM64. Partial background, raster, vector, or icon milestones remain `0.1.0-SNAPSHOT` local-repository builds and are not published as a reduced public contract.
+
+The release gate is automated: preparation, capability coverage, decoded-pixel determinism, seam and ownership checks, and versioned perceptual comparison against the transformed MapLibre oracle must pass. Each corpus run also uploads a credential-free Corpus Report for human inspection, including failures, but visual approval is supplemental and cannot waive an automated failure.
+
 Both trigger paths run the same gates before contacting Maven Central: build and test the complete target set, publish the exact version to an isolated local Maven repository, and resolve and exercise it from clean Android, iOS, and Linux consumers. Only a fully passing gate may upload the coordinated KMP publication set from one host. Maven Central automatically releases the deployment only after Central validation succeeds. Republishing an immutable version is a workflow failure, never an overwrite.
 
 The workflow expects `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_KEY_ID`, `SIGNING_KEY_PASSWORD`, and the ASCII-armored private key in `SIGNING_KEY`. Secrets are never stored in repository files or emitted by validation tasks.
