@@ -1,0 +1,101 @@
+name: Publish to Maven Central
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - gradle.properties
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  detect-version:
+    name: Detect releasable version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - name: Read and validate version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^VERSION_NAME=//p' gradle.properties)
+          if [[ -z "$version" ]]; then
+            echo "VERSION_NAME is missing" >&2
+            exit 1
+          fi
+
+          changed=false
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            changed=true
+          elif git diff HEAD^ HEAD -- gradle.properties | grep -qE '^[+-]VERSION_NAME='; then
+            changed=true
+          fi
+
+          publish=false
+          if [[ "$changed" == true && "$version" != *-SNAPSHOT ]]; then
+            publish=true
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Version: $version; publish: $publish"
+
+  publish:
+    name: Publish ${{ needs.detect-version.outputs.version }}
+    needs: detect-version
+    if: needs.detect-version.outputs.publish == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Validate pinned credential-free manifest
+        run: python3 tools/check_compatibility_manifest.py compatibility/rentile-v1.json
+
+      - name: Test and publish to isolated local repository
+        run: >-
+          ./gradlew --no-configuration-cache clean
+          :kmp:checkKotlinAbi
+          :kmp:testAndroidHostTest
+          :kmp:compileKotlinIosArm64
+          :kmp:compileKotlinIosSimulatorArm64
+          :kmp:compileKotlinLinuxX64
+          :kmp:compileKotlinLinuxArm64
+          :kmp:publishAllPublicationsToLocalTestRepository
+          :kmp:checkPomFileForAndroidPublication
+          :kmp:checkPomFileForIosArm64Publication
+          :kmp:checkPomFileForIosSimulatorArm64Publication
+          :kmp:checkPomFileForKotlinMultiplatformPublication
+          :kmp:checkPomFileForLinuxArm64Publication
+          :kmp:checkPomFileForLinuxX64Publication
+
+      - name: Resolve aggregate coordinate from clean consumer
+        run: >-
+          ./gradlew --no-configuration-cache -p consumer-smoke
+          compileAndroidMain
+          compileKotlinIosArm64
+          compileKotlinIosSimulatorArm64
+          compileKotlinLinuxX64
+          compileKotlinLinuxArm64
+
+      - name: Publish coordinated KMP artifacts
+        run: ./gradlew --no-configuration-cache :kmp:publishToMavenCentral
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}

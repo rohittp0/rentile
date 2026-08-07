@@ -97,6 +97,10 @@
         <p>Consumers depend on one coordinate from common code. Platform-specific artifacts are selected by Gradle metadata.</p>
       </div>
 
+      <div class="callout warning" style="margin-bottom: 24px;">
+        Skiko platform artifacts currently resolve from JetBrains' public Compose repository. Add the narrow <code>org.jetbrains.skiko</code> repository filter shown in the KMP reference before declaring Rentile.
+      </div>
+
       <div class="install-grid">
         <div class="code-card">
           <div class="code-head">
@@ -170,7 +174,7 @@
 
       <div class="code-card code-card-large">
         <div class="code-head"><span>Common Kotlin</span><span class="status-pill">contract</span></div>
-        <pre><code><span class="kw">val</span> rasterizer = createBasemapRasterizer(config)
+        <pre><code><span class="kw">val</span> rasterizer = Rentile.create(config)
 
 rasterizer.use { renderer ->
     <span class="kw">val</span> style = renderer.prepare(styleInput)

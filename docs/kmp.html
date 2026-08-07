@@ -48,8 +48,8 @@
           <span class="tag">Versioned profile</span>
         </div>
         <div class="draft-banner">
-          <strong>Preimplementation contract.</strong>
-          API names shown here reflect the approved design and may be refined before the first local artifact. Behavioral guarantees are normative once implemented.
+          <strong>Development snapshot.</strong>
+          The lifecycle and constant-background PNG vertical slice are implemented. Other retained constructs currently fail during strict preparation until their milestones land.
         </div>
       </header>
 
@@ -64,6 +64,9 @@
         mavenLocal()
         mavenCentral()
         google()
+        maven(<span class="str">"https://maven.pkg.jetbrains.space/public/p/compose/dev"</span>) {
+            content { includeGroup(<span class="str">"org.jetbrains.skiko"</span>) }
+        }
     }
 }</code></pre>
         </div>
@@ -142,7 +145,9 @@
         </p>
         <div class="code-card doc-code">
           <div class="code-head"><span>Contract sketch</span></div>
-          <pre><code><span class="kw">interface</span> BasemapRasterizer : AutoCloseable {
+          <pre><code><span class="kw">val</span> rasterizer = Rentile.create(configuration)
+
+<span class="kw">interface</span> BasemapRasterizer : AutoCloseable {
     <span class="kw">suspend fun</span> prepare(
         style: StyleInput,
         policy: CompatibilityPolicy = CompatibilityPolicy.Default,
@@ -152,7 +157,7 @@
         style: PreparedStyle,
         tiles: List&lt;TileId&gt;,
         options: RenderOptions = RenderOptions(),
-        resourceAccess: ResourceAccess = ResourceAccess.NORMAL,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
     ): PreparedBatch
 
     <span class="kw">suspend fun</span> render(
@@ -173,7 +178,7 @@
     <span class="kw">val</span> diagnostics: List&lt;RenderDiagnostic&gt;,
 )</code></pre>
         </div>
-        <p>Every successful tile is canonical RGBA8 sRGB PNG. PNG byte streams are not promised to match across platforms; decoded pixels follow the versioned tolerance contract.</p>
+        <p>Every successful tile is encoded PNG. A validated source PNG may pass through unchanged when it is the sole opaque layer at the requested size; otherwise Rentile composites and re-encodes. PNG byte streams are not promised to match across platforms, while decoded pixels follow the versioned tolerance contract.</p>
       </section>
 
       <section class="doc-section" id="resources">
@@ -190,7 +195,9 @@
           Provider credentials may already be present in the style JSON. Rentile detects
           those first. The caller supplies credentials separately only when a required
           resource lacks them. Keys and session identifiers never enter logs, diagnostics,
-          file paths, or content identities.
+          file paths, or content identities. Credential-bearing URLs live only in a
+          renderer-owned secret context; <code>awaitClosed()</code> observes that context
+          being cleared.
         </p>
         <div class="callout warning">
           Credentials are attached only to exact configured HTTPS origins and are removed on origin-changing redirects.
@@ -240,8 +247,32 @@
           <code>ResourceStoreException</code>
           <code>SafetyLimitException</code>
           <code>PreparedBatchClosedException</code>
+          <code>RasterizerClosedException</code>
+          <code>ForeignPreparedStyleException</code>
+          <code>ForeignPreparedBatchException</code>
+          <code>InvalidTileIdException</code>
+          <code>TileNotInPreparedBatchException</code>
+          <code>BatchRenderException</code>
         </div>
-        <p><code>CancellationException</code> is never wrapped. The first terminal failure cancels only work owned by that call; shared work continues while another waiter remains.</p>
+        <p>
+          Every <code>RentileException</code> carries a stable <code>code</code>, pipeline
+          <code>stage</code>, redacted <code>diagnostics</code>, and
+          <code>affectedTiles</code>. Resource failures also identify the resource class,
+          sanitized resource identity, status code, and retry delay when available. Human
+          messages are explanatory and are not stable machine contracts.
+        </p>
+        <p>
+          Messages and causes thrown by injected transport or store adapters are not copied
+          into Rentile exceptions because they may contain signed URLs, headers, or file
+          paths. Callers that need adapter-specific telemetry should record a redacted form
+          inside their adapter; renderer recovery should use Rentile's typed fields.
+        </p>
+        <p>
+          <code>CancellationException</code> is never wrapped. The first terminal failure
+          cancels only work owned by that call; shared work continues while another waiter
+          remains. Rentile does not retry or classify a failure as retryable—the caller uses
+          the typed facts to decide whether to refetch, cancel, fall back, or stop.
+        </p>
       </section>
 
       <section class="doc-section" id="lifecycle">
@@ -250,8 +281,8 @@
         <p>
           <code>BasemapRasterizer</code> and <code>PreparedBatch</code> implement common
           <code>AutoCloseable</code>. Closing is idempotent, non-blocking, and non-throwing.
-          It prevents new operations while active leases finish safely. Call
-          <code>awaitClosed()</code> when complete native cleanup must be observed.
+          It prevents new operations and cancels active renderer-owned jobs. Call
+          <code>awaitClosed()</code> when cancellation and native cleanup must be observed.
         </p>
         <p>
           Jobs are cancellable; the caller controls priority by deciding what to submit and
@@ -262,12 +293,14 @@
 
       <section class="doc-section" id="status">
         <p class="doc-label">Status</p>
-        <h2>Contract frozen, implementation beginning</h2>
+        <h2>Foundation and first raster slice implemented</h2>
         <p>
-          The initial compatibility profile and architecture decisions are documented. The first
-          public artifact is not yet available. Performance profiling is intentionally
-          deferred until representative standalone rendering slices exist, while correctness,
-          safety limits, determinism, and cancellation remain immediate gates.
+          The KMP publication skeleton, ABI checks, compatibility manifest, lifecycle,
+          constant backgrounds, inline raster planning, bounded resource fetches, raw-cache
+          behavior, raster composition, and strict PNG pass-through are implemented. Vector,
+          TileJSON, advanced raster paint, hillshade, patterns, and icons remain gated work.
+          The first public artifact is not yet available. Performance profiling remains
+          intentionally deferred until representative standalone rendering slices exist.
         </p>
         <div class="doc-actions">
           <a class="button primary" href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">Follow development</a>
