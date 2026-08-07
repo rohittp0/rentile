@@ -3,17 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>KMP Reference — Rentile</title>
-  <meta name="description" content="Public contract, supported profile, lifecycle, caching, and error semantics for com.rohittp.rentile:kmp." />
+  <title>KMP integration guide — Rentile</title>
+  <meta name="description" content="Add Rentile to a Kotlin Multiplatform project, provide the host adapters, render XYZ tiles, and handle caching, errors, and lifecycle." />
+  <meta name="theme-color" content="#0b3026" />
   <link rel="canonical" href="https://rohittp.com/rentile/kmp.html" />
   <link rel="stylesheet" href="style.css" />
+  <meta property="og:type" content="article" />
+  <meta property="og:site_name" content="Rentile" />
+  <meta property="og:title" content="KMP integration guide — Rentile" />
+  <meta property="og:description" content="Add Rentile, provide two host adapters, and render XYZ basemap tiles into PNG bytes from common Kotlin." />
+  <meta property="og:url" content="https://rohittp.com/rentile/kmp.html" />
+  <meta property="og:image" content="https://rohittp.com/rentile/og.png" />
+  <meta property="og:image:alt" content="Rentile — Basemap tiles. No map view." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="KMP integration guide — Rentile" />
+  <meta name="twitter:description" content="Configure Rentile and render PNG basemap tiles from common Kotlin." />
+  <meta name="twitter:image" content="https://rohittp.com/rentile/og.png" />
 </head>
 <body>
   <nav class="site-nav" aria-label="Primary navigation">
     <div class="nav-inner">
       <a class="nav-brand" href="index.html">Rentile</a>
       <div class="nav-links">
-        <a class="active" href="kmp.html" aria-current="page">KMP reference</a>
+        <a class="active" href="kmp.html" aria-current="page">Integration guide</a>
         <a href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
       </div>
     </div>
@@ -21,49 +33,56 @@
 
   <main class="docs-shell">
     <aside class="docs-sidebar" aria-label="On this page">
-      <p class="sidebar-title">KMP reference</p>
-      <a href="#overview">Overview</a>
-      <a href="#install">Installation</a>
-      <a href="#platforms">Platforms</a>
-      <a href="#profile">Compatibility profile</a>
-      <a href="#api">API shape</a>
+      <p class="sidebar-title">Integration guide</p>
+      <a href="#overview">Start here</a>
+      <a href="#install">Add the dependency</a>
+      <a href="#configure">Configure Rentile</a>
+      <a href="#render">Render tiles</a>
       <a href="#resources">Resources and credentials</a>
       <a href="#cache">Caching</a>
-      <a href="#errors">Errors</a>
-      <a href="#lifecycle">Lifecycle and cancellation</a>
-      <a href="#status">Project status</a>
+      <a href="#errors">Errors and recovery</a>
+      <a href="#lifecycle">Lifecycle</a>
+      <a href="#compatibility">Compatibility</a>
+      <a href="#platforms">Platforms</a>
     </aside>
 
     <article class="docs-content">
       <header class="docs-header" id="overview">
         <p class="eyebrow">com.rohittp.rentile:kmp</p>
-        <h1>KMP reference</h1>
+        <h1>KMP integration guide</h1>
         <p class="docs-lead">
-          The platform-neutral contract for preparing supported map styles and rendering
-          north-up XYZ basemap tiles into encoded PNG bytes.
+          This guide takes you from an empty dependency declaration to PNG tile bytes.
+          Along the way, it explains the two small adapters your app provides and the
+          responsibilities Rentile deliberately leaves with you.
         </p>
         <div class="tag-row">
-          <span class="tag">0.1.0-SNAPSHOT</span>
+          <span class="tag">Kotlin Multiplatform</span>
+          <span class="tag">Android · iOS · Linux</span>
           <span class="tag">Apache-2.0</span>
-          <span class="tag">Versioned profile</span>
         </div>
         <div class="draft-banner">
-          <strong>Development snapshot.</strong>
-          The lifecycle and constant-background PNG vertical slice are implemented. Other retained constructs currently fail during strict preparation until their milestones land.
+          <strong>Rentile is pre-release.</strong>
+          The public Maven artifact is not available yet. These examples match the API on
+          <code>main</code>, where the lifecycle, constant-background rendering, and first
+          inline-raster slice are implemented. See <a href="#compatibility">current renderer coverage</a>
+          before evaluating a real style.
         </div>
       </header>
 
       <section class="doc-section" id="install">
-        <p class="doc-label">Installation</p>
-        <h2>Add the common dependency</h2>
-        <p>During development, resolve the snapshot from the local Maven repository used by the clean-consumer tests.</p>
+        <p class="doc-label">Step 1</p>
+        <h2>Add the dependency</h2>
+        <p>
+          Rentile has one coordinate for common code. Your project also needs JetBrains'
+          public Compose repository for the Skiko platform artifacts used by the renderer.
+          The content filter keeps that repository limited to Skiko.
+        </p>
         <div class="code-card doc-code">
           <div class="code-head"><span>settings.gradle.kts</span></div>
           <pre><code>dependencyResolutionManagement {
     repositories {
-        mavenLocal()
-        mavenCentral()
         google()
+        mavenCentral()
         maven(<span class="str">"https://maven.pkg.jetbrains.space/public/p/compose/dev"</span>) {
             content { includeGroup(<span class="str">"org.jetbrains.skiko"</span>) }
         }
@@ -71,17 +90,301 @@
 }</code></pre>
         </div>
         <div class="code-card doc-code">
-          <div class="code-head"><span>build.gradle.kts</span></div>
+          <div class="code-head"><span>build.gradle.kts</span><span>shared module</span></div>
           <pre><code>kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation(<span class="str">"com.rohittp.rentile:kmp:0.1.0-SNAPSHOT"</span>)
+            implementation(<span class="str">"com.rohittp.rentile:kmp:&lt;version&gt;"</span>)
         }
     }
 }</code></pre>
         </div>
         <div class="callout">
-          The first Maven Central version is <code>0.1.0</code>. Snapshot versions are never uploaded to Central.
+          Replace <code>&lt;version&gt;</code> with a published version. Until the first artifact is
+          available, use the source repository to evaluate the API rather than adding a
+          snapshot coordinate to an application build.
+        </div>
+      </section>
+
+      <section class="doc-section" id="configure">
+        <p class="doc-label">Step 2</p>
+        <h2>Give Rentile transport and storage</h2>
+        <p>
+          Rentile does not force an HTTP client or database on your app. You provide a
+          <code>ResourceTransport</code> for fetching bytes and a <code>RawResourceStore</code>
+          for storing complete, validated responses. Both interfaces live in common Kotlin.
+        </p>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>Create the renderer</span></div>
+          <pre><code><span class="kw">val</span> configuration = RentileConfiguration(
+    transport = AppResourceTransport(httpClient),
+    rawResourceStore = AppRawResourceStore(cacheDirectory),
+)
+
+<span class="kw">val</span> rasterizer: BasemapRasterizer =
+    Rentile.create(configuration)</code></pre>
+        </div>
+        <div class="callout">
+          <code>AppResourceTransport</code> and <code>AppRawResourceStore</code> are example
+          names for adapters in your project. Rentile does not provide those classes.
+        </div>
+
+        <h3>Optional configuration</h3>
+        <p>
+          The defaults are enough to start. Add a <code>CredentialProvider</code> or
+          <code>MapSessionProvider</code> when your map provider needs them. You can also
+          tune concurrency and safety limits, or attach redacted diagnostic and metrics sinks.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Option</th><th>Use it for</th></tr></thead>
+            <tbody>
+              <tr><td><code>credentialProvider</code></td><td>Credentials for exact HTTPS origins when the style does not already contain them</td></tr>
+              <tr><td><code>sessionProvider</code></td><td>Short-lived provider session values</td></tr>
+              <tr><td><code>executionPolicy</code></td><td>Bounds for exchanges, decoding, memory, and render workers</td></tr>
+              <tr><td><code>resourceLimits</code></td><td>Hard ceilings for untrusted encoded and decoded resources</td></tr>
+              <tr><td><code>diagnosticSink</code></td><td>Structured, sanitized renderer diagnostics</td></tr>
+              <tr><td><code>metricsSink</code></td><td>Request, cache, decode, render, and output counters</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="doc-section" id="render">
+        <p class="doc-label">Step 3</p>
+        <h2>Prepare a style, then render a batch</h2>
+        <p>
+          Preparation is deliberately split in two. First Rentile validates and compiles the
+          style. Then it gathers everything required for a caller-defined tile batch. Once a
+          batch is prepared, rendering performs no network or store access.
+        </p>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>Common Kotlin</span><span>suspending API</span></div>
+          <pre><code><span class="kw">val</span> style = rasterizer.prepare(
+    StyleInput.Remote(<span class="str">"https://example.com/style.json"</span>)
+)
+
+<span class="kw">val</span> requestedTiles = listOf(
+    TileId(z = 12, x = 2203, y = 1345),
+    TileId(z = 12, x = 2204, y = 1345),
+)
+
+rasterizer.prepareBatch(style, requestedTiles).use { batch -&gt;
+    <span class="comment">// Content keys are available before drawing.</span>
+    batch.contentKeys.forEach { (tile, key) -&gt;
+        println(<span class="str">"$tile will render as $key"</span>)
+    }
+
+    <span class="kw">val</span> result: RenderBatch = rasterizer.render(batch)
+    result.tiles.forEach { tile -&gt;
+        savePng(tile.id, tile.pngBytes)
+    }
+}</code></pre>
+        </div>
+
+        <div class="steps-grid doc-steps">
+          <article class="step-card">
+            <span>1</span>
+            <h3><code>prepare</code></h3>
+            <p>Checks one inline, remote, or prefetched style and returns a reusable <code>PreparedStyle</code>.</p>
+          </article>
+          <article class="step-card">
+            <span>2</span>
+            <h3><code>prepareBatch</code></h3>
+            <p>Resolves raw resources and exposes stable content keys for the requested tiles.</p>
+          </article>
+          <article class="step-card">
+            <span>3</span>
+            <h3><code>render</code></h3>
+            <p>Draws all or a selected subset of the prepared tiles and returns PNG bytes.</p>
+          </article>
+        </div>
+
+        <h3>Choose a style input</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Input</th><th>When to use it</th></tr></thead>
+            <tbody>
+              <tr><td><code>StyleInput.Remote(url)</code></td><td>Let Rentile acquire the style through your transport adapter</td></tr>
+              <tr><td><code>StyleInput.InlineJson(json, baseUri)</code></td><td>You already have JSON text; use <code>baseUri</code> for relative references</td></tr>
+              <tr><td><code>StyleInput.Prefetched(bytes, identity, baseUri)</code></td><td>You already have bytes and a canonical, credential-free identity</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Output contract</h3>
+        <p>
+          A successful tile contains its <code>TileId</code>, encoded <code>pngBytes</code>,
+          the same <code>contentKey</code> exposed before drawing, and any sanitized diagnostics.
+          A render call is all-or-error: Rentile does not return a partial batch.
+        </p>
+      </section>
+
+      <section class="doc-section" id="resources">
+        <p class="doc-label">Host boundary</p>
+        <h2>Keep your existing network stack</h2>
+        <p>
+          <code>ResourceTransport</code> is one bounded request/response exchange. Map its
+          request onto Ktor, OkHttp, URLSession, Curl, or another client already used by your
+          host. Return the decompressed body and the allowlisted response metadata.
+        </p>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>ResourceTransport</span></div>
+          <pre><code><span class="kw">fun interface</span> ResourceTransport {
+    <span class="kw">suspend fun</span> execute(
+        request: TransportRequest
+    ): TransportResponse
+}</code></pre>
+        </div>
+        <p>
+          Requests include the URL, resource class, response-size limit, and a small set of
+          cache-validation headers. Arbitrary headers do not cross the public boundary.
+        </p>
+
+        <h3>Credentials</h3>
+        <p>
+          If a style URL already contains provider credentials, Rentile uses them. Otherwise,
+          it asks your <code>CredentialProvider</code> only for the exact HTTPS origin and query
+          parameter it needs. Credentials and session values are kept out of logs, content
+          keys, cache paths, exception text, and diagnostics.
+        </p>
+        <div class="callout warning">
+          Rentile removes credentials when a redirect changes origin. Your transport adapter
+          should also avoid logging raw request URLs or headers.
+        </div>
+      </section>
+
+      <section class="doc-section" id="cache">
+        <p class="doc-label">Caching</p>
+        <h2>Two caches, two owners</h2>
+        <p>
+          Rentile stores reusable source material. Your app stores finished PNGs. Keeping
+          those concerns separate lets your product choose the output lifetime and eviction
+          policy that make sense for its workflows.
+        </p>
+        <div class="ownership-grid docs-ownership">
+          <div>
+            <h3>Rentile owns</h3>
+            <ul class="check-list">
+              <li>Complete encoded raw resources</li>
+              <li>Compiled style and decoded-source memory</li>
+              <li>In-process single-flight resource work</li>
+              <li>Validation before a cache write is committed</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Your app owns</h3>
+            <ul class="check-list muted">
+              <li>Rendered PNG storage and eviction</li>
+              <li>Cross-process output coordination</li>
+              <li>Priority, prefetching, and batch size</li>
+              <li>Fallback output namespaces</li>
+            </ul>
+          </div>
+        </div>
+        <p>
+          Use <code>PreparedBatch.contentKeys</code> to look up rendered outputs before you call
+          <code>render</code>. A failed tile does not undo valid raw-resource entries acquired
+          for other work, and incomplete entries are never committed.
+        </p>
+      </section>
+
+      <section class="doc-section" id="errors">
+        <p class="doc-label">Failures</p>
+        <h2>Handle facts, not exception messages</h2>
+        <p>
+          Every <code>RentileException</code> has a stable machine-readable <code>code</code>, a
+          pipeline <code>stage</code>, sanitized diagnostics, and affected tile identities.
+          Human-readable messages explain the problem but are not a stable API.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Exception family</th><th>What it tells you</th></tr></thead>
+            <tbody>
+              <tr><td><code>StylePreparationException</code></td><td>The style is malformed or reaches a construct this profile cannot render</td></tr>
+              <tr><td><code>ResourceAcquisitionException</code></td><td>A resource could not be fetched; status and retry delay are included when available</td></tr>
+              <tr><td><code>ResourceDecodeException</code></td><td>Fetched bytes could not be decoded safely</td></tr>
+              <tr><td><code>RasterizationException</code></td><td>Drawing failed for one or more affected tiles</td></tr>
+              <tr><td><code>PngEncodingException</code></td><td>The rendered pixels could not be encoded as PNG</td></tr>
+              <tr><td><code>SafetyLimitException</code></td><td>An encoded size, decoded size, dimension, or redirect ceiling was exceeded</td></tr>
+              <tr><td>Lifecycle exceptions</td><td>A renderer or batch is closed, foreign, or does not contain the requested tile</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Rentile does not retry or fall back on its own. Use the typed fields to decide
+          whether your app should retry, refetch, choose another renderer, or stop.
+          <code>CancellationException</code> is propagated unchanged.
+        </p>
+        <div class="callout warning">
+          Errors from your transport and store adapters may contain signed URLs, headers, or
+          file paths. Rentile intentionally does not copy their messages or causes into its
+          public exceptions. Record redacted adapter telemetry inside the adapter itself.
+        </div>
+      </section>
+
+      <section class="doc-section" id="lifecycle">
+        <p class="doc-label">Lifecycle</p>
+        <h2>Close quickly, await when cleanup matters</h2>
+        <p>
+          <code>BasemapRasterizer</code> and <code>PreparedBatch</code> are common Kotlin
+          <code>AutoCloseable</code>s. Calling <code>close()</code> is idempotent, non-blocking,
+          and non-throwing. It prevents new work and starts cancellation of owned jobs.
+        </p>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>Renderer ownership</span></div>
+          <pre><code><span class="kw">val</span> rasterizer = Rentile.create(configuration)
+
+<span class="kw">try</span> {
+    renderNeededTiles(rasterizer)
+} <span class="kw">finally</span> {
+    rasterizer.close()
+    rasterizer.awaitClosed()
+}</code></pre>
+        </div>
+        <p>
+          <code>awaitClosed()</code> suspends until workers, native objects, leases, and secret
+          state are released. Use it when teardown must be observed—for example, before a test
+          ends or a long-lived service replaces its renderer.
+        </p>
+      </section>
+
+      <section class="doc-section" id="compatibility">
+        <p class="doc-label">Renderer coverage</p>
+        <h2>Check your style before committing</h2>
+        <p>
+          Rentile follows a pinned <code>rentile-v1</code> basemap profile. It does not promise
+          support for every current or future MapLibre Style Specification feature. A retained
+          unsupported construct fails during style preparation instead of producing a quietly
+          incomplete map.
+        </p>
+        <div class="two-column-list">
+          <div>
+            <h3>Implemented today</h3>
+            <ul>
+              <li>Style version 8 validation</li>
+              <li>Constant-color background layers</li>
+              <li>Inline XYZ and TMS raster sources</li>
+              <li>Default raster paint behavior and strict PNG pass-through</li>
+              <li>256 px and 512 px PNG outputs</li>
+              <li>Inline, remote, and prefetched style inputs</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Not implemented yet</h3>
+            <ul>
+              <li>Vector fills and lines</li>
+              <li>TileJSON and GeoJSON source planning</li>
+              <li>Hillshade, patterns, and independent icons</li>
+              <li>Non-default raster paint expressions</li>
+              <li>Text, glyphs, shaping, and text-coupled icons</li>
+              <li>Globe, terrain, fog, sky, and interactive camera state</li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout">
+          The compatibility profile is intentionally strict. If preparation fails, inspect
+          the structured diagnostics to identify the layer and construct that needs support.
         </div>
       </section>
 
@@ -90,230 +393,48 @@
         <h2>Supported platforms</h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Platform</th><th>KMP target</th><th>Execution contract</th></tr></thead>
+            <thead><tr><th>Platform</th><th>KMP target</th><th>Execution model</th></tr></thead>
             <tbody>
-              <tr><td>Android arm64</td><td><code>androidTarget</code></td><td>Background thread; no Looper or Android UI</td></tr>
-              <tr><td>Android x86_64</td><td><code>androidTarget</code></td><td>Background thread; emulator proof</td></tr>
-              <tr><td>iPhone/iPad</td><td><code>iosArm64</code></td><td>Background queue; no UIKit view</td></tr>
-              <tr><td>Apple Silicon Simulator</td><td><code>iosSimulatorArm64</code></td><td>Background queue</td></tr>
+              <tr><td>Android arm64</td><td><code>androidTarget</code></td><td>Background work; no View or Looper contract</td></tr>
+              <tr><td>Android x86_64</td><td><code>androidTarget</code></td><td>Background work; emulator-compatible native runtime</td></tr>
+              <tr><td>iPhone and iPad</td><td><code>iosArm64</code></td><td>Background work; no UIKit view</td></tr>
+              <tr><td>Apple Silicon Simulator</td><td><code>iosSimulatorArm64</code></td><td>Background work</td></tr>
               <tr><td>Linux x64</td><td><code>linuxX64</code></td><td>Headless native process</td></tr>
               <tr><td>Linux arm64</td><td><code>linuxArm64</code></td><td>Headless native process</td></tr>
             </tbody>
           </table>
         </div>
-      </section>
-
-      <section class="doc-section" id="profile">
-        <p class="doc-label">Compatibility</p>
-        <h2>A pinned compatibility profile</h2>
-        <p>
-          Rentile intentionally implements a pinned basemap profile rather than arbitrary
-          future MapLibre Style Specification behavior. Preparation fails when a retained
-          layer reaches unsupported syntax.
-        </p>
-        <div class="two-column-list">
-          <div>
-            <h3>Included</h3>
-            <ul>
-              <li>Background, fill, line, raster, and hillshade</li>
-              <li>Sprite-backed fill, line, and background patterns</li>
-              <li>Approved independent RGBA and SDF icons</li>
-              <li>Flattened top-down building footprints</li>
-              <li>Vector, raster, DEM, sprite, TileJSON, and selected GeoJSON resources</li>
-            </ul>
-          </div>
-          <div>
-            <h3>Excluded</h3>
-            <ul>
-              <li>Text rendering, glyphs, fonts, shaping, and bidi</li>
-              <li>Text-coupled icons</li>
-              <li>Fog, sky, snow, root terrain, and globe presentation</li>
-              <li>Perspective extrusion and UI camera state</li>
-              <li>Feature state, fades, and wall-clock animation</li>
-            </ul>
-          </div>
-        </div>
-      </section>
-
-      <section class="doc-section" id="api">
-        <p class="doc-label">API</p>
-        <h2>Prepare, inspect, render</h2>
-        <p>
-          The split API exposes deterministic output content keys after all resource access
-          completes but before drawing. A convenience method may compose the stages without
-          changing their semantics.
-        </p>
-        <div class="code-card doc-code">
-          <div class="code-head"><span>Contract sketch</span></div>
-          <pre><code><span class="kw">val</span> rasterizer = Rentile.create(configuration)
-
-<span class="kw">interface</span> BasemapRasterizer : AutoCloseable {
-    <span class="kw">suspend fun</span> prepare(
-        style: StyleInput,
-        policy: CompatibilityPolicy = CompatibilityPolicy.Default,
-    ): PreparedStyle
-
-    <span class="kw">suspend fun</span> prepareBatch(
-        style: PreparedStyle,
-        tiles: List&lt;TileId&gt;,
-        options: RenderOptions = RenderOptions(),
-        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
-    ): PreparedBatch
-
-    <span class="kw">suspend fun</span> render(
-        batch: PreparedBatch,
-        tiles: List&lt;TileId&gt; = batch.tiles,
-    ): RenderBatch
-
-    <span class="kw">suspend fun</span> awaitClosed()
-}</code></pre>
-        </div>
-        <h3>Output boundary</h3>
-        <div class="code-card doc-code">
-          <div class="code-head"><span>Rendered tile</span></div>
-          <pre><code><span class="kw">data class</span> RenderedTile(
-    <span class="kw">val</span> id: TileId,
-    <span class="kw">val</span> pngBytes: ByteArray,
-    <span class="kw">val</span> contentKey: String,
-    <span class="kw">val</span> diagnostics: List&lt;RenderDiagnostic&gt;,
-)</code></pre>
-        </div>
-        <p>Every successful tile is encoded PNG. A validated source PNG may pass through unchanged when it is the sole opaque layer at the requested size; otherwise Rentile composites and re-encodes. PNG byte streams are not promised to match across platforms, while decoded pixels follow the versioned tolerance contract.</p>
-      </section>
-
-      <section class="doc-section" id="resources">
-        <p class="doc-label">I/O boundary</p>
-        <h2>Host-provided transport</h2>
-        <p>
-          Rentile does not export Ktor, OkHttp, Darwin, CIO, or Curl through its public
-          surface. The host implements a bounded request/response exchange using Rentile's
-          project-owned models. Rentile owns URL canonicalization, redirect policy, resource
-          planning, session decoration, cache identity, and redacted metrics.
-        </p>
-        <h3>Credentials</h3>
-        <p>
-          Provider credentials may already be present in the style JSON. Rentile detects
-          those first. The caller supplies credentials separately only when a required
-          resource lacks them. Keys and session identifiers never enter logs, diagnostics,
-          file paths, or content identities. Credential-bearing URLs live only in a
-          renderer-owned secret context; <code>awaitClosed()</code> observes that context
-          being cleared.
-        </p>
-        <div class="callout warning">
-          Credentials are attached only to exact configured HTTPS origins and are removed on origin-changing redirects.
-        </div>
-      </section>
-
-      <section class="doc-section" id="cache">
-        <p class="doc-label">Caching</p>
-        <h2>Raw resources in Rentile, output tiles in the caller</h2>
-        <div class="ownership-grid docs-ownership">
-          <div>
-            <h3>Rentile</h3>
-            <ul class="check-list">
-              <li>Persistent encoded raw resources</li>
-              <li>Bounded in-memory compiled styles</li>
-              <li>Bounded in-memory decoded sources</li>
-              <li>In-process single-flight work</li>
-            </ul>
-          </div>
-          <div>
-            <h3>Caller</h3>
-            <ul class="check-list muted">
-              <li>Rendered PNG storage</li>
-              <li>Output eviction policy</li>
-              <li>Cross-process output coordination</li>
-              <li>Fallback rendered-tile namespaces</li>
-            </ul>
-          </div>
-        </div>
-        <p>A failed tile never rolls back successful raw-resource cache entries acquired for other work. Partial or corrupt entries are never committed.</p>
-      </section>
-
-      <section class="doc-section" id="errors">
-        <p class="doc-label">Failures</p>
-        <h2>Typed errors, caller-owned recovery</h2>
-        <p>
-          Rentile reports full, redacted diagnostics through custom exception families. It
-          does not retry, refetch, substitute, fall back, or return partial tile batches.
-          The caller decides whether to retry, cancel, or choose another renderer.
-        </p>
-        <div class="exception-grid">
-          <code>StylePreparationException</code>
-          <code>ResourceAcquisitionException</code>
-          <code>ResourceDecodeException</code>
-          <code>RasterizationException</code>
-          <code>PngEncodingException</code>
-          <code>ResourceStoreException</code>
-          <code>SafetyLimitException</code>
-          <code>PreparedBatchClosedException</code>
-          <code>RasterizerClosedException</code>
-          <code>ForeignPreparedStyleException</code>
-          <code>ForeignPreparedBatchException</code>
-          <code>InvalidTileIdException</code>
-          <code>TileNotInPreparedBatchException</code>
-          <code>BatchRenderException</code>
-        </div>
-        <p>
-          Every <code>RentileException</code> carries a stable <code>code</code>, pipeline
-          <code>stage</code>, redacted <code>diagnostics</code>, and
-          <code>affectedTiles</code>. Resource failures also identify the resource class,
-          sanitized resource identity, status code, and retry delay when available. Human
-          messages are explanatory and are not stable machine contracts.
-        </p>
-        <p>
-          Messages and causes thrown by injected transport or store adapters are not copied
-          into Rentile exceptions because they may contain signed URLs, headers, or file
-          paths. Callers that need adapter-specific telemetry should record a redacted form
-          inside their adapter; renderer recovery should use Rentile's typed fields.
-        </p>
-        <p>
-          <code>CancellationException</code> is never wrapped. The first terminal failure
-          cancels only work owned by that call; shared work continues while another waiter
-          remains. Rentile does not retry or classify a failure as retryable—the caller uses
-          the typed facts to decide whether to refetch, cancel, fall back, or stop.
-        </p>
-      </section>
-
-      <section class="doc-section" id="lifecycle">
-        <p class="doc-label">Lifecycle</p>
-        <h2>Common Kotlin closeables</h2>
-        <p>
-          <code>BasemapRasterizer</code> and <code>PreparedBatch</code> implement common
-          <code>AutoCloseable</code>. Closing is idempotent, non-blocking, and non-throwing.
-          It prevents new operations and cancels active renderer-owned jobs. Call
-          <code>awaitClosed()</code> when cancellation and native cleanup must be observed.
-        </p>
-        <p>
-          Jobs are cancellable; the caller controls priority by deciding what to submit and
-          cancel. Rentile bounds concurrent exchanges, decoding, decoded-memory residency,
-          and metatile workers without exposing a priority queue.
-        </p>
-      </section>
-
-      <section class="doc-section" id="status">
-        <p class="doc-label">Status</p>
-        <h2>Foundation and first raster slice implemented</h2>
-        <p>
-          The KMP publication skeleton, ABI checks, compatibility manifest, lifecycle,
-          constant backgrounds, inline raster planning, bounded resource fetches, raw-cache
-          behavior, raster composition, and strict PNG pass-through are implemented. Vector,
-          TileJSON, advanced raster paint, hillshade, patterns, and icons remain gated work.
-          The first public artifact is not yet available. Performance profiling remains
-          intentionally deferred until representative standalone rendering slices exist.
-        </p>
         <div class="doc-actions">
-          <a class="button primary" href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">Follow development</a>
-          <a class="button secondary" href="https://github.com/rohittp0/rentile/tree/main/docs/adr" target="_blank" rel="noopener noreferrer">Read ADRs</a>
+          <a class="button primary" href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">View the source</a>
+          <a class="button secondary" href="https://github.com/rohittp0/rentile/tree/main/docs/adr" target="_blank" rel="noopener noreferrer">Read the decisions</a>
         </div>
       </section>
+
+      <aside class="companion-note" aria-label="Similar projects by the same developer">
+        <p class="eyebrow">More from Rohit T P</p>
+        <h2>Looking for more focused Android and Kotlin tools?</h2>
+        <p>
+          Explore <a href="https://rohittp.com/dependables/" target="_blank" rel="noopener noreferrer">Dependables</a>
+          for small Android libraries and
+          <a href="https://rohittp.com/plugables/" target="_blank" rel="noopener noreferrer">Plugables</a>
+          for practical Gradle plugins. They are similar single-purpose projects from the same developer.
+        </p>
+      </aside>
     </article>
   </main>
 
   <footer class="site-footer">
     <div class="shell footer-inner">
-      <div><a class="footer-brand" href="index.html">Rentile</a><p>Headless KMP basemap tile rasterization.</p></div>
-      <div class="footer-links"><a href="index.html">Home</a><a href="https://github.com/rohittp0/rentile">Source</a></div>
+      <div>
+        <a class="footer-brand" href="index.html">Rentile</a>
+        <p>Headless basemap tile rendering for Kotlin Multiplatform.</p>
+      </div>
+      <div class="footer-links">
+        <a href="index.html">Overview</a>
+        <a href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">Source</a>
+        <a href="https://rohittp.com/dependables/" target="_blank" rel="noopener noreferrer">Dependables</a>
+        <a href="https://rohittp.com/plugables/" target="_blank" rel="noopener noreferrer">Plugables</a>
+      </div>
     </div>
   </footer>
 </body>
