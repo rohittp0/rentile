@@ -2112,7 +2112,7 @@ private fun repeatedLineAnchors(points: List<RenderPoint>, spacing: Double): Lis
     return anchors
 }
 
-private val ICON_TOKEN = Regex("\\{([^{}]+)}")
+private val ICON_TOKEN = Regex("\\{([^{}]+)\\}")
 
 private data class SpriteRenderImage(
     val entry: SpriteAtlasEntry,

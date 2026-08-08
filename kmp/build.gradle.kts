@@ -104,6 +104,7 @@ kotlin {
         compileSdk = 37
         minSdk = 24
         withHostTest {}
+        withDeviceTest {}
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_21)
         }
@@ -157,6 +158,12 @@ kotlin {
 
         getByName("androidHostTest").dependencies {
             implementation("org.jetbrains.skiko:skiko-awt-runtime-$skikoHostOs-$skikoHostArch:${libs.versions.skiko.get()}")
+        }
+
+        getByName("androidDeviceTest").dependencies {
+            implementation(libs.junit)
+            implementation(libs.androidx.test.runner)
+            implementation(libs.androidx.test.junit)
         }
     }
 }
