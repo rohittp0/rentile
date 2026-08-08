@@ -85,6 +85,7 @@ jobs:
       - name: Resolve aggregate coordinate from clean consumer
         run: >-
           ./gradlew --no-configuration-cache -p consumer-smoke
+          -PrentileVersion=${{ needs.detect-version.outputs.version }}
           compileAndroidMain
           compileKotlinIosArm64
           compileKotlinIosSimulatorArm64
