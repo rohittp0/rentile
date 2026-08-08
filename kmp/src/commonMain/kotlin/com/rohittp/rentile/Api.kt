@@ -274,6 +274,21 @@ public interface BasemapRasterizer : AutoCloseable {
         policy: CompatibilityPolicy = CompatibilityPolicy.Default,
     ): PreparedStyle
 
+    /**
+     * Stable identity for a caller-owned rendered-output cache lookup.
+     *
+     * Unlike [PreparedBatch.contentKeys], this key is available before raw tile acquisition. It
+     * includes every output-affecting request input known at this boundary and deliberately omits
+     * credentials, sessions, validators, and acquired-resource digests. A caller must store the
+     * eventual content key and substitution provenance beside the rendered bytes it indexes with
+     * this value.
+     */
+    public fun outputRequestKey(
+        style: PreparedStyle,
+        tile: TileId,
+        options: RenderOptions = RenderOptions(),
+    ): String
+
     public suspend fun prepareBatch(
         style: PreparedStyle,
         tiles: List<TileId>,

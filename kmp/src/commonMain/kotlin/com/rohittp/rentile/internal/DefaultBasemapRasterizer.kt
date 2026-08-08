@@ -204,6 +204,27 @@ private class DefaultBasemapRasterizer(
         }
     }
 
+    override fun outputRequestKey(
+        style: PreparedStyle,
+        tile: TileId,
+        options: RenderOptions,
+    ): String {
+        val compiled = requireOwnedStyle(style)
+        validateTile(tile, compiled.policy)
+        return buildString {
+            append("rentile-output-request-1\n")
+            append(compiled.digest)
+            append('\n')
+            append(tile.z)
+            append('/')
+            append(canonicalX(tile))
+            append('/')
+            append(tile.y)
+            append('\n')
+            append(options.outputSizePx)
+        }.sha256Hex()
+    }
+
     override suspend fun prepareBatch(
         style: PreparedStyle,
         tiles: List<TileId>,

@@ -184,6 +184,31 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun outputRequestKeyIsAvailableBeforeAcquisitionAndTracksOutputInputs() = runTest {
+        val rasterizer = testRasterizer()
+        try {
+            val firstStyle = rasterizer.prepare(
+                StyleInput.InlineJson("""{"version":8,"layers":[]}"""),
+            )
+            val secondStyle = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"layers":[{"id":"base","type":"background"}]}""",
+                ),
+            )
+            val tile = TileId(1, 0, 0)
+            val first = rasterizer.outputRequestKey(firstStyle, tile, RenderOptions(256))
+
+            assertEquals(first, rasterizer.outputRequestKey(firstStyle, tile, RenderOptions(256)))
+            assertNotEquals(first, rasterizer.outputRequestKey(firstStyle, tile, RenderOptions(512)))
+            assertNotEquals(first, rasterizer.outputRequestKey(firstStyle, TileId(1, 1, 0), RenderOptions(256)))
+            assertNotEquals(first, rasterizer.outputRequestKey(secondStyle, tile, RenderOptions(256)))
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun closedPreparedBatchFailsWithTypedLifecycleError() = runTest {
         val rasterizer = testRasterizer()
         try {
