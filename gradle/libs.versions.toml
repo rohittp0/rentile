@@ -7,6 +7,7 @@ serializationJson = "1.11.0"
 okio = "3.18.1"
 skiko = "0.148.2"
 wire = "6.4.5"
+ktor = "3.5.1"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -16,6 +17,9 @@ okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 okio-fakefilesystem = { module = "com.squareup.okio:okio-fakefilesystem", version.ref = "okio" }
 skiko = { module = "org.jetbrains.skiko:skiko", version.ref = "skiko" }
 wire-runtime = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-curl = { module = "io.ktor:ktor-client-curl", version.ref = "ktor" }
+ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

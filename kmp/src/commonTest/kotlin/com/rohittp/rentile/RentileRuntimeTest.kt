@@ -460,9 +460,10 @@ class RentileRuntimeTest {
         val mvt = overzoomVectorTile()
         val spritePng = renderSyntheticPng(8)
         val requestedClasses = mutableListOf<ResourceClass>()
+        val requestedClassesMutex = Mutex()
         val rasterizer = testRasterizer(
             transport = ResourceTransport { request ->
-                requestedClasses += request.resourceClass
+                requestedClassesMutex.withLock { requestedClasses += request.resourceClass }
                 when (request.resourceClass) {
                     ResourceClass.SPRITE_JSON -> TransportResponse(
                         200,
@@ -486,7 +487,7 @@ class RentileRuntimeTest {
             assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED })
             assertEquals(
                 setOf(ResourceClass.SPRITE_JSON, ResourceClass.SPRITE_IMAGE, ResourceClass.VECTOR_TILE),
-                requestedClasses.toSet(),
+                requestedClassesMutex.withLock { requestedClasses.toSet() },
             )
         } finally {
             rasterizer.close()

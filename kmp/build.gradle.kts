@@ -4,6 +4,8 @@ import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest
+import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest
 import javax.inject.Inject
 
 plugins {
@@ -131,6 +133,28 @@ kotlin {
             implementation(libs.okio.fakefilesystem)
         }
 
+        listOf("linuxX64Test", "linuxArm64Test").forEach { sourceSetName ->
+            getByName(sourceSetName) {
+                kotlin.srcDir("src/nativeCorpusTest/kotlin")
+                kotlin.srcDir("src/linuxCorpusTest/kotlin")
+                dependencies {
+                    implementation(libs.ktor.client.core)
+                    implementation(libs.ktor.client.curl)
+                }
+            }
+        }
+
+        listOf("iosArm64Test", "iosSimulatorArm64Test").forEach { sourceSetName ->
+            getByName(sourceSetName) {
+                kotlin.srcDir("src/nativeCorpusTest/kotlin")
+                kotlin.srcDir("src/appleCorpusTest/kotlin")
+                dependencies {
+                    implementation(libs.ktor.client.core)
+                    implementation(libs.ktor.client.darwin)
+                }
+            }
+        }
+
         getByName("androidHostTest").dependencies {
             implementation("org.jetbrains.skiko:skiko-awt-runtime-$skikoHostOs-$skikoHostArch:${libs.versions.skiko.get()}")
         }
@@ -204,4 +228,34 @@ tasks.matching { it.name == "testAndroidHostTest" }.configureEach {
     inputs.property("rentileCorpusReportDirectory", corpusReportDirectory.orElse(""))
     inputs.property("rentileCorpusStyleId", corpusStyleId.orElse(""))
     outputs.upToDateWhen { System.getenv("RENTILE_COVERAGE_MANIFEST").isNullOrBlank() }
+}
+
+val nativeCorpusEnabled = providers.environmentVariable("RENTILE_NATIVE_CORPUS")
+val nativeHttpsBridgeOrigin = providers.environmentVariable("RENTILE_NATIVE_HTTPS_BRIDGE_ORIGIN")
+val nativeCorpusZ0Only = providers.environmentVariable("RENTILE_NATIVE_CORPUS_Z0_ONLY")
+val nativeCorpusOutputDirectory = providers.environmentVariable("RENTILE_NATIVE_CORPUS_OUTPUT_DIR")
+tasks.withType<KotlinNativeTest>().configureEach {
+    inputs.property("rentileNativeCorpus", nativeCorpusEnabled.orElse(""))
+    inputs.property("rentileNativeHttpsBridgeOrigin", nativeHttpsBridgeOrigin.orElse(""))
+    inputs.property("rentileNativeCorpusZ0Only", nativeCorpusZ0Only.orElse(""))
+    inputs.property("rentileNativeCorpusOutputDirectory", nativeCorpusOutputDirectory.orElse(""))
+    nativeCorpusEnabled.orNull?.let { environment("RENTILE_NATIVE_CORPUS", it) }
+    nativeHttpsBridgeOrigin.orNull?.let { environment("RENTILE_NATIVE_HTTPS_BRIDGE_ORIGIN", it) }
+    nativeCorpusZ0Only.orNull?.let { environment("RENTILE_NATIVE_CORPUS_Z0_ONLY", it) }
+    nativeCorpusOutputDirectory.orNull?.let { environment("RENTILE_NATIVE_CORPUS_OUTPUT_DIR", it) }
+}
+
+val iosSimulatorId = providers.environmentVariable("RENTILE_IOS_SIMULATOR_ID")
+tasks.withType<KotlinNativeSimulatorTest>().configureEach {
+    iosSimulatorId.orNull?.let { device.set(it) }
+    nativeCorpusEnabled.orNull?.let { environment("SIMCTL_CHILD_RENTILE_NATIVE_CORPUS", it) }
+    nativeHttpsBridgeOrigin.orNull?.let {
+        environment("SIMCTL_CHILD_RENTILE_NATIVE_HTTPS_BRIDGE_ORIGIN", it)
+    }
+    nativeCorpusZ0Only.orNull?.let {
+        environment("SIMCTL_CHILD_RENTILE_NATIVE_CORPUS_Z0_ONLY", it)
+    }
+    nativeCorpusOutputDirectory.orNull?.let {
+        environment("SIMCTL_CHILD_RENTILE_NATIVE_CORPUS_OUTPUT_DIR", it)
+    }
 }
