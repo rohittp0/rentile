@@ -21,6 +21,7 @@ import com.rohittp.rentile.internal.recordSafely
 import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.SingleFlight
+import com.rohittp.rentile.internal.executeTileRequestWithRetry
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -99,7 +100,8 @@ internal class RasterResourceAcquirer(
         sanitizedId: String,
         key: RawResourceKey,
     ): RasterResource {
-        val response = workCoordinator.exchange(url) {
+        val response = executeTileRequestWithRetry {
+            workCoordinator.exchange(url) {
                 configuration.metricsSink.recordSafely(
                     RentileMetric(MetricName.RESOURCE_REQUEST, resourceClass = sample.source.resourceClass),
                 )
@@ -121,6 +123,7 @@ internal class RasterResourceAcquirer(
                         affectedTiles = listOf(sample.outputTile),
                     )
                 }
+            }
         }
         if (response.statusCode !in 200..299) {
             throw ResourceAcquisitionException(

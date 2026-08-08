@@ -813,6 +813,325 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun substitutionBudgetCountsFailedOutputTilesAcrossResources() = runTest {
+        val sourcePng = renderSyntheticPng(256)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.url.contains("/2/0/0.png") || request.url.contains("/2/1/0.png")) {
+                    TransportResponse(404, ByteArray(0))
+                } else {
+                    TransportResponse(200, sourcePng)
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle("secret"))
+
+            val error = assertFailsWith<TileSubstitutionLimitException> {
+                rasterizer.prepareBatch(
+                    style = style,
+                    tiles = listOf(TileId(2, 0, 0), TileId(2, 1, 0), TileId(2, 2, 0)),
+                    options = RenderOptions(256),
+                    substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+                )
+            }
+
+            assertEquals(1, error.maximumSubstitutedTiles)
+            assertEquals(2, error.requiredSubstitutedTiles)
+            assertEquals(setOf(TileId(2, 0, 0), TileId(2, 1, 0)), error.affectedTiles.toSet())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun substitutionPrefersAllImmediateChildren() = runTest {
+        val sourcePng = renderSyntheticPng(256)
+        val requestedUrls = mutableListOf<String>()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                requestedUrls += request.url
+                when {
+                    request.url.contains("/1/0/0.png") -> TransportResponse(404, ByteArray(0))
+                    else -> TransportResponse(200, sourcePng)
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle("secret"))
+            val tile = TileId(1, 0, 0)
+            val batch = rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(tile),
+                options = RenderOptions(256),
+                substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+            )
+            try {
+                val substitution = batch.substitutions.getValue(tile).single()
+                val rendered = rasterizer.render(batch).tiles.single()
+
+                assertEquals(TileSubstitutionStrategy.IMMEDIATE_CHILDREN, substitution.strategy)
+                assertEquals(
+                    setOf(TileId(2, 0, 0), TileId(2, 1, 0), TileId(2, 0, 1), TileId(2, 1, 1)),
+                    substitution.sourceTiles.toSet(),
+                )
+                assertTrue(requestedUrls.none { it.contains("/0/0/0.png") })
+                assertTrue(rendered.pngBytes.startsWithPngSignature())
+            } finally {
+                batch.close()
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun vectorChildSubstitutionMergesAllFourResourcesIntoOneRenderableTile() = runTest {
+        val vectorTile = overzoomVectorTile()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.url.contains("/1/0/0.pbf")) {
+                    TransportResponse(404, ByteArray(0))
+                } else {
+                    TransportResponse(200, vectorTile)
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"land","type":"fill","source":"v","source-layer":"land","paint":{"fill-color":"#00ff00"}}]}""",
+                ),
+            )
+            val tile = TileId(1, 0, 0)
+            val batch = rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(tile),
+                options = RenderOptions(256),
+                substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+            )
+            try {
+                val substitution = batch.substitutions.getValue(tile).single()
+                val rendered = rasterizer.render(batch).tiles.single()
+
+                assertEquals(ResourceClass.VECTOR_TILE, substitution.resourceClass)
+                assertEquals(TileSubstitutionStrategy.IMMEDIATE_CHILDREN, substitution.strategy)
+                assertEquals(4, substitution.sourceTiles.size)
+                assertTrue(rendered.pngBytes.startsWithPngSignature())
+            } finally {
+                batch.close()
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun preparedStyleExposesEvaluatedGroundRadianceWithoutStyleSecrets() = runTest {
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"lights":[{"id":"ambient","type":"ambient","properties":{"color":"#804020","intensity":0.25}},{"id":"sun","type":"directional","properties":{"color":"#2060c0","intensity":0.75,"direction":[200.0,40.0]}}],"layers":[]}""",
+                ),
+            )
+
+            val light = checkNotNull(rasterizer.groundRadianceDescriptor(style))
+
+            assertEquals(0.28015833334292367, light.red, 1e-15)
+            assertEquals(0.3152992357932026, light.green, 1e-15)
+            assertEquals(0.5875155021576477, light.blue, 1e-15)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun preparedStyleExposesValidatedLabelAndTerrainResourcesWithoutTemplates() = runTest {
+        val vectorTile = overzoomVectorTile()
+        val demTile = renderTerrainDemPng(256)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.VECTOR_TILE -> TransportResponse(200, vectorTile)
+                    ResourceClass.DEM_TILE -> TransportResponse(200, demTile)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"private-source":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf?key=private"],"maxzoom":14},"dem":{"type":"raster-dem","tiles":["https://tiles.example.test/{z}/{x}/{y}.png?key=private"],"tileSize":256,"maxzoom":12,"encoding":"terrarium"}},"terrain":{"source":"dem"},"layers":[{"id":"places","type":"symbol","source":"private-source","source-layer":"place","metadata":{"token":"private"},"layout":{"text-field":["coalesce",["get","name:en"],["get","name"]],"text-size":16}}]}""",
+                ),
+            )
+            val requested = TileId(3, 2, 1)
+
+            val descriptor = rasterizer.labelLayerDescriptors(style).single()
+            val terrain = rasterizer.terrainSourceDescriptor(style)!!
+            val labelTile = rasterizer.acquireLabelTiles(style, listOf(requested)).single()
+            val dem = rasterizer.acquireTerrainTiles(style, listOf(requested)).single()
+
+            assertEquals("places", descriptor.id)
+            assertEquals("place", descriptor.sourceLayer)
+            assertEquals(14, descriptor.sourceMaximumZoom)
+            assertFalse(descriptor.layerJson.contains("private"))
+            assertEquals(TerrainDemEncoding.TERRARIUM, terrain.encoding)
+            assertEquals(12, terrain.maximumZoom)
+            assertEquals(256, terrain.tileSizePx)
+            assertEquals(requested, labelTile.requestedTile)
+            assertEquals(requested, labelTile.sourceTile)
+            assertTrue(labelTile.bytes.contentEquals(vectorTile))
+            assertEquals(TerrainDemEncoding.TERRARIUM, dem.encoding)
+            assertTrue(dem.bytes.contentEquals(demTile))
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun auxiliaryLabelAcquisitionIsAllOrError() = runTest {
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { TransportResponse(404, ByteArray(0)) },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","layout":{"text-field":"{name}"}}]}""",
+                ),
+            )
+
+            val error = assertFailsWith<ResourceAcquisitionException> {
+                rasterizer.acquireLabelTiles(style, listOf(TileId(2, 1, 1)))
+            }
+
+            assertEquals(ResourceClass.VECTOR_TILE, error.resourceClass)
+            assertEquals(404, error.statusCode)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun failedChildSetFallsBackToNearestAncestor() = runTest {
+        val sourcePng = renderSyntheticPng(256)
+        val requestedUrls = mutableListOf<String>()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                requestedUrls += request.url
+                when {
+                    request.url.contains("/1/0/0.png") -> TransportResponse(404, ByteArray(0))
+                    request.url.contains("/2/1/1.png") -> TransportResponse(404, ByteArray(0))
+                    else -> TransportResponse(200, sourcePng)
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle("secret"))
+            val tile = TileId(1, 0, 0)
+            val batch = rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(tile),
+                options = RenderOptions(256),
+                substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+            )
+            try {
+                val substitution = batch.substitutions.getValue(tile).single()
+
+                assertEquals(TileSubstitutionStrategy.ANCESTOR, substitution.strategy)
+                assertEquals(1, substitution.ancestorZoomDistance)
+                assertEquals(listOf(TileId(0, 0, 0)), substitution.sourceTiles)
+                assertTrue(requestedUrls.any { it.contains("/2/1/1.png") })
+                assertTrue(requestedUrls.any { it.contains("/0/0/0.png") })
+            } finally {
+                batch.close()
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun unavailableChildrenAndAncestorsFailWithSpecificSubstitutionError() = runTest {
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { TransportResponse(404, ByteArray(0)) },
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle("secret"))
+            val tile = TileId(1, 0, 0)
+
+            val error = assertFailsWith<TileSubstitutionException> {
+                rasterizer.prepareBatch(
+                    style = style,
+                    tiles = listOf(tile),
+                    options = RenderOptions(256),
+                    substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+                )
+            }
+
+            assertEquals(tile, error.tile)
+            assertEquals(ResourceClass.RASTER_TILE, error.resourceClass)
+            assertEquals(
+                listOf(TileSubstitutionStrategy.IMMEDIATE_CHILDREN, TileSubstitutionStrategy.ANCESTOR),
+                error.attemptedStrategies,
+            )
+            assertEquals(5, error.substitutionFailures.size)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun retryExactUpgradesTheExistingBatchWithoutAddingSubstitutions() = runTest {
+        val sourcePng = renderSyntheticPng(256)
+        var exactAvailable = false
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.url.contains("/1/0/0.png") && !exactAvailable) {
+                    TransportResponse(404, ByteArray(0))
+                } else {
+                    TransportResponse(200, sourcePng)
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle("secret"))
+            val tile = TileId(1, 0, 0)
+            val batch = rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(tile),
+                options = RenderOptions(256),
+                substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+            )
+            try {
+                val substitutedContentKey = batch.contentKeys.getValue(tile)
+                exactAvailable = true
+
+                val recovery = rasterizer.retryExact(batch)
+
+                assertEquals(setOf(tile), recovery.upgradedTiles)
+                assertTrue(recovery.remainingSubstitutedTiles.isEmpty())
+                assertTrue(batch.substitutions.isEmpty())
+                assertNotEquals(substitutedContentKey, batch.contentKeys.getValue(tile))
+                assertTrue(rasterizer.render(batch).tiles.single().pngBytes.startsWithPngSignature())
+            } finally {
+                batch.close()
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun rasterFetchesUseConfiguredParallelismWithoutExceedingIt() = runTest {
         val sourcePng = renderSyntheticPng(256)
         val stateMutex = Mutex()

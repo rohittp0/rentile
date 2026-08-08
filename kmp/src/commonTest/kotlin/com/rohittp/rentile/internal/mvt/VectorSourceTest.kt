@@ -86,4 +86,39 @@ class VectorSourceTest {
             context.clear()
         }
     }
+
+    @Test
+    fun childAndAncestorSamplesPreserveTheRequestedOutputWindow() {
+        val context = SecretContext()
+        try {
+            val source = CompiledVectorSource(
+                idDigest = "source",
+                tileTemplates = listOf(context.protectUrl("https://example.test/{z}/{x}/{y}.pbf")),
+                scheme = TileScheme.XYZ,
+                minZoom = 0,
+                maxZoom = 22,
+            )
+            val requested = source.sampleFor(TileId(z = 4, x = 13, y = 10))!!
+
+            assertEquals(
+                listOf(
+                    Triple(5, 26, 20),
+                    Triple(5, 27, 20),
+                    Triple(5, 26, 21),
+                    Triple(5, 27, 21),
+                ),
+                requested.immediateChildren().map { Triple(it.sourceZ, it.sourceX, it.sourceY) },
+            )
+            val ancestor = requested.ancestor(2)!!
+            assertEquals(2, ancestor.sourceZ)
+            assertEquals(3, ancestor.sourceX)
+            assertEquals(2, ancestor.sourceY)
+            assertEquals(4, ancestor.childScale)
+            assertEquals(1, ancestor.childX)
+            assertEquals(2, ancestor.childY)
+            assertEquals(requested.outputTile, ancestor.outputTile)
+        } finally {
+            context.clear()
+        }
+    }
 }

@@ -12,6 +12,7 @@ import com.rohittp.rentile.RentileMetric
 import com.rohittp.rentile.ResourceAccessMode
 import com.rohittp.rentile.ResourceAcquisitionException
 import com.rohittp.rentile.ResourceClass
+import com.rohittp.rentile.ResourceSubstitution
 import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.ResourceStoreException
 import com.rohittp.rentile.SafetyLimitException
@@ -19,6 +20,7 @@ import com.rohittp.rentile.StoredRawResource
 import com.rohittp.rentile.TransportRequest
 import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.SingleFlight
+import com.rohittp.rentile.internal.executeTileRequestWithRetry
 import com.rohittp.rentile.internal.recordSafely
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
@@ -35,6 +37,9 @@ internal data class VectorResource(
     val tile: DecodedVectorTile,
     val contentDigest: String,
     val diagnostics: List<RenderDiagnostic>,
+    val encodedBytes: ByteArray? = null,
+    val exactSample: VectorTileSample = sample,
+    val substitution: ResourceSubstitution? = null,
 )
 
 internal class VectorResourceAcquirer(
@@ -70,7 +75,13 @@ internal class VectorResourceAcquirer(
                         RentileMetric(MetricName.RAW_CACHE_HIT, resourceClass = ResourceClass.VECTOR_TILE),
                     )
                     configuration.diagnosticSink.recordSafely(diagnostic)
-                    return VectorResource(sample, decoded, actualDigest, listOf(diagnostic))
+                    return VectorResource(
+                        sample = sample,
+                        tile = decoded,
+                        contentDigest = actualDigest,
+                        diagnostics = listOf(diagnostic),
+                        encodedBytes = bytes,
+                    )
                 }
                 removeStore(key)
             }
@@ -108,7 +119,8 @@ internal class VectorResourceAcquirer(
         sanitizedId: String,
         key: RawResourceKey,
     ): VectorResource {
-        val response = workCoordinator.exchange(url) {
+        val response = executeTileRequestWithRetry {
+            workCoordinator.exchange(url) {
             configuration.metricsSink.recordSafely(
                 RentileMetric(MetricName.RESOURCE_REQUEST, resourceClass = ResourceClass.VECTOR_TILE),
             )
@@ -129,6 +141,7 @@ internal class VectorResourceAcquirer(
                     sanitizedResourceId = sanitizedId,
                     affectedTiles = listOf(sample.outputTile),
                 )
+            }
             }
         }
         if (response.statusCode !in 200..299) {
@@ -176,7 +189,13 @@ internal class VectorResourceAcquirer(
                 resourceClass = ResourceClass.VECTOR_TILE,
             ),
         )
-        return VectorResource(sample, decoded, digest, emptyList())
+        return VectorResource(
+            sample = sample,
+            tile = decoded,
+            contentDigest = digest,
+            diagnostics = emptyList(),
+            encodedBytes = bytes,
+        )
     }
 
     private suspend fun decodeOrNull(

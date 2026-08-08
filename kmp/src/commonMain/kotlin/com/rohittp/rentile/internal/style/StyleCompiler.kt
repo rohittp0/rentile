@@ -3,6 +3,7 @@ package com.rohittp.rentile.internal.style
 import com.rohittp.rentile.CompatibilityPolicy
 import com.rohittp.rentile.DiagnosticCode
 import com.rohittp.rentile.DiagnosticSeverity
+import com.rohittp.rentile.LabelLayerDescriptor
 import com.rohittp.rentile.PipelineStage
 import com.rohittp.rentile.RenderDiagnostic
 import com.rohittp.rentile.ResourceClass
@@ -108,6 +109,7 @@ internal class StyleCompiler(
         val compiledVectorSources = mutableMapOf<String, CompiledVectorSource>()
         val layerIds = mutableSetOf<String>()
         val drawLayers = mutableListOf<CompiledDrawLayer>()
+        val labelLayers = mutableListOf<CompiledLabelLayer>()
 
         for ((index, element) in layers.withIndex()) {
             val layer = element as? JsonObject
@@ -137,6 +139,31 @@ internal class StyleCompiler(
 
             try {
                 if (type == "symbol") {
+                    if (isAuxiliaryLabelLayer(layer, layout, hidden, sources)) {
+                        val source = compileLayerVectorSource(
+                            layer = layer,
+                            sources = sources,
+                            compiledSources = compiledVectorSources,
+                            secretContext = secretContext,
+                            baseUri = baseUri,
+                            index = index,
+                            layerId = layerId,
+                        )
+                        if (source.geoJson == null) {
+                            val sourceLayer = sourceLayerFor(layer, source, index, layerId)
+                            labelLayers += CompiledLabelLayer(
+                                descriptor = LabelLayerDescriptor(
+                                    id = layerId,
+                                    sourceId = source.idDigest,
+                                    sourceLayer = sourceLayer,
+                                    sourceMinimumZoom = source.minZoom,
+                                    sourceMaximumZoom = source.maxZoom,
+                                    layerJson = sanitizedLabelLayerJson(layer),
+                                ),
+                                source = source,
+                            )
+                        }
+                    }
                     val classification = classifySymbol(layout, hidden, identity)
                     classification.diagnostic?.let(diagnostics::add)
                     if (classification.retained) {
@@ -257,7 +284,16 @@ internal class StyleCompiler(
             )
         }
 
-        val externalMetadataDigests = drawLayers.mapNotNull { layer ->
+        val terrainSource = compileTerrainSource(
+            root = root,
+            sources = sources,
+            compiledSources = compiledRasterSources,
+            secretContext = secretContext,
+            baseUri = baseUri,
+        )
+        val groundRadiance = compileGroundRadiance(root)
+
+        val externalMetadataDigests = (drawLayers.mapNotNull { layer ->
             when (layer) {
                 is RasterDrawLayer -> layer.source.metadataDigest
                 is HillshadeDrawLayer -> layer.source.metadataDigest
@@ -266,7 +302,8 @@ internal class StyleCompiler(
                 is IconDrawLayer -> layer.source.metadataDigest
                 else -> null
             }
-        }.distinct().sorted().joinToString("\n")
+        } + labelLayers.mapNotNull { it.source.metadataDigest } + listOfNotNull(terrainSource?.metadataDigest))
+            .distinct().sorted().joinToString("\n")
         val digest = (RENDERER_SEMANTIC_VERSION + "\n" + policy.id + "\n" +
             baseUri?.withRedactedAuthenticationQuery().orEmpty() + "\n" +
             root.redactedForIdentity().canonicalJson() + "\n" + externalMetadataDigests + "\n" +
@@ -277,9 +314,59 @@ internal class StyleCompiler(
             policy = policy,
             diagnostics = diagnostics.toList(),
             drawLayers = drawLayers.toList(),
+            labelLayers = labelLayers.toList(),
+            terrainSource = terrainSource,
+            groundRadiance = groundRadiance,
             spriteAtlas = spriteAtlas,
             secretContext = secretContext,
         )
+    }
+
+    private fun hasMeaningfulText(layout: JsonObject): Boolean {
+        val textField = layout["text-field"]
+        return textField != null && !(textField is JsonPrimitive && textField.isString && textField.content.isEmpty())
+    }
+
+    private fun sanitizedLabelLayerJson(layer: JsonObject): String = JsonObject(
+        listOf("id", "type", "source-layer", "minzoom", "maxzoom", "filter", "layout", "paint")
+            .mapNotNull { key -> layer[key]?.let { key to it } }
+            .toMap(),
+    ).canonicalJson()
+
+    private fun isAuxiliaryLabelLayer(
+        layer: JsonObject,
+        layout: JsonObject,
+        hidden: Boolean,
+        sources: JsonObject,
+    ): Boolean {
+        if (hidden || !hasMeaningfulText(layout)) return false
+        if (layer["source-layer"]?.asPrimitive()?.takeIf { it.isString }?.content != "place") return false
+        val sourceId = layer["source"]?.asPrimitive()?.takeIf { it.isString }?.content ?: return false
+        val source = sources[sourceId] as? JsonObject ?: return false
+        return source["type"]?.asPrimitive()?.takeIf { it.isString }?.content == "vector"
+    }
+
+    private suspend fun compileTerrainSource(
+        root: JsonObject,
+        sources: JsonObject,
+        compiledSources: MutableMap<String, CompiledRasterSource>,
+        secretContext: SecretContext,
+        baseUri: String?,
+    ): CompiledRasterSource? {
+        val terrain = root["terrain"] ?: return null
+        val terrainObject = terrain as? JsonObject
+            ?: throw StylePreparationException("Style terrain must be a JSON object")
+        val sourceId = terrainObject["source"]?.asPrimitive()?.takeIf { it.isString }?.content
+            ?: throw StylePreparationException("Style terrain must name its raster-dem source")
+        return compiledSources[sourceId] ?: compileRasterSource(
+            sourceId = sourceId,
+            sources = sources,
+            secretContext = secretContext,
+            baseUri = baseUri,
+            layerIndex = -1,
+            layerId = "terrain",
+            expectedType = "raster-dem",
+        ).also { compiledSources[sourceId] = it }
     }
 
     private suspend fun compileFillLayer(

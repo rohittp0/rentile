@@ -1,6 +1,8 @@
 package com.rohittp.rentile.internal.style
 
 import com.rohittp.rentile.CompatibilityPolicy
+import com.rohittp.rentile.LabelLayerDescriptor
+import com.rohittp.rentile.GroundRadianceDescriptor
 import com.rohittp.rentile.PreparedStyle
 import com.rohittp.rentile.RenderDiagnostic
 import com.rohittp.rentile.ResourceClass
@@ -256,12 +258,20 @@ internal data class IconDrawLayer(
     override val maxZoom: Double,
 ) : VectorDrawLayer
 
+internal data class CompiledLabelLayer(
+    val descriptor: LabelLayerDescriptor,
+    val source: CompiledVectorSource,
+)
+
 internal class CompiledPreparedStyle(
     val owner: Any,
     override val digest: String,
     override val policy: CompatibilityPolicy,
     override val diagnostics: List<RenderDiagnostic>,
     val drawLayers: List<CompiledDrawLayer>,
+    val labelLayers: List<CompiledLabelLayer>,
+    val terrainSource: CompiledRasterSource?,
+    val groundRadiance: GroundRadianceDescriptor?,
     val spriteAtlas: CompiledSpriteAtlas?,
     val secretContext: SecretContext,
 ) : PreparedStyle

@@ -85,6 +85,91 @@ public data class RenderOptions(
     }
 }
 
+/** Host-owned allowance for degraded output tiles during initial preparation. */
+public data class TileSubstitutionPolicy(
+    public val maximumSubstitutedTiles: Int = 0,
+) {
+    init {
+        require(maximumSubstitutedTiles >= 0)
+    }
+
+    public companion object {
+        public val Disabled: TileSubstitutionPolicy = TileSubstitutionPolicy()
+    }
+}
+
+/** How one unavailable source resource was replaced for an output tile. */
+public enum class TileSubstitutionStrategy {
+    IMMEDIATE_CHILDREN,
+    ANCESTOR,
+}
+
+/** Credential-free provenance for one substituted source beneath an output tile. */
+public data class ResourceSubstitution(
+    public val resourceClass: ResourceClass,
+    public val sanitizedSourceId: String,
+    public val strategy: TileSubstitutionStrategy,
+    public val sourceTiles: List<TileId>,
+    public val ancestorZoomDistance: Int? = null,
+)
+
+/** Successful exact-only recovery performed against an existing prepared batch. */
+public data class ExactRecoveryResult(
+    public val upgradedTiles: Set<TileId>,
+    public val remainingSubstitutedTiles: Set<TileId>,
+    public val diagnostics: List<RenderDiagnostic> = emptyList(),
+)
+
+/** Sanitized style-layer input for a host-owned geographic-label renderer. */
+public data class LabelLayerDescriptor(
+    public val id: String,
+    public val sourceId: String,
+    public val sourceLayer: String,
+    public val sourceMinimumZoom: Int,
+    public val sourceMaximumZoom: Int,
+    public val layerJson: String,
+)
+
+/** Validated encoded MVT bytes acquired through Rentile's transport and raw cache. */
+public data class ValidatedMvtTile(
+    public val requestedTile: TileId,
+    public val sourceTile: TileId,
+    public val sourceId: String,
+    public val bytes: ByteArray,
+    public val contentDigest: String,
+)
+
+public enum class TerrainDemEncoding {
+    MAPBOX,
+    TERRARIUM,
+}
+
+/** Sanitized planning metadata for the style-selected terrain source. */
+public data class TerrainSourceDescriptor(
+    public val sourceId: String,
+    public val encoding: TerrainDemEncoding,
+    public val minimumZoom: Int,
+    public val maximumZoom: Int,
+    public val tileSizePx: Int,
+)
+
+/** Evaluated literal Mapbox ambient-plus-directional ground-light radiance. */
+public data class GroundRadianceDescriptor(
+    public val red: Double,
+    public val green: Double,
+    public val blue: Double,
+)
+
+/** Validated encoded DEM image bytes acquired through Rentile's transport and raw cache. */
+public data class ValidatedDemTile(
+    public val requestedTile: TileId,
+    public val sourceTile: TileId,
+    public val sourceId: String,
+    public val encoding: TerrainDemEncoding,
+    public val bytes: ByteArray,
+    public val contentDigest: String,
+)
+
 /** Operational limits owned by one long-lived [BasemapRasterizer]. */
 public data class ExecutionPolicy(
     public val maxConcurrentExchanges: Int = 8,
@@ -162,6 +247,7 @@ public interface PreparedBatch : AutoCloseable {
     public val tiles: List<TileId>
     public val contentKeys: Map<TileId, String>
     public val diagnostics: List<RenderDiagnostic>
+    public val substitutions: Map<TileId, List<ResourceSubstitution>>
 
     /** Idempotent, non-blocking, and non-throwing. */
     override fun close()
@@ -193,7 +279,37 @@ public interface BasemapRasterizer : AutoCloseable {
         tiles: List<TileId>,
         options: RenderOptions = RenderOptions(),
         resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+        substitutionPolicy: TileSubstitutionPolicy = TileSubstitutionPolicy.Disabled,
     ): PreparedBatch
+
+    /**
+     * Retries exact acquisition only for resources currently represented by substitutes.
+     * Acquisition failures retain the existing substitutes and do not fail the recovery cycle.
+     */
+    public suspend fun retryExact(batch: PreparedBatch): ExactRecoveryResult
+
+    /** Resolved visible text-symbol layers in style order. URL templates remain private. */
+    public fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor>
+
+    /** All-or-error validated MVT acquisition. Tile substitution is deliberately not applied. */
+    public suspend fun acquireLabelTiles(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): List<ValidatedMvtTile>
+
+    /** Returns null when the prepared style does not select a raster-dem terrain source. */
+    public fun terrainSourceDescriptor(style: PreparedStyle): TerrainSourceDescriptor?
+
+    /** Returns null when the prepared style has no complete supported ground-light pair. */
+    public fun groundRadianceDescriptor(style: PreparedStyle): GroundRadianceDescriptor?
+
+    /** All-or-error validated DEM acquisition. Tile substitution is deliberately not applied. */
+    public suspend fun acquireTerrainTiles(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): List<ValidatedDemTile>
 
     public suspend fun render(
         batch: PreparedBatch,
@@ -205,6 +321,7 @@ public interface BasemapRasterizer : AutoCloseable {
         tiles: List<TileId>,
         options: RenderOptions = RenderOptions(),
         resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+        substitutionPolicy: TileSubstitutionPolicy = TileSubstitutionPolicy.Disabled,
     ): RenderBatch
 
     /** Idempotent, non-blocking, and non-throwing. */

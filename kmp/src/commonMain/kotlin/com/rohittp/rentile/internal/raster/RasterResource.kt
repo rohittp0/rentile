@@ -1,6 +1,7 @@
 package com.rohittp.rentile.internal.raster
 
 import com.rohittp.rentile.RenderDiagnostic
+import com.rohittp.rentile.ResourceSubstitution
 import com.rohittp.rentile.TileId
 import com.rohittp.rentile.internal.style.CompiledRasterSource
 import com.rohittp.rentile.internal.style.intersects
@@ -26,6 +27,8 @@ internal data class RasterResource(
     val width: Int,
     val height: Int,
     val diagnostics: List<RenderDiagnostic>,
+    val exactSample: RasterSample = sample,
+    val substitution: ResourceSubstitution? = null,
 )
 
 internal fun CompiledRasterSource.sampleFor(tile: TileId): RasterSample? {
@@ -72,6 +75,37 @@ internal fun RasterSample.neighbor(deltaX: Int, deltaY: Int): RasterSample? {
     return copy(
         sourceX = (sourceX.toLong() + deltaX).floorMod(dimension).toInt(),
         sourceY = neighborY.toInt(),
+    )
+}
+
+internal fun RasterSample.immediateChildren(): List<RasterSample> {
+    if (sourceZ >= source.maxZoom) return emptyList()
+    return (0..1).flatMap { deltaY ->
+        (0..1).map { deltaX ->
+            copy(
+                sourceZ = sourceZ + 1,
+                sourceX = sourceX * 2 + deltaX,
+                sourceY = sourceY * 2 + deltaY,
+                childScale = 1,
+                childX = 0,
+                childY = 0,
+            )
+        }
+    }
+}
+
+internal fun RasterSample.ancestor(distance: Int): RasterSample? {
+    require(distance > 0)
+    val ancestorZ = sourceZ - distance
+    if (ancestorZ < source.minZoom) return null
+    val scale = 1 shl distance
+    return copy(
+        sourceZ = ancestorZ,
+        sourceX = sourceX / scale,
+        sourceY = sourceY / scale,
+        childScale = childScale * scale,
+        childX = (sourceX % scale) * childScale + childX,
+        childY = (sourceY % scale) * childScale + childY,
     )
 }
 

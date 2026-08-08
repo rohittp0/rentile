@@ -8,6 +8,7 @@ import com.rohittp.rentile.DiagnosticSeverity
 import com.rohittp.rentile.ForeignPreparedBatchException
 import com.rohittp.rentile.ForeignPreparedStyleException
 import com.rohittp.rentile.InvalidTileIdException
+import com.rohittp.rentile.LabelLayerDescriptor
 import com.rohittp.rentile.MetricName
 import com.rohittp.rentile.PipelineStage
 import com.rohittp.rentile.PngEncodingException
@@ -20,6 +21,8 @@ import com.rohittp.rentile.RenderBatch
 import com.rohittp.rentile.RenderDiagnostic
 import com.rohittp.rentile.RenderOptions
 import com.rohittp.rentile.RenderedTile
+import com.rohittp.rentile.ExactRecoveryResult
+import com.rohittp.rentile.ResourceSubstitution
 import com.rohittp.rentile.RentileConfiguration
 import com.rohittp.rentile.RentileMetric
 import com.rohittp.rentile.RentileException
@@ -30,18 +33,36 @@ import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.SafetyLimitException
 import com.rohittp.rentile.StyleInput
 import com.rohittp.rentile.StylePreparationException
+import com.rohittp.rentile.TerrainDemEncoding
+import com.rohittp.rentile.TerrainSourceDescriptor
 import com.rohittp.rentile.TileId
 import com.rohittp.rentile.TileNotInPreparedBatchException
+import com.rohittp.rentile.TileSubstitutionException
+import com.rohittp.rentile.TileSubstitutionLimitException
+import com.rohittp.rentile.TileSubstitutionPolicy
+import com.rohittp.rentile.TileSubstitutionStrategy
 import com.rohittp.rentile.TransportRequest
+import com.rohittp.rentile.ValidatedDemTile
+import com.rohittp.rentile.ValidatedMvtTile
 import com.rohittp.rentile.internal.metadata.TileJsonResourceAcquirer
 import com.rohittp.rentile.internal.geojson.GeoJsonResourceAcquirer
 import com.rohittp.rentile.internal.mvt.DecodedVectorFeature
 import com.rohittp.rentile.internal.mvt.DecodedVectorGeometry
 import com.rohittp.rentile.internal.mvt.VectorResource
 import com.rohittp.rentile.internal.mvt.VectorResourceAcquirer
+import com.rohittp.rentile.internal.mvt.VectorTileSample
+import com.rohittp.rentile.internal.mvt.ancestor as vectorAncestor
+import com.rohittp.rentile.internal.mvt.composeVectorChildren
+import com.rohittp.rentile.internal.mvt.immediateChildren as immediateVectorChildren
 import com.rohittp.rentile.internal.mvt.sampleFor
+import com.rohittp.rentile.internal.mvt.vectorAncestorSubstitute
 import com.rohittp.rentile.internal.raster.RasterResource
 import com.rohittp.rentile.internal.raster.RasterResourceAcquirer
+import com.rohittp.rentile.internal.raster.RasterSample
+import com.rohittp.rentile.internal.raster.ancestor as rasterAncestor
+import com.rohittp.rentile.internal.raster.composeRasterChildren
+import com.rohittp.rentile.internal.raster.immediateChildren as immediateRasterChildren
+import com.rohittp.rentile.internal.raster.rasterAncestorSubstitute
 import com.rohittp.rentile.internal.raster.sampleFor
 import com.rohittp.rentile.internal.raster.neighbor
 import com.rohittp.rentile.internal.sprite.SpriteResourceAcquirer
@@ -73,12 +94,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import org.jetbrains.skia.Color
 import org.jetbrains.skia.BlendMode
@@ -128,6 +152,12 @@ internal fun createBasemapRasterizer(configuration: RentileConfiguration): Basem
     DefaultBasemapRasterizer(configuration)
 
 private const val EARTH_CIRCUMFERENCE_METERS = 40_075_016.68557849
+private const val MAX_ANCESTOR_DISTANCE = 2
+private val SUBSTITUTABLE_RESOURCE_CLASSES = setOf(
+    ResourceClass.VECTOR_TILE,
+    ResourceClass.RASTER_TILE,
+    ResourceClass.DEM_TILE,
+)
 
 @OptIn(ExperimentalAtomicApi::class)
 private class DefaultBasemapRasterizer(
@@ -179,64 +209,159 @@ private class DefaultBasemapRasterizer(
         tiles: List<TileId>,
         options: RenderOptions,
         resourceAccess: ResourceAccessMode,
+        substitutionPolicy: TileSubstitutionPolicy,
     ): PreparedBatch = operation {
         val compiledStyle = requireOwnedStyle(style)
         val stableTiles = tiles.toList()
         stableTiles.forEach { validateTile(it, compiledStyle.policy) }
         val duplicate = stableTiles.groupingBy { it }.eachCount().entries.firstOrNull { it.value > 1 }?.key
         if (duplicate != null) throw InvalidTileIdException(duplicate, "Prepared batch contains a duplicate tile")
-        val preparedResources = supervisorScope {
-            val raster = async { acquireOutcome { acquireRasterResources(compiledStyle, stableTiles, resourceAccess) } }
-            val vector = async { acquireOutcome { acquireVectorResources(compiledStyle, stableTiles, resourceAccess) } }
-            val rasterOutcome = raster.await()
-            val vectorOutcome = vector.await()
-            throwAcquisitionFailures(listOf(rasterOutcome, vectorOutcome))
-            PreparedResources(
-                raster = (rasterOutcome as AcquisitionOutcome.Success).value,
-                vector = (vectorOutcome as AcquisitionOutcome.Success).value,
-            )
+        val (rasterPlan, vectorPlan) = supervisorScope {
+            val raster = async { planRasterResources(compiledStyle, stableTiles, resourceAccess) }
+            val vector = async { planVectorResources(compiledStyle, stableTiles, resourceAccess) }
+            raster.await() to vector.await()
         }
-        val resourceDiagnostics = (
-            preparedResources.raster.values.flatten().flatMap { it.diagnostics } +
-                preparedResources.vector.values.flatten().flatMap { it.diagnostics }
-            ).distinct()
-        val contentKeys = stableTiles.associateWith { tile ->
-            buildString {
-                append("rentile-output-2\n")
-                append(compiledStyle.digest)
-                append('\n')
-                append(tile.z)
-                append('/')
-                append(canonicalX(tile))
-                append('/')
-                append(tile.y)
-                append('\n')
-                append(options.outputSizePx)
-                for (resource in preparedResources.raster[tile].orEmpty().sortedBy { it.sample.identity }) {
-                    append('\n')
-                    append("raster:")
-                    append(resource.sample.identity)
-                    append(':')
-                    append(resource.contentDigest)
-                }
-                for (resource in preparedResources.vector[tile].orEmpty().sortedBy { it.sample.identity }) {
-                    append('\n')
-                    append("vector:")
-                    append(resource.sample.identity)
-                    append(':')
-                    append(resource.contentDigest)
-                }
-            }.sha256Hex()
+        validateSubstitutionAllowance(rasterPlan, vectorPlan, substitutionPolicy)
+        val preparedResources = supervisorScope {
+            val raster = async { resolveRasterResources(rasterPlan, resourceAccess) }
+            val vector = async { resolveVectorResources(vectorPlan, resourceAccess) }
+            PreparedResources(raster.await(), vector.await())
+        }
+        val state = buildPreparedBatchState(compiledStyle, stableTiles, options, preparedResources)
+        state.diagnostics.filter { it.code == DiagnosticCode.TILE_RESOURCE_SUBSTITUTED }
+            .forEach(configuration.diagnosticSink::recordSafely)
+        state.substitutions.values.flatten().forEach { substitution ->
+            configuration.metricsSink.recordSafely(
+                RentileMetric(
+                    name = MetricName.TILE_RESOURCE_SUBSTITUTED,
+                    resourceClass = substitution.resourceClass,
+                    tags = buildMap {
+                        put("strategy", substitution.strategy.name)
+                        substitution.ancestorZoomDistance?.let { put("ancestorZoomDistance", it.toString()) }
+                    },
+                ),
+            )
         }
         DefaultPreparedBatch(
             owner = owner,
             style = compiledStyle,
             tiles = stableTiles,
-            contentKeys = contentKeys,
-            diagnostics = compiledStyle.diagnostics + resourceDiagnostics,
             options = options,
-            preparedResources = preparedResources,
+            initialState = state,
         )
+    }
+
+    override suspend fun retryExact(batch: PreparedBatch): ExactRecoveryResult = operation {
+        val prepared = requireOwnedBatch(batch)
+        prepared.withRecoveryLock {
+            prepared.ensureOpen()
+            val before = prepared.snapshot()
+            if (before.substitutions.isEmpty()) {
+                return@withRecoveryLock ExactRecoveryResult(emptySet(), emptySet())
+            }
+            val recoveredRaster = recoverRasterResources(before.resources.raster)
+            val recoveredVector = recoverVectorResources(before.resources.vector)
+            currentCoroutineContext().ensureActive()
+            prepared.ensureOpen()
+            val after = buildPreparedBatchState(
+                prepared.style,
+                prepared.tiles,
+                prepared.options,
+                PreparedResources(recoveredRaster.resources, recoveredVector.resources),
+            )
+            prepared.replaceState(after)
+            (recoveredRaster.upgradedTiles + recoveredVector.upgradedTiles).forEach {
+                configuration.metricsSink.recordSafely(RentileMetric(MetricName.TILE_EXACT_RECOVERED))
+            }
+            ExactRecoveryResult(
+                upgradedTiles = recoveredRaster.upgradedTiles + recoveredVector.upgradedTiles,
+                remainingSubstitutedTiles = after.substitutions.keys,
+                diagnostics = (recoveredRaster.diagnostics + recoveredVector.diagnostics).distinct(),
+            )
+        }
+    }
+
+    override fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor> =
+        requireOwnedStyle(style).labelLayers.map { it.descriptor }
+
+    override suspend fun acquireLabelTiles(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode,
+    ): List<ValidatedMvtTile> = operation {
+        val compiledStyle = requireOwnedStyle(style)
+        val stableTiles = tiles.toList()
+        stableTiles.forEach { validateTile(it, compiledStyle.policy) }
+        val samples = compiledStyle.labelLayers
+            .map { it.source }
+            .distinctBy { it.idDigest }
+            .flatMap { source -> stableTiles.mapNotNull { tile -> source.sampleFor(tile) } }
+            .distinctBy { it.identity to it.outputTile }
+        val outcomes = supervisorScope {
+            samples.map { sample ->
+                async { sample to acquireOutcome { vectorAcquirer.acquire(sample, resourceAccess) } }
+            }.awaitAll()
+        }
+        throwAcquisitionFailures(outcomes.map { it.second })
+        outcomes.map { (sample, outcome) ->
+            val resource = (outcome as AcquisitionOutcome.Success).value
+            val bytes = resource.encodedBytes ?: throw ResourceDecodeException(
+                message = "Label resource is not encoded MVT",
+                resourceClass = ResourceClass.VECTOR_TILE,
+                sanitizedResourceId = sample.source.idDigest,
+                affectedTiles = listOf(sample.outputTile),
+            )
+            ValidatedMvtTile(
+                requestedTile = sample.outputTile,
+                sourceTile = TileId(sample.sourceZ, sample.sourceX, sample.sourceY),
+                sourceId = sample.source.idDigest,
+                bytes = bytes.copyOf(),
+                contentDigest = resource.contentDigest,
+            )
+        }
+    }
+
+    override fun terrainSourceDescriptor(style: PreparedStyle): TerrainSourceDescriptor? =
+        requireOwnedStyle(style).terrainSource?.let { source ->
+            TerrainSourceDescriptor(
+                sourceId = source.idDigest,
+                encoding = source.demEncoding.toPublicEncoding(),
+                minimumZoom = source.minZoom,
+                maximumZoom = source.maxZoom,
+                tileSizePx = source.tileSize,
+            )
+        }
+
+    override fun groundRadianceDescriptor(style: PreparedStyle) =
+        requireOwnedStyle(style).groundRadiance
+
+    override suspend fun acquireTerrainTiles(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode,
+    ): List<ValidatedDemTile> = operation {
+        val compiledStyle = requireOwnedStyle(style)
+        val source = compiledStyle.terrainSource ?: return@operation emptyList()
+        val stableTiles = tiles.toList()
+        stableTiles.forEach { validateTile(it, compiledStyle.policy) }
+        val samples = stableTiles.mapNotNull { tile -> source.sampleFor(tile) }.distinctBy { it.identity to it.outputTile }
+        val outcomes = supervisorScope {
+            samples.map { sample ->
+                async { sample to acquireOutcome { rasterAcquirer.acquire(sample, resourceAccess) } }
+            }.awaitAll()
+        }
+        throwAcquisitionFailures(outcomes.map { it.second })
+        outcomes.map { (sample, outcome) ->
+            val resource = (outcome as AcquisitionOutcome.Success).value
+            ValidatedDemTile(
+                requestedTile = sample.outputTile,
+                sourceTile = TileId(sample.sourceZ, sample.sourceX, sample.sourceY),
+                sourceId = source.idDigest,
+                encoding = source.demEncoding.toPublicEncoding(),
+                bytes = resource.bytes.copyOf(),
+                contentDigest = resource.contentDigest,
+            )
+        }
     }
 
     override suspend fun render(batch: PreparedBatch, tiles: List<TileId>): RenderBatch = operation {
@@ -245,11 +370,11 @@ private class DefaultBasemapRasterizer(
         try {
             val requested = tiles.toList()
             requested.forEach { tile ->
-                if (tile !in prepared.contentKeys) throw TileNotInPreparedBatchException(tile)
+                if (tile !in lease.state.contentKeys) throw TileNotInPreparedBatchException(tile)
             }
             val tileResults = requested.map { tile ->
                 currentCoroutineContext().ensureActive()
-                renderPermits.withPermit { renderTile(prepared, lease.resources, tile) }
+                renderPermits.withPermit { renderTile(prepared, lease.state.resources, tile) }
             }
             val rendered = tileResults.map { result ->
                 configuration.metricsSink.recordSafely(
@@ -261,11 +386,11 @@ private class DefaultBasemapRasterizer(
                 RenderedTile(
                     id = result.tile,
                     pngBytes = result.png,
-                    contentKey = prepared.contentKeys.getValue(result.tile),
-                    diagnostics = prepared.diagnostics + result.diagnostics,
+                    contentKey = lease.state.contentKeys.getValue(result.tile),
+                    diagnostics = lease.state.diagnostics + result.diagnostics,
                 )
             }
-            RenderBatch(rendered, prepared.diagnostics + tileResults.flatMap { it.diagnostics })
+            RenderBatch(rendered, lease.state.diagnostics + tileResults.flatMap { it.diagnostics })
         } finally {
             lease.close()
         }
@@ -276,8 +401,9 @@ private class DefaultBasemapRasterizer(
         tiles: List<TileId>,
         options: RenderOptions,
         resourceAccess: ResourceAccessMode,
+        substitutionPolicy: TileSubstitutionPolicy,
     ): RenderBatch {
-        val batch = prepareBatch(style, tiles, options, resourceAccess)
+        val batch = prepareBatch(style, tiles, options, resourceAccess, substitutionPolicy)
         return try {
             render(batch)
         } finally {
@@ -380,11 +506,16 @@ private class DefaultBasemapRasterizer(
         return if (remainder < 0) remainder + dimension else remainder
     }
 
-    private suspend fun acquireRasterResources(
+    private fun DemEncoding?.toPublicEncoding(): TerrainDemEncoding = when (this) {
+        DemEncoding.TERRARIUM -> TerrainDemEncoding.TERRARIUM
+        DemEncoding.MAPBOX, null -> TerrainDemEncoding.MAPBOX
+    }
+
+    private suspend fun planRasterResources(
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
         accessMode: ResourceAccessMode,
-    ): Map<TileId, List<RasterResource>> = supervisorScope {
+    ): RasterAcquisitionPlan = supervisorScope {
         val samplesByTile = tiles.associateWith { tile ->
             style.drawLayers
                 .filter { it is RasterDrawLayer || it is HillshadeDrawLayer }
@@ -411,24 +542,14 @@ private class DefaultBasemapRasterizer(
             async { acquireOutcome { rasterAcquirer.acquire(sample, accessMode) } }
         }
         val outcomes = pending.mapValues { (_, deferred) -> deferred.await() }
-        throwAcquisitionFailures(outcomes.values.toList())
-        val acquiredByIdentity = outcomes.mapValues { (_, outcome) ->
-            (outcome as AcquisitionOutcome.Success).value
-        }
-
-        samplesByTile.mapValues { (_, samples) ->
-            samples.map { sample ->
-                val acquired = acquiredByIdentity.getValue(sample.identity)
-                if (acquired.sample == sample) acquired else acquired.copy(sample = sample)
-            }
-        }
+        RasterAcquisitionPlan(samplesByTile, outcomes)
     }
 
-    private suspend fun acquireVectorResources(
+    private suspend fun planVectorResources(
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
         accessMode: ResourceAccessMode,
-    ): Map<TileId, List<VectorResource>> = supervisorScope {
+    ): VectorAcquisitionPlan = supervisorScope {
         val samplesByTile = tiles.associateWith { tile ->
             style.drawLayers
                 .filter { it is FillDrawLayer || it is LineDrawLayer || it is IconDrawLayer }
@@ -453,17 +574,354 @@ private class DefaultBasemapRasterizer(
             async { acquireOutcome { vectorAcquirer.acquire(sample, accessMode) } }
         }
         val outcomes = pending.mapValues { (_, deferred) -> deferred.await() }
-        throwAcquisitionFailures(outcomes.values.toList())
-        val acquiredByIdentity = outcomes.mapValues { (_, outcome) ->
-            (outcome as AcquisitionOutcome.Success).value
-        }
+        VectorAcquisitionPlan(samplesByTile, outcomes)
+    }
 
-        samplesByTile.mapValues { (_, samples) ->
-            samples.map { sample ->
-                val acquired = acquiredByIdentity.getValue(sample.identity)
-                if (acquired.sample == sample) acquired else acquired.copy(sample = sample)
+    private fun validateSubstitutionAllowance(
+        raster: RasterAcquisitionPlan,
+        vector: VectorAcquisitionPlan,
+        policy: TileSubstitutionPolicy,
+    ) {
+        val failures = raster.failures() + vector.failures()
+        if (failures.isEmpty()) return
+        val ineligible = failures.filterNot { isSubstitutionEligible(it.error) }
+        if (ineligible.isNotEmpty() || policy.maximumSubstitutedTiles == 0) {
+            throwAcquisitionFailures(
+                (if (ineligible.isNotEmpty()) ineligible else failures).map { AcquisitionOutcome.Failure(it.error) },
+            )
+        }
+        val affectedTiles = failures.map { it.tile }.distinct()
+        if (affectedTiles.size > policy.maximumSubstitutedTiles) {
+            throw TileSubstitutionLimitException(
+                maximumSubstitutedTiles = policy.maximumSubstitutedTiles,
+                requiredSubstitutedTiles = affectedTiles.size,
+                primaryFailure = failures.first().error as ResourceAcquisitionException,
+                affectedTiles = affectedTiles,
+            )
+        }
+    }
+
+    private fun isSubstitutionEligible(error: Throwable): Boolean {
+        val failure = error as? ResourceAcquisitionException ?: return false
+        if (failure.resourceClass !in SUBSTITUTABLE_RESOURCE_CLASSES) return false
+        val status = failure.statusCode ?: return true
+        return status == 404 || status == 408 || status == 429 || status >= 500
+    }
+
+    private suspend fun resolveRasterResources(
+        plan: RasterAcquisitionPlan,
+        accessMode: ResourceAccessMode,
+    ): Map<TileId, List<RasterResource>> = supervisorScope {
+        plan.samplesByTile.map { (tile, samples) ->
+            tile to samples.map { sample ->
+                async {
+                    when (val outcome = plan.outcomesByIdentity.getValue(sample.identity)) {
+                        is AcquisitionOutcome.Success -> outcome.value.forExactSample(sample)
+                        is AcquisitionOutcome.Failure -> substituteRaster(
+                            requested = sample,
+                            primaryFailure = outcome.error as ResourceAcquisitionException,
+                            accessMode = accessMode,
+                        )
+                    }
+                }
+            }.awaitAll()
+        }.toMap()
+    }
+
+    private suspend fun resolveVectorResources(
+        plan: VectorAcquisitionPlan,
+        accessMode: ResourceAccessMode,
+    ): Map<TileId, List<VectorResource>> = supervisorScope {
+        plan.samplesByTile.map { (tile, samples) ->
+            tile to samples.map { sample ->
+                async {
+                    when (val outcome = plan.outcomesByIdentity.getValue(sample.identity)) {
+                        is AcquisitionOutcome.Success -> outcome.value.forExactSample(sample)
+                        is AcquisitionOutcome.Failure -> substituteVector(
+                            requested = sample,
+                            primaryFailure = outcome.error as ResourceAcquisitionException,
+                            accessMode = accessMode,
+                        )
+                    }
+                }
+            }.awaitAll()
+        }.toMap()
+    }
+
+    private suspend fun substituteRaster(
+        requested: RasterSample,
+        primaryFailure: ResourceAcquisitionException,
+        accessMode: ResourceAccessMode,
+    ): RasterResource = supervisorScope {
+        val attempted = mutableListOf<TileSubstitutionStrategy>()
+        val failures = mutableListOf<RentileException>()
+        val children = requested.immediateRasterChildren()
+        if (children.isNotEmpty()) {
+            attempted += TileSubstitutionStrategy.IMMEDIATE_CHILDREN
+            val outcomes = children.map { child ->
+                async { acquireOutcome { rasterAcquirer.acquire(child, accessMode) } }
+            }.awaitAll()
+            if (outcomes.all { it is AcquisitionOutcome.Success }) {
+                return@supervisorScope try {
+                    composeRasterChildren(requested, outcomes.map { (it as AcquisitionOutcome.Success).value })
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Throwable) {
+                    failures += ResourceDecodeException(
+                        message = "Raster child substitutes could not be composed",
+                        resourceClass = requested.source.resourceClass,
+                        sanitizedResourceId = primaryFailure.sanitizedResourceId,
+                        affectedTiles = listOf(requested.outputTile),
+                    )
+                    null
+                } ?: acquireRasterAncestor(requested, primaryFailure, accessMode, attempted, failures)
+            }
+            failures += outcomes.filterIsInstance<AcquisitionOutcome.Failure>()
+                .map { it.error.asSubstitutionFailure(primaryFailure, requested.outputTile) }
+        }
+        acquireRasterAncestor(requested, primaryFailure, accessMode, attempted, failures)
+    }
+
+    private suspend fun acquireRasterAncestor(
+        requested: RasterSample,
+        primaryFailure: ResourceAcquisitionException,
+        accessMode: ResourceAccessMode,
+        attempted: MutableList<TileSubstitutionStrategy>,
+        failures: MutableList<RentileException>,
+    ): RasterResource {
+        for (distance in 1..MAX_ANCESTOR_DISTANCE) {
+            val ancestor = requested.rasterAncestor(distance) ?: continue
+            if (TileSubstitutionStrategy.ANCESTOR !in attempted) attempted += TileSubstitutionStrategy.ANCESTOR
+            when (val outcome = acquireOutcome { rasterAcquirer.acquire(ancestor, accessMode) }) {
+                is AcquisitionOutcome.Success -> return rasterAncestorSubstitute(requested, outcome.value, distance)
+                is AcquisitionOutcome.Failure -> failures +=
+                    outcome.error.asSubstitutionFailure(primaryFailure, requested.outputTile)
             }
         }
+        throw TileSubstitutionException(
+            tile = requested.outputTile,
+            resourceClass = requested.source.resourceClass,
+            sanitizedResourceId = primaryFailure.sanitizedResourceId,
+            attemptedStrategies = attempted,
+            primaryFailure = primaryFailure,
+            substitutionFailures = failures,
+        )
+    }
+
+    private suspend fun substituteVector(
+        requested: VectorTileSample,
+        primaryFailure: ResourceAcquisitionException,
+        accessMode: ResourceAccessMode,
+    ): VectorResource = supervisorScope {
+        val attempted = mutableListOf<TileSubstitutionStrategy>()
+        val failures = mutableListOf<RentileException>()
+        val children = requested.immediateVectorChildren()
+        if (children.isNotEmpty()) {
+            attempted += TileSubstitutionStrategy.IMMEDIATE_CHILDREN
+            val outcomes = children.map { child ->
+                async { acquireOutcome { vectorAcquirer.acquire(child, accessMode) } }
+            }.awaitAll()
+            if (outcomes.all { it is AcquisitionOutcome.Success }) {
+                return@supervisorScope try {
+                    composeVectorChildren(requested, outcomes.map { (it as AcquisitionOutcome.Success).value })
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Throwable) {
+                    failures += ResourceDecodeException(
+                        message = "Vector child substitutes could not be composed",
+                        resourceClass = ResourceClass.VECTOR_TILE,
+                        sanitizedResourceId = primaryFailure.sanitizedResourceId,
+                        affectedTiles = listOf(requested.outputTile),
+                    )
+                    null
+                } ?: acquireVectorAncestor(requested, primaryFailure, accessMode, attempted, failures)
+            }
+            failures += outcomes.filterIsInstance<AcquisitionOutcome.Failure>()
+                .map { it.error.asSubstitutionFailure(primaryFailure, requested.outputTile) }
+        }
+        acquireVectorAncestor(requested, primaryFailure, accessMode, attempted, failures)
+    }
+
+    private suspend fun acquireVectorAncestor(
+        requested: VectorTileSample,
+        primaryFailure: ResourceAcquisitionException,
+        accessMode: ResourceAccessMode,
+        attempted: MutableList<TileSubstitutionStrategy>,
+        failures: MutableList<RentileException>,
+    ): VectorResource {
+        for (distance in 1..MAX_ANCESTOR_DISTANCE) {
+            val ancestor = requested.vectorAncestor(distance) ?: continue
+            if (TileSubstitutionStrategy.ANCESTOR !in attempted) attempted += TileSubstitutionStrategy.ANCESTOR
+            when (val outcome = acquireOutcome { vectorAcquirer.acquire(ancestor, accessMode) }) {
+                is AcquisitionOutcome.Success -> return vectorAncestorSubstitute(requested, outcome.value, distance)
+                is AcquisitionOutcome.Failure -> failures +=
+                    outcome.error.asSubstitutionFailure(primaryFailure, requested.outputTile)
+            }
+        }
+        throw TileSubstitutionException(
+            tile = requested.outputTile,
+            resourceClass = ResourceClass.VECTOR_TILE,
+            sanitizedResourceId = primaryFailure.sanitizedResourceId,
+            attemptedStrategies = attempted,
+            primaryFailure = primaryFailure,
+            substitutionFailures = failures,
+        )
+    }
+
+    private fun Throwable.asSubstitutionFailure(
+        primary: ResourceAcquisitionException,
+        tile: TileId,
+    ): RentileException = this as? RentileException ?: ResourceAcquisitionException(
+        message = "Substitute tile acquisition failed",
+        resourceClass = primary.resourceClass,
+        sanitizedResourceId = primary.sanitizedResourceId,
+        affectedTiles = listOf(tile),
+    )
+
+    private fun RasterResource.forExactSample(sample: RasterSample): RasterResource =
+        if (this.sample == sample && exactSample == sample && substitution == null) this else copy(
+            sample = sample,
+            exactSample = sample,
+            substitution = null,
+        )
+
+    private fun VectorResource.forExactSample(sample: VectorTileSample): VectorResource =
+        if (this.sample == sample && exactSample == sample && substitution == null) this else copy(
+            sample = sample,
+            exactSample = sample,
+            substitution = null,
+        )
+
+    private suspend fun recoverRasterResources(
+        resources: Map<TileId, List<RasterResource>>,
+    ): ResourceRecovery<RasterResource> = supervisorScope {
+        val recovered = resources.map { (tile, tileResources) ->
+            tile to tileResources.map { resource ->
+                async {
+                    if (resource.substitution == null) return@async RecoveryItem(resource)
+                    when (val outcome = acquireOutcome {
+                        rasterAcquirer.acquire(resource.exactSample, ResourceAccessMode.NORMAL)
+                    }) {
+                        is AcquisitionOutcome.Success -> RecoveryItem(
+                            resource = outcome.value.forExactSample(resource.exactSample),
+                            upgraded = true,
+                        )
+                        is AcquisitionOutcome.Failure -> RecoveryItem(
+                            resource = resource,
+                            diagnostic = exactRecoveryFailureDiagnostic(
+                                tile,
+                                resource.exactSample.source.resourceClass,
+                                outcome.error,
+                            ),
+                        )
+                    }
+                }
+            }.awaitAll()
+        }.toMap()
+        ResourceRecovery(
+            resources = recovered.mapValues { (_, items) -> items.map { it.resource } },
+            upgradedTiles = recovered.filterValues { items -> items.any { it.upgraded } }.keys,
+            diagnostics = recovered.values.flatten().mapNotNull { it.diagnostic },
+        )
+    }
+
+    private suspend fun recoverVectorResources(
+        resources: Map<TileId, List<VectorResource>>,
+    ): ResourceRecovery<VectorResource> = supervisorScope {
+        val recovered = resources.map { (tile, tileResources) ->
+            tile to tileResources.map { resource ->
+                async {
+                    if (resource.substitution == null) return@async RecoveryItem(resource)
+                    when (val outcome = acquireOutcome {
+                        vectorAcquirer.acquire(resource.exactSample, ResourceAccessMode.NORMAL)
+                    }) {
+                        is AcquisitionOutcome.Success -> RecoveryItem(
+                            resource = outcome.value.forExactSample(resource.exactSample),
+                            upgraded = true,
+                        )
+                        is AcquisitionOutcome.Failure -> RecoveryItem(
+                            resource = resource,
+                            diagnostic = exactRecoveryFailureDiagnostic(tile, ResourceClass.VECTOR_TILE, outcome.error),
+                        )
+                    }
+                }
+            }.awaitAll()
+        }.toMap()
+        ResourceRecovery(
+            resources = recovered.mapValues { (_, items) -> items.map { it.resource } },
+            upgradedTiles = recovered.filterValues { items -> items.any { it.upgraded } }.keys,
+            diagnostics = recovered.values.flatten().mapNotNull { it.diagnostic },
+        )
+    }
+
+    private fun exactRecoveryFailureDiagnostic(
+        tile: TileId,
+        resourceClass: ResourceClass,
+        error: Throwable,
+    ): RenderDiagnostic {
+        val statusCode = (error as? ResourceAcquisitionException)?.statusCode
+        return RenderDiagnostic(
+            code = DiagnosticCode.TILE_EXACT_RECOVERY_FAILED,
+            severity = DiagnosticSeverity.WARNING,
+            stage = PipelineStage.RESOURCE_ACQUISITION,
+            message = "An exact tile resource remains unavailable",
+            details = buildMap {
+                put("resourceClass", resourceClass.name)
+                statusCode?.let { put("statusCode", it.toString()) }
+            },
+            affectedTiles = listOf(tile),
+        ).also(configuration.diagnosticSink::recordSafely)
+    }
+
+    private fun buildPreparedBatchState(
+        style: CompiledPreparedStyle,
+        tiles: List<TileId>,
+        options: RenderOptions,
+        resources: PreparedResources,
+    ): PreparedBatchState {
+        val resourceDiagnostics = (
+            resources.raster.values.flatten().flatMap { it.diagnostics } +
+                resources.vector.values.flatten().flatMap { it.diagnostics }
+            ).distinct()
+        val substitutions = tiles.mapNotNull { tile ->
+            val tileSubstitutions = (
+                resources.raster[tile].orEmpty().mapNotNull { it.substitution } +
+                    resources.vector[tile].orEmpty().mapNotNull { it.substitution }
+                ).distinct()
+            if (tileSubstitutions.isEmpty()) null else tile to tileSubstitutions
+        }.toMap()
+        val contentKeys = tiles.associateWith { tile ->
+            buildString {
+                append("rentile-output-2\n")
+                append(style.digest)
+                append('\n')
+                append(tile.z)
+                append('/')
+                append(canonicalX(tile))
+                append('/')
+                append(tile.y)
+                append('\n')
+                append(options.outputSizePx)
+                for (resource in resources.raster[tile].orEmpty().sortedBy { it.sample.identity }) {
+                    append("\nraster:")
+                    append(resource.sample.identity)
+                    append(':')
+                    append(resource.contentDigest)
+                }
+                for (resource in resources.vector[tile].orEmpty().sortedBy { it.sample.identity }) {
+                    append("\nvector:")
+                    append(resource.sample.identity)
+                    append(':')
+                    append(resource.contentDigest)
+                }
+            }.sha256Hex()
+        }
+        return PreparedBatchState(
+            resources = resources,
+            contentKeys = contentKeys,
+            diagnostics = style.diagnostics + resourceDiagnostics,
+            substitutions = substitutions,
+        )
     }
 
     private suspend fun <T> acquireOutcome(block: suspend () -> T): AcquisitionOutcome<T> = try {
@@ -1880,6 +2338,49 @@ private sealed interface AcquisitionOutcome<out T> {
     data class Failure(val error: Throwable) : AcquisitionOutcome<Nothing>
 }
 
+private data class TileAcquisitionFailure(
+    val tile: TileId,
+    val error: Throwable,
+)
+
+private data class RasterAcquisitionPlan(
+    val samplesByTile: Map<TileId, List<RasterSample>>,
+    val outcomesByIdentity: Map<String, AcquisitionOutcome<RasterResource>>,
+) {
+    fun failures(): List<TileAcquisitionFailure> = samplesByTile.flatMap { (tile, samples) ->
+        samples.mapNotNull { sample ->
+            (outcomesByIdentity.getValue(sample.identity) as? AcquisitionOutcome.Failure)?.let {
+                TileAcquisitionFailure(tile, it.error)
+            }
+        }
+    }
+}
+
+private data class VectorAcquisitionPlan(
+    val samplesByTile: Map<TileId, List<VectorTileSample>>,
+    val outcomesByIdentity: Map<String, AcquisitionOutcome<VectorResource>>,
+) {
+    fun failures(): List<TileAcquisitionFailure> = samplesByTile.flatMap { (tile, samples) ->
+        samples.mapNotNull { sample ->
+            (outcomesByIdentity.getValue(sample.identity) as? AcquisitionOutcome.Failure)?.let {
+                TileAcquisitionFailure(tile, it.error)
+            }
+        }
+    }
+}
+
+private data class RecoveryItem<T>(
+    val resource: T,
+    val upgraded: Boolean = false,
+    val diagnostic: RenderDiagnostic? = null,
+)
+
+private data class ResourceRecovery<T>(
+    val resources: Map<TileId, List<T>>,
+    val upgradedTiles: Set<TileId>,
+    val diagnostics: List<RenderDiagnostic>,
+)
+
 private data class PreparedResources(
     val raster: Map<TileId, List<RasterResource>>,
     val vector: Map<TileId, List<VectorResource>>,
@@ -1888,6 +2389,13 @@ private data class PreparedResources(
         val Empty: PreparedResources = PreparedResources(emptyMap(), emptyMap())
     }
 }
+
+private data class PreparedBatchState(
+    val resources: PreparedResources,
+    val contentKeys: Map<TileId, String>,
+    val diagnostics: List<RenderDiagnostic>,
+    val substitutions: Map<TileId, List<ResourceSubstitution>>,
+)
 
 private fun ByteArray.isPng(): Boolean =
     size >= 8 &&
@@ -1905,14 +2413,20 @@ private class DefaultPreparedBatch(
     val owner: Any,
     val style: CompiledPreparedStyle,
     override val tiles: List<TileId>,
-    override val contentKeys: Map<TileId, String>,
-    override val diagnostics: List<RenderDiagnostic>,
     val options: RenderOptions,
-    preparedResources: PreparedResources,
+    initialState: PreparedBatchState,
 ) : PreparedBatch {
     private val closed = AtomicBoolean(false)
     private val activeLeases = AtomicInt(0)
-    private val resources = AtomicReference(preparedResources)
+    private val state = AtomicReference(initialState)
+    private val recoveryMutex = Mutex()
+
+    override val contentKeys: Map<TileId, String>
+        get() = state.load().contentKeys
+    override val diagnostics: List<RenderDiagnostic>
+        get() = state.load().diagnostics
+    override val substitutions: Map<TileId, List<ResourceSubstitution>>
+        get() = state.load().substitutions
 
     override fun close() {
         if (closed.compareAndSet(expectedValue = false, newValue = true)) {
@@ -1924,6 +2438,15 @@ private class DefaultPreparedBatch(
         if (closed.load()) throw PreparedBatchClosedException()
     }
 
+    fun snapshot(): PreparedBatchState = state.load()
+
+    fun replaceState(replacement: PreparedBatchState) {
+        ensureOpen()
+        state.store(replacement)
+    }
+
+    suspend fun <T> withRecoveryLock(block: suspend () -> T): T = recoveryMutex.withLock { block() }
+
     fun acquireRenderLease(): PreparedBatchLease {
         ensureOpen()
         activeLeases.fetchAndAdd(1)
@@ -1931,7 +2454,7 @@ private class DefaultPreparedBatch(
             releaseLease()
             throw PreparedBatchClosedException()
         }
-        return PreparedBatchLease(resources.load(), ::releaseLease)
+        return PreparedBatchLease(state.load(), ::releaseLease)
     }
 
     private fun releaseLease() {
@@ -1942,14 +2465,15 @@ private class DefaultPreparedBatch(
 
     private fun releaseResourcesIfUnused() {
         if (closed.load() && activeLeases.load() == 0) {
-            resources.store(PreparedResources.Empty)
+            val current = state.load()
+            state.store(current.copy(resources = PreparedResources.Empty))
         }
     }
 }
 
 @OptIn(ExperimentalAtomicApi::class)
 private class PreparedBatchLease(
-    val resources: PreparedResources,
+    val state: PreparedBatchState,
     private val release: () -> Unit,
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)

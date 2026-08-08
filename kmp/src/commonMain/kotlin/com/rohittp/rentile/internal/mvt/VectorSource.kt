@@ -34,6 +34,37 @@ internal data class VectorTileSample(
     }
 }
 
+internal fun VectorTileSample.immediateChildren(): List<VectorTileSample> {
+    if (sourceZ >= source.maxZoom) return emptyList()
+    return (0..1).flatMap { deltaY ->
+        (0..1).map { deltaX ->
+            copy(
+                sourceZ = sourceZ + 1,
+                sourceX = sourceX * 2 + deltaX,
+                sourceY = sourceY * 2 + deltaY,
+                childScale = 1,
+                childX = 0,
+                childY = 0,
+            )
+        }
+    }
+}
+
+internal fun VectorTileSample.ancestor(distance: Int): VectorTileSample? {
+    require(distance > 0)
+    val ancestorZ = sourceZ - distance
+    if (ancestorZ < source.minZoom) return null
+    val scale = 1 shl distance
+    return copy(
+        sourceZ = ancestorZ,
+        sourceX = sourceX / scale,
+        sourceY = sourceY / scale,
+        childScale = childScale * scale,
+        childX = (sourceX % scale) * childScale + childX,
+        childY = (sourceY % scale) * childScale + childY,
+    )
+}
+
 internal data class OutputPixelCoordinate(
     val x: Double,
     val y: Double,

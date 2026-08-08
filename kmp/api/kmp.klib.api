@@ -18,6 +18,8 @@ final enum class com.rohittp.rentile/DiagnosticCode : kotlin/Enum<com.rohittp.re
     enum entry TEXT_COMPONENT_REMOVED_ICON_RETAINED // com.rohittp.rentile/DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED|null[0]
     enum entry TEXT_COUPLED_ICON_LAYER_EXCLUDED // com.rohittp.rentile/DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED|null[0]
     enum entry TEXT_ONLY_LAYER_EXCLUDED // com.rohittp.rentile/DiagnosticCode.TEXT_ONLY_LAYER_EXCLUDED|null[0]
+    enum entry TILE_EXACT_RECOVERY_FAILED // com.rohittp.rentile/DiagnosticCode.TILE_EXACT_RECOVERY_FAILED|null[0]
+    enum entry TILE_RESOURCE_SUBSTITUTED // com.rohittp.rentile/DiagnosticCode.TILE_RESOURCE_SUBSTITUTED|null[0]
     enum entry UNSUPPORTED_RETAINED_CONSTRUCT // com.rohittp.rentile/DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT|null[0]
 
     final val entries // com.rohittp.rentile/DiagnosticCode.entries|#static{}entries[0]
@@ -47,7 +49,9 @@ final enum class com.rohittp.rentile/MetricName : kotlin/Enum<com.rohittp.rentil
     enum entry RESOURCE_REQUEST // com.rohittp.rentile/MetricName.RESOURCE_REQUEST|null[0]
     enum entry RESOURCE_WIRE_BYTES // com.rohittp.rentile/MetricName.RESOURCE_WIRE_BYTES|null[0]
     enum entry SINGLE_FLIGHT_JOIN // com.rohittp.rentile/MetricName.SINGLE_FLIGHT_JOIN|null[0]
+    enum entry TILE_EXACT_RECOVERED // com.rohittp.rentile/MetricName.TILE_EXACT_RECOVERED|null[0]
     enum entry TILE_RENDERED // com.rohittp.rentile/MetricName.TILE_RENDERED|null[0]
+    enum entry TILE_RESOURCE_SUBSTITUTED // com.rohittp.rentile/MetricName.TILE_RESOURCE_SUBSTITUTED|null[0]
 
     final val entries // com.rohittp.rentile/MetricName.entries|#static{}entries[0]
         final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/MetricName> // com.rohittp.rentile/MetricName.entries.<get-entries>|<get-entries>#static(){}[0]
@@ -88,6 +92,8 @@ final enum class com.rohittp.rentile/RentileErrorCode : kotlin/Enum<com.rohittp.
     enum entry SAFETY_LIMIT_EXCEEDED // com.rohittp.rentile/RentileErrorCode.SAFETY_LIMIT_EXCEEDED|null[0]
     enum entry STYLE_PREPARATION_FAILED // com.rohittp.rentile/RentileErrorCode.STYLE_PREPARATION_FAILED|null[0]
     enum entry TILE_NOT_IN_PREPARED_BATCH // com.rohittp.rentile/RentileErrorCode.TILE_NOT_IN_PREPARED_BATCH|null[0]
+    enum entry TILE_SUBSTITUTION_FAILED // com.rohittp.rentile/RentileErrorCode.TILE_SUBSTITUTION_FAILED|null[0]
+    enum entry TILE_SUBSTITUTION_LIMIT_EXCEEDED // com.rohittp.rentile/RentileErrorCode.TILE_SUBSTITUTION_LIMIT_EXCEEDED|null[0]
 
     final val entries // com.rohittp.rentile/RentileErrorCode.entries|#static{}entries[0]
         final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/RentileErrorCode> // com.rohittp.rentile/RentileErrorCode.entries.<get-entries>|<get-entries>#static(){}[0]
@@ -123,6 +129,28 @@ final enum class com.rohittp.rentile/ResourceClass : kotlin/Enum<com.rohittp.ren
 
     final fun valueOf(kotlin/String): com.rohittp.rentile/ResourceClass // com.rohittp.rentile/ResourceClass.valueOf|valueOf#static(kotlin.String){}[0]
     final fun values(): kotlin/Array<com.rohittp.rentile/ResourceClass> // com.rohittp.rentile/ResourceClass.values|values#static(){}[0]
+}
+
+final enum class com.rohittp.rentile/TerrainDemEncoding : kotlin/Enum<com.rohittp.rentile/TerrainDemEncoding> { // com.rohittp.rentile/TerrainDemEncoding|null[0]
+    enum entry MAPBOX // com.rohittp.rentile/TerrainDemEncoding.MAPBOX|null[0]
+    enum entry TERRARIUM // com.rohittp.rentile/TerrainDemEncoding.TERRARIUM|null[0]
+
+    final val entries // com.rohittp.rentile/TerrainDemEncoding.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/TerrainDemEncoding> // com.rohittp.rentile/TerrainDemEncoding.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): com.rohittp.rentile/TerrainDemEncoding // com.rohittp.rentile/TerrainDemEncoding.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<com.rohittp.rentile/TerrainDemEncoding> // com.rohittp.rentile/TerrainDemEncoding.values|values#static(){}[0]
+}
+
+final enum class com.rohittp.rentile/TileSubstitutionStrategy : kotlin/Enum<com.rohittp.rentile/TileSubstitutionStrategy> { // com.rohittp.rentile/TileSubstitutionStrategy|null[0]
+    enum entry ANCESTOR // com.rohittp.rentile/TileSubstitutionStrategy.ANCESTOR|null[0]
+    enum entry IMMEDIATE_CHILDREN // com.rohittp.rentile/TileSubstitutionStrategy.IMMEDIATE_CHILDREN|null[0]
+
+    final val entries // com.rohittp.rentile/TileSubstitutionStrategy.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/TileSubstitutionStrategy> // com.rohittp.rentile/TileSubstitutionStrategy.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): com.rohittp.rentile/TileSubstitutionStrategy // com.rohittp.rentile/TileSubstitutionStrategy.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<com.rohittp.rentile/TileSubstitutionStrategy> // com.rohittp.rentile/TileSubstitutionStrategy.values|values#static(){}[0]
 }
 
 abstract fun interface com.rohittp.rentile/CredentialProvider { // com.rohittp.rentile/CredentialProvider|null[0]
@@ -176,11 +204,17 @@ abstract fun interface com.rohittp.rentile/ResourceTransport { // com.rohittp.re
 
 abstract interface com.rohittp.rentile/BasemapRasterizer : kotlin/AutoCloseable { // com.rohittp.rentile/BasemapRasterizer|null[0]
     abstract fun close() // com.rohittp.rentile/BasemapRasterizer.close|close(){}[0]
+    abstract fun groundRadianceDescriptor(com.rohittp.rentile/PreparedStyle): com.rohittp.rentile/GroundRadianceDescriptor? // com.rohittp.rentile/BasemapRasterizer.groundRadianceDescriptor|groundRadianceDescriptor(com.rohittp.rentile.PreparedStyle){}[0]
+    abstract fun labelLayerDescriptors(com.rohittp.rentile/PreparedStyle): kotlin.collections/List<com.rohittp.rentile/LabelLayerDescriptor> // com.rohittp.rentile/BasemapRasterizer.labelLayerDescriptors|labelLayerDescriptors(com.rohittp.rentile.PreparedStyle){}[0]
+    abstract fun terrainSourceDescriptor(com.rohittp.rentile/PreparedStyle): com.rohittp.rentile/TerrainSourceDescriptor? // com.rohittp.rentile/BasemapRasterizer.terrainSourceDescriptor|terrainSourceDescriptor(com.rohittp.rentile.PreparedStyle){}[0]
+    abstract suspend fun acquireLabelTiles(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ResourceAccessMode = ...): kotlin.collections/List<com.rohittp.rentile/ValidatedMvtTile> // com.rohittp.rentile/BasemapRasterizer.acquireLabelTiles|acquireLabelTiles(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ResourceAccessMode){}[0]
+    abstract suspend fun acquireTerrainTiles(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ResourceAccessMode = ...): kotlin.collections/List<com.rohittp.rentile/ValidatedDemTile> // com.rohittp.rentile/BasemapRasterizer.acquireTerrainTiles|acquireTerrainTiles(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ResourceAccessMode){}[0]
     abstract suspend fun awaitClosed() // com.rohittp.rentile/BasemapRasterizer.awaitClosed|awaitClosed(){}[0]
     abstract suspend fun prepare(com.rohittp.rentile/StyleInput, com.rohittp.rentile/CompatibilityPolicy = ...): com.rohittp.rentile/PreparedStyle // com.rohittp.rentile/BasemapRasterizer.prepare|prepare(com.rohittp.rentile.StyleInput;com.rohittp.rentile.CompatibilityPolicy){}[0]
-    abstract suspend fun prepareBatch(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/PreparedBatch // com.rohittp.rentile/BasemapRasterizer.prepareBatch|prepareBatch(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode){}[0]
+    abstract suspend fun prepareBatch(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ..., com.rohittp.rentile/TileSubstitutionPolicy = ...): com.rohittp.rentile/PreparedBatch // com.rohittp.rentile/BasemapRasterizer.prepareBatch|prepareBatch(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode;com.rohittp.rentile.TileSubstitutionPolicy){}[0]
     abstract suspend fun render(com.rohittp.rentile/PreparedBatch, kotlin.collections/List<com.rohittp.rentile/TileId> = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedBatch;kotlin.collections.List<com.rohittp.rentile.TileId>){}[0]
-    abstract suspend fun render(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode){}[0]
+    abstract suspend fun render(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ..., com.rohittp.rentile/TileSubstitutionPolicy = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode;com.rohittp.rentile.TileSubstitutionPolicy){}[0]
+    abstract suspend fun retryExact(com.rohittp.rentile/PreparedBatch): com.rohittp.rentile/ExactRecoveryResult // com.rohittp.rentile/BasemapRasterizer.retryExact|retryExact(com.rohittp.rentile.PreparedBatch){}[0]
 }
 
 abstract interface com.rohittp.rentile/PreparedBatch : kotlin/AutoCloseable { // com.rohittp.rentile/PreparedBatch|null[0]
@@ -188,6 +222,8 @@ abstract interface com.rohittp.rentile/PreparedBatch : kotlin/AutoCloseable { //
         abstract fun <get-contentKeys>(): kotlin.collections/Map<com.rohittp.rentile/TileId, kotlin/String> // com.rohittp.rentile/PreparedBatch.contentKeys.<get-contentKeys>|<get-contentKeys>(){}[0]
     abstract val diagnostics // com.rohittp.rentile/PreparedBatch.diagnostics|{}diagnostics[0]
         abstract fun <get-diagnostics>(): kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> // com.rohittp.rentile/PreparedBatch.diagnostics.<get-diagnostics>|<get-diagnostics>(){}[0]
+    abstract val substitutions // com.rohittp.rentile/PreparedBatch.substitutions|{}substitutions[0]
+        abstract fun <get-substitutions>(): kotlin.collections/Map<com.rohittp.rentile/TileId, kotlin.collections/List<com.rohittp.rentile/ResourceSubstitution>> // com.rohittp.rentile/PreparedBatch.substitutions.<get-substitutions>|<get-substitutions>(){}[0]
     abstract val tiles // com.rohittp.rentile/PreparedBatch.tiles|{}tiles[0]
         abstract fun <get-tiles>(): kotlin.collections/List<com.rohittp.rentile/TileId> // com.rohittp.rentile/PreparedBatch.tiles.<get-tiles>|<get-tiles>(){}[0]
 
@@ -403,6 +439,25 @@ final class com.rohittp.rentile/CompatibilityPolicy { // com.rohittp.rentile/Com
     }
 }
 
+final class com.rohittp.rentile/ExactRecoveryResult { // com.rohittp.rentile/ExactRecoveryResult|null[0]
+    constructor <init>(kotlin.collections/Set<com.rohittp.rentile/TileId>, kotlin.collections/Set<com.rohittp.rentile/TileId>, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ...) // com.rohittp.rentile/ExactRecoveryResult.<init>|<init>(kotlin.collections.Set<com.rohittp.rentile.TileId>;kotlin.collections.Set<com.rohittp.rentile.TileId>;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>){}[0]
+
+    final val diagnostics // com.rohittp.rentile/ExactRecoveryResult.diagnostics|{}diagnostics[0]
+        final fun <get-diagnostics>(): kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> // com.rohittp.rentile/ExactRecoveryResult.diagnostics.<get-diagnostics>|<get-diagnostics>(){}[0]
+    final val remainingSubstitutedTiles // com.rohittp.rentile/ExactRecoveryResult.remainingSubstitutedTiles|{}remainingSubstitutedTiles[0]
+        final fun <get-remainingSubstitutedTiles>(): kotlin.collections/Set<com.rohittp.rentile/TileId> // com.rohittp.rentile/ExactRecoveryResult.remainingSubstitutedTiles.<get-remainingSubstitutedTiles>|<get-remainingSubstitutedTiles>(){}[0]
+    final val upgradedTiles // com.rohittp.rentile/ExactRecoveryResult.upgradedTiles|{}upgradedTiles[0]
+        final fun <get-upgradedTiles>(): kotlin.collections/Set<com.rohittp.rentile/TileId> // com.rohittp.rentile/ExactRecoveryResult.upgradedTiles.<get-upgradedTiles>|<get-upgradedTiles>(){}[0]
+
+    final fun component1(): kotlin.collections/Set<com.rohittp.rentile/TileId> // com.rohittp.rentile/ExactRecoveryResult.component1|component1(){}[0]
+    final fun component2(): kotlin.collections/Set<com.rohittp.rentile/TileId> // com.rohittp.rentile/ExactRecoveryResult.component2|component2(){}[0]
+    final fun component3(): kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> // com.rohittp.rentile/ExactRecoveryResult.component3|component3(){}[0]
+    final fun copy(kotlin.collections/Set<com.rohittp.rentile/TileId> = ..., kotlin.collections/Set<com.rohittp.rentile/TileId> = ..., kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ...): com.rohittp.rentile/ExactRecoveryResult // com.rohittp.rentile/ExactRecoveryResult.copy|copy(kotlin.collections.Set<com.rohittp.rentile.TileId>;kotlin.collections.Set<com.rohittp.rentile.TileId>;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/ExactRecoveryResult.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/ExactRecoveryResult.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/ExactRecoveryResult.toString|toString(){}[0]
+}
+
 final class com.rohittp.rentile/ExecutionPolicy { // com.rohittp.rentile/ExecutionPolicy|null[0]
     constructor <init>(kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Long = ..., kotlin/Int = ...) // com.rohittp.rentile/ExecutionPolicy.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Long;kotlin.Int){}[0]
 
@@ -436,11 +491,58 @@ final class com.rohittp.rentile/ForeignPreparedStyleException : com.rohittp.rent
     constructor <init>(kotlin/String = ...) // com.rohittp.rentile/ForeignPreparedStyleException.<init>|<init>(kotlin.String){}[0]
 }
 
+final class com.rohittp.rentile/GroundRadianceDescriptor { // com.rohittp.rentile/GroundRadianceDescriptor|null[0]
+    constructor <init>(kotlin/Double, kotlin/Double, kotlin/Double) // com.rohittp.rentile/GroundRadianceDescriptor.<init>|<init>(kotlin.Double;kotlin.Double;kotlin.Double){}[0]
+
+    final val blue // com.rohittp.rentile/GroundRadianceDescriptor.blue|{}blue[0]
+        final fun <get-blue>(): kotlin/Double // com.rohittp.rentile/GroundRadianceDescriptor.blue.<get-blue>|<get-blue>(){}[0]
+    final val green // com.rohittp.rentile/GroundRadianceDescriptor.green|{}green[0]
+        final fun <get-green>(): kotlin/Double // com.rohittp.rentile/GroundRadianceDescriptor.green.<get-green>|<get-green>(){}[0]
+    final val red // com.rohittp.rentile/GroundRadianceDescriptor.red|{}red[0]
+        final fun <get-red>(): kotlin/Double // com.rohittp.rentile/GroundRadianceDescriptor.red.<get-red>|<get-red>(){}[0]
+
+    final fun component1(): kotlin/Double // com.rohittp.rentile/GroundRadianceDescriptor.component1|component1(){}[0]
+    final fun component2(): kotlin/Double // com.rohittp.rentile/GroundRadianceDescriptor.component2|component2(){}[0]
+    final fun component3(): kotlin/Double // com.rohittp.rentile/GroundRadianceDescriptor.component3|component3(){}[0]
+    final fun copy(kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ...): com.rohittp.rentile/GroundRadianceDescriptor // com.rohittp.rentile/GroundRadianceDescriptor.copy|copy(kotlin.Double;kotlin.Double;kotlin.Double){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/GroundRadianceDescriptor.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/GroundRadianceDescriptor.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/GroundRadianceDescriptor.toString|toString(){}[0]
+}
+
 final class com.rohittp.rentile/InvalidTileIdException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/InvalidTileIdException|null[0]
     constructor <init>(com.rohittp.rentile/TileId, kotlin/String = ...) // com.rohittp.rentile/InvalidTileIdException.<init>|<init>(com.rohittp.rentile.TileId;kotlin.String){}[0]
 
     final val tile // com.rohittp.rentile/InvalidTileIdException.tile|{}tile[0]
         final fun <get-tile>(): com.rohittp.rentile/TileId // com.rohittp.rentile/InvalidTileIdException.tile.<get-tile>|<get-tile>(){}[0]
+}
+
+final class com.rohittp.rentile/LabelLayerDescriptor { // com.rohittp.rentile/LabelLayerDescriptor|null[0]
+    constructor <init>(kotlin/String, kotlin/String, kotlin/String, kotlin/Int, kotlin/Int, kotlin/String) // com.rohittp.rentile/LabelLayerDescriptor.<init>|<init>(kotlin.String;kotlin.String;kotlin.String;kotlin.Int;kotlin.Int;kotlin.String){}[0]
+
+    final val id // com.rohittp.rentile/LabelLayerDescriptor.id|{}id[0]
+        final fun <get-id>(): kotlin/String // com.rohittp.rentile/LabelLayerDescriptor.id.<get-id>|<get-id>(){}[0]
+    final val layerJson // com.rohittp.rentile/LabelLayerDescriptor.layerJson|{}layerJson[0]
+        final fun <get-layerJson>(): kotlin/String // com.rohittp.rentile/LabelLayerDescriptor.layerJson.<get-layerJson>|<get-layerJson>(){}[0]
+    final val sourceId // com.rohittp.rentile/LabelLayerDescriptor.sourceId|{}sourceId[0]
+        final fun <get-sourceId>(): kotlin/String // com.rohittp.rentile/LabelLayerDescriptor.sourceId.<get-sourceId>|<get-sourceId>(){}[0]
+    final val sourceLayer // com.rohittp.rentile/LabelLayerDescriptor.sourceLayer|{}sourceLayer[0]
+        final fun <get-sourceLayer>(): kotlin/String // com.rohittp.rentile/LabelLayerDescriptor.sourceLayer.<get-sourceLayer>|<get-sourceLayer>(){}[0]
+    final val sourceMaximumZoom // com.rohittp.rentile/LabelLayerDescriptor.sourceMaximumZoom|{}sourceMaximumZoom[0]
+        final fun <get-sourceMaximumZoom>(): kotlin/Int // com.rohittp.rentile/LabelLayerDescriptor.sourceMaximumZoom.<get-sourceMaximumZoom>|<get-sourceMaximumZoom>(){}[0]
+    final val sourceMinimumZoom // com.rohittp.rentile/LabelLayerDescriptor.sourceMinimumZoom|{}sourceMinimumZoom[0]
+        final fun <get-sourceMinimumZoom>(): kotlin/Int // com.rohittp.rentile/LabelLayerDescriptor.sourceMinimumZoom.<get-sourceMinimumZoom>|<get-sourceMinimumZoom>(){}[0]
+
+    final fun component1(): kotlin/String // com.rohittp.rentile/LabelLayerDescriptor.component1|component1(){}[0]
+    final fun component2(): kotlin/String // com.rohittp.rentile/LabelLayerDescriptor.component2|component2(){}[0]
+    final fun component3(): kotlin/String // com.rohittp.rentile/LabelLayerDescriptor.component3|component3(){}[0]
+    final fun component4(): kotlin/Int // com.rohittp.rentile/LabelLayerDescriptor.component4|component4(){}[0]
+    final fun component5(): kotlin/Int // com.rohittp.rentile/LabelLayerDescriptor.component5|component5(){}[0]
+    final fun component6(): kotlin/String // com.rohittp.rentile/LabelLayerDescriptor.component6|component6(){}[0]
+    final fun copy(kotlin/String = ..., kotlin/String = ..., kotlin/String = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/String = ...): com.rohittp.rentile/LabelLayerDescriptor // com.rohittp.rentile/LabelLayerDescriptor.copy|copy(kotlin.String;kotlin.String;kotlin.String;kotlin.Int;kotlin.Int;kotlin.String){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelLayerDescriptor.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelLayerDescriptor.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/LabelLayerDescriptor.toString|toString(){}[0]
 }
 
 final class com.rohittp.rentile/MapSession { // com.rohittp.rentile/MapSession|null[0]
@@ -759,6 +861,31 @@ final class com.rohittp.rentile/ResourceStoreException : com.rohittp.rentile/Ren
     constructor <init>(kotlin/String, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ..., kotlin/Throwable? = ...) // com.rohittp.rentile/ResourceStoreException.<init>|<init>(kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>;kotlin.Throwable?){}[0]
 }
 
+final class com.rohittp.rentile/ResourceSubstitution { // com.rohittp.rentile/ResourceSubstitution|null[0]
+    constructor <init>(com.rohittp.rentile/ResourceClass, kotlin/String, com.rohittp.rentile/TileSubstitutionStrategy, kotlin.collections/List<com.rohittp.rentile/TileId>, kotlin/Int? = ...) // com.rohittp.rentile/ResourceSubstitution.<init>|<init>(com.rohittp.rentile.ResourceClass;kotlin.String;com.rohittp.rentile.TileSubstitutionStrategy;kotlin.collections.List<com.rohittp.rentile.TileId>;kotlin.Int?){}[0]
+
+    final val ancestorZoomDistance // com.rohittp.rentile/ResourceSubstitution.ancestorZoomDistance|{}ancestorZoomDistance[0]
+        final fun <get-ancestorZoomDistance>(): kotlin/Int? // com.rohittp.rentile/ResourceSubstitution.ancestorZoomDistance.<get-ancestorZoomDistance>|<get-ancestorZoomDistance>(){}[0]
+    final val resourceClass // com.rohittp.rentile/ResourceSubstitution.resourceClass|{}resourceClass[0]
+        final fun <get-resourceClass>(): com.rohittp.rentile/ResourceClass // com.rohittp.rentile/ResourceSubstitution.resourceClass.<get-resourceClass>|<get-resourceClass>(){}[0]
+    final val sanitizedSourceId // com.rohittp.rentile/ResourceSubstitution.sanitizedSourceId|{}sanitizedSourceId[0]
+        final fun <get-sanitizedSourceId>(): kotlin/String // com.rohittp.rentile/ResourceSubstitution.sanitizedSourceId.<get-sanitizedSourceId>|<get-sanitizedSourceId>(){}[0]
+    final val sourceTiles // com.rohittp.rentile/ResourceSubstitution.sourceTiles|{}sourceTiles[0]
+        final fun <get-sourceTiles>(): kotlin.collections/List<com.rohittp.rentile/TileId> // com.rohittp.rentile/ResourceSubstitution.sourceTiles.<get-sourceTiles>|<get-sourceTiles>(){}[0]
+    final val strategy // com.rohittp.rentile/ResourceSubstitution.strategy|{}strategy[0]
+        final fun <get-strategy>(): com.rohittp.rentile/TileSubstitutionStrategy // com.rohittp.rentile/ResourceSubstitution.strategy.<get-strategy>|<get-strategy>(){}[0]
+
+    final fun component1(): com.rohittp.rentile/ResourceClass // com.rohittp.rentile/ResourceSubstitution.component1|component1(){}[0]
+    final fun component2(): kotlin/String // com.rohittp.rentile/ResourceSubstitution.component2|component2(){}[0]
+    final fun component3(): com.rohittp.rentile/TileSubstitutionStrategy // com.rohittp.rentile/ResourceSubstitution.component3|component3(){}[0]
+    final fun component4(): kotlin.collections/List<com.rohittp.rentile/TileId> // com.rohittp.rentile/ResourceSubstitution.component4|component4(){}[0]
+    final fun component5(): kotlin/Int? // com.rohittp.rentile/ResourceSubstitution.component5|component5(){}[0]
+    final fun copy(com.rohittp.rentile/ResourceClass = ..., kotlin/String = ..., com.rohittp.rentile/TileSubstitutionStrategy = ..., kotlin.collections/List<com.rohittp.rentile/TileId> = ..., kotlin/Int? = ...): com.rohittp.rentile/ResourceSubstitution // com.rohittp.rentile/ResourceSubstitution.copy|copy(com.rohittp.rentile.ResourceClass;kotlin.String;com.rohittp.rentile.TileSubstitutionStrategy;kotlin.collections.List<com.rohittp.rentile.TileId>;kotlin.Int?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/ResourceSubstitution.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/ResourceSubstitution.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/ResourceSubstitution.toString|toString(){}[0]
+}
+
 final class com.rohittp.rentile/SafetyLimitException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/SafetyLimitException|null[0]
     constructor <init>(kotlin/String, kotlin/String, kotlin/Long, kotlin/Long, com.rohittp.rentile/PipelineStage, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ..., kotlin.collections/List<com.rohittp.rentile/TileId> = ...) // com.rohittp.rentile/SafetyLimitException.<init>|<init>(kotlin.String;kotlin.String;kotlin.Long;kotlin.Long;com.rohittp.rentile.PipelineStage;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>;kotlin.collections.List<com.rohittp.rentile.TileId>){}[0]
 
@@ -787,6 +914,31 @@ final class com.rohittp.rentile/StylePreparationException : com.rohittp.rentile/
     constructor <init>(kotlin/String, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ..., kotlin/Throwable? = ...) // com.rohittp.rentile/StylePreparationException.<init>|<init>(kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>;kotlin.Throwable?){}[0]
 }
 
+final class com.rohittp.rentile/TerrainSourceDescriptor { // com.rohittp.rentile/TerrainSourceDescriptor|null[0]
+    constructor <init>(kotlin/String, com.rohittp.rentile/TerrainDemEncoding, kotlin/Int, kotlin/Int, kotlin/Int) // com.rohittp.rentile/TerrainSourceDescriptor.<init>|<init>(kotlin.String;com.rohittp.rentile.TerrainDemEncoding;kotlin.Int;kotlin.Int;kotlin.Int){}[0]
+
+    final val encoding // com.rohittp.rentile/TerrainSourceDescriptor.encoding|{}encoding[0]
+        final fun <get-encoding>(): com.rohittp.rentile/TerrainDemEncoding // com.rohittp.rentile/TerrainSourceDescriptor.encoding.<get-encoding>|<get-encoding>(){}[0]
+    final val maximumZoom // com.rohittp.rentile/TerrainSourceDescriptor.maximumZoom|{}maximumZoom[0]
+        final fun <get-maximumZoom>(): kotlin/Int // com.rohittp.rentile/TerrainSourceDescriptor.maximumZoom.<get-maximumZoom>|<get-maximumZoom>(){}[0]
+    final val minimumZoom // com.rohittp.rentile/TerrainSourceDescriptor.minimumZoom|{}minimumZoom[0]
+        final fun <get-minimumZoom>(): kotlin/Int // com.rohittp.rentile/TerrainSourceDescriptor.minimumZoom.<get-minimumZoom>|<get-minimumZoom>(){}[0]
+    final val sourceId // com.rohittp.rentile/TerrainSourceDescriptor.sourceId|{}sourceId[0]
+        final fun <get-sourceId>(): kotlin/String // com.rohittp.rentile/TerrainSourceDescriptor.sourceId.<get-sourceId>|<get-sourceId>(){}[0]
+    final val tileSizePx // com.rohittp.rentile/TerrainSourceDescriptor.tileSizePx|{}tileSizePx[0]
+        final fun <get-tileSizePx>(): kotlin/Int // com.rohittp.rentile/TerrainSourceDescriptor.tileSizePx.<get-tileSizePx>|<get-tileSizePx>(){}[0]
+
+    final fun component1(): kotlin/String // com.rohittp.rentile/TerrainSourceDescriptor.component1|component1(){}[0]
+    final fun component2(): com.rohittp.rentile/TerrainDemEncoding // com.rohittp.rentile/TerrainSourceDescriptor.component2|component2(){}[0]
+    final fun component3(): kotlin/Int // com.rohittp.rentile/TerrainSourceDescriptor.component3|component3(){}[0]
+    final fun component4(): kotlin/Int // com.rohittp.rentile/TerrainSourceDescriptor.component4|component4(){}[0]
+    final fun component5(): kotlin/Int // com.rohittp.rentile/TerrainSourceDescriptor.component5|component5(){}[0]
+    final fun copy(kotlin/String = ..., com.rohittp.rentile/TerrainDemEncoding = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ...): com.rohittp.rentile/TerrainSourceDescriptor // com.rohittp.rentile/TerrainSourceDescriptor.copy|copy(kotlin.String;com.rohittp.rentile.TerrainDemEncoding;kotlin.Int;kotlin.Int;kotlin.Int){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/TerrainSourceDescriptor.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/TerrainSourceDescriptor.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/TerrainSourceDescriptor.toString|toString(){}[0]
+}
+
 final class com.rohittp.rentile/TileId { // com.rohittp.rentile/TileId|null[0]
     constructor <init>(kotlin/Int, kotlin/Int, kotlin/Int) // com.rohittp.rentile/TileId.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.Int){}[0]
 
@@ -811,6 +963,52 @@ final class com.rohittp.rentile/TileNotInPreparedBatchException : com.rohittp.re
 
     final val tile // com.rohittp.rentile/TileNotInPreparedBatchException.tile|{}tile[0]
         final fun <get-tile>(): com.rohittp.rentile/TileId // com.rohittp.rentile/TileNotInPreparedBatchException.tile.<get-tile>|<get-tile>(){}[0]
+}
+
+final class com.rohittp.rentile/TileSubstitutionException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/TileSubstitutionException|null[0]
+    constructor <init>(com.rohittp.rentile/TileId, com.rohittp.rentile/ResourceClass, kotlin/String, kotlin.collections/List<com.rohittp.rentile/TileSubstitutionStrategy>, com.rohittp.rentile/ResourceAcquisitionException, kotlin.collections/List<com.rohittp.rentile/RentileException>, kotlin/String = ...) // com.rohittp.rentile/TileSubstitutionException.<init>|<init>(com.rohittp.rentile.TileId;com.rohittp.rentile.ResourceClass;kotlin.String;kotlin.collections.List<com.rohittp.rentile.TileSubstitutionStrategy>;com.rohittp.rentile.ResourceAcquisitionException;kotlin.collections.List<com.rohittp.rentile.RentileException>;kotlin.String){}[0]
+
+    final val attemptedStrategies // com.rohittp.rentile/TileSubstitutionException.attemptedStrategies|{}attemptedStrategies[0]
+        final fun <get-attemptedStrategies>(): kotlin.collections/List<com.rohittp.rentile/TileSubstitutionStrategy> // com.rohittp.rentile/TileSubstitutionException.attemptedStrategies.<get-attemptedStrategies>|<get-attemptedStrategies>(){}[0]
+    final val primaryFailure // com.rohittp.rentile/TileSubstitutionException.primaryFailure|{}primaryFailure[0]
+        final fun <get-primaryFailure>(): com.rohittp.rentile/ResourceAcquisitionException // com.rohittp.rentile/TileSubstitutionException.primaryFailure.<get-primaryFailure>|<get-primaryFailure>(){}[0]
+    final val resourceClass // com.rohittp.rentile/TileSubstitutionException.resourceClass|{}resourceClass[0]
+        final fun <get-resourceClass>(): com.rohittp.rentile/ResourceClass // com.rohittp.rentile/TileSubstitutionException.resourceClass.<get-resourceClass>|<get-resourceClass>(){}[0]
+    final val sanitizedResourceId // com.rohittp.rentile/TileSubstitutionException.sanitizedResourceId|{}sanitizedResourceId[0]
+        final fun <get-sanitizedResourceId>(): kotlin/String // com.rohittp.rentile/TileSubstitutionException.sanitizedResourceId.<get-sanitizedResourceId>|<get-sanitizedResourceId>(){}[0]
+    final val substitutionFailures // com.rohittp.rentile/TileSubstitutionException.substitutionFailures|{}substitutionFailures[0]
+        final fun <get-substitutionFailures>(): kotlin.collections/List<com.rohittp.rentile/RentileException> // com.rohittp.rentile/TileSubstitutionException.substitutionFailures.<get-substitutionFailures>|<get-substitutionFailures>(){}[0]
+    final val tile // com.rohittp.rentile/TileSubstitutionException.tile|{}tile[0]
+        final fun <get-tile>(): com.rohittp.rentile/TileId // com.rohittp.rentile/TileSubstitutionException.tile.<get-tile>|<get-tile>(){}[0]
+}
+
+final class com.rohittp.rentile/TileSubstitutionLimitException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/TileSubstitutionLimitException|null[0]
+    constructor <init>(kotlin/Int, kotlin/Int, com.rohittp.rentile/ResourceAcquisitionException, kotlin.collections/List<com.rohittp.rentile/TileId>, kotlin/String = ...) // com.rohittp.rentile/TileSubstitutionLimitException.<init>|<init>(kotlin.Int;kotlin.Int;com.rohittp.rentile.ResourceAcquisitionException;kotlin.collections.List<com.rohittp.rentile.TileId>;kotlin.String){}[0]
+
+    final val maximumSubstitutedTiles // com.rohittp.rentile/TileSubstitutionLimitException.maximumSubstitutedTiles|{}maximumSubstitutedTiles[0]
+        final fun <get-maximumSubstitutedTiles>(): kotlin/Int // com.rohittp.rentile/TileSubstitutionLimitException.maximumSubstitutedTiles.<get-maximumSubstitutedTiles>|<get-maximumSubstitutedTiles>(){}[0]
+    final val primaryFailure // com.rohittp.rentile/TileSubstitutionLimitException.primaryFailure|{}primaryFailure[0]
+        final fun <get-primaryFailure>(): com.rohittp.rentile/ResourceAcquisitionException // com.rohittp.rentile/TileSubstitutionLimitException.primaryFailure.<get-primaryFailure>|<get-primaryFailure>(){}[0]
+    final val requiredSubstitutedTiles // com.rohittp.rentile/TileSubstitutionLimitException.requiredSubstitutedTiles|{}requiredSubstitutedTiles[0]
+        final fun <get-requiredSubstitutedTiles>(): kotlin/Int // com.rohittp.rentile/TileSubstitutionLimitException.requiredSubstitutedTiles.<get-requiredSubstitutedTiles>|<get-requiredSubstitutedTiles>(){}[0]
+}
+
+final class com.rohittp.rentile/TileSubstitutionPolicy { // com.rohittp.rentile/TileSubstitutionPolicy|null[0]
+    constructor <init>(kotlin/Int = ...) // com.rohittp.rentile/TileSubstitutionPolicy.<init>|<init>(kotlin.Int){}[0]
+
+    final val maximumSubstitutedTiles // com.rohittp.rentile/TileSubstitutionPolicy.maximumSubstitutedTiles|{}maximumSubstitutedTiles[0]
+        final fun <get-maximumSubstitutedTiles>(): kotlin/Int // com.rohittp.rentile/TileSubstitutionPolicy.maximumSubstitutedTiles.<get-maximumSubstitutedTiles>|<get-maximumSubstitutedTiles>(){}[0]
+
+    final fun component1(): kotlin/Int // com.rohittp.rentile/TileSubstitutionPolicy.component1|component1(){}[0]
+    final fun copy(kotlin/Int = ...): com.rohittp.rentile/TileSubstitutionPolicy // com.rohittp.rentile/TileSubstitutionPolicy.copy|copy(kotlin.Int){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/TileSubstitutionPolicy.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/TileSubstitutionPolicy.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/TileSubstitutionPolicy.toString|toString(){}[0]
+
+    final object Companion { // com.rohittp.rentile/TileSubstitutionPolicy.Companion|null[0]
+        final val Disabled // com.rohittp.rentile/TileSubstitutionPolicy.Companion.Disabled|{}Disabled[0]
+            final fun <get-Disabled>(): com.rohittp.rentile/TileSubstitutionPolicy // com.rohittp.rentile/TileSubstitutionPolicy.Companion.Disabled.<get-Disabled>|<get-Disabled>(){}[0]
+    }
 }
 
 final class com.rohittp.rentile/TransportRequest { // com.rohittp.rentile/TransportRequest|null[0]
@@ -883,6 +1081,59 @@ final class com.rohittp.rentile/TransportResponseMetadata { // com.rohittp.renti
         final fun <get-wireByteCount>(): kotlin/Long? // com.rohittp.rentile/TransportResponseMetadata.wireByteCount.<get-wireByteCount>|<get-wireByteCount>(){}[0]
 
     final fun toString(): kotlin/String // com.rohittp.rentile/TransportResponseMetadata.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/ValidatedDemTile { // com.rohittp.rentile/ValidatedDemTile|null[0]
+    constructor <init>(com.rohittp.rentile/TileId, com.rohittp.rentile/TileId, kotlin/String, com.rohittp.rentile/TerrainDemEncoding, kotlin/ByteArray, kotlin/String) // com.rohittp.rentile/ValidatedDemTile.<init>|<init>(com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.String;com.rohittp.rentile.TerrainDemEncoding;kotlin.ByteArray;kotlin.String){}[0]
+
+    final val bytes // com.rohittp.rentile/ValidatedDemTile.bytes|{}bytes[0]
+        final fun <get-bytes>(): kotlin/ByteArray // com.rohittp.rentile/ValidatedDemTile.bytes.<get-bytes>|<get-bytes>(){}[0]
+    final val contentDigest // com.rohittp.rentile/ValidatedDemTile.contentDigest|{}contentDigest[0]
+        final fun <get-contentDigest>(): kotlin/String // com.rohittp.rentile/ValidatedDemTile.contentDigest.<get-contentDigest>|<get-contentDigest>(){}[0]
+    final val encoding // com.rohittp.rentile/ValidatedDemTile.encoding|{}encoding[0]
+        final fun <get-encoding>(): com.rohittp.rentile/TerrainDemEncoding // com.rohittp.rentile/ValidatedDemTile.encoding.<get-encoding>|<get-encoding>(){}[0]
+    final val requestedTile // com.rohittp.rentile/ValidatedDemTile.requestedTile|{}requestedTile[0]
+        final fun <get-requestedTile>(): com.rohittp.rentile/TileId // com.rohittp.rentile/ValidatedDemTile.requestedTile.<get-requestedTile>|<get-requestedTile>(){}[0]
+    final val sourceId // com.rohittp.rentile/ValidatedDemTile.sourceId|{}sourceId[0]
+        final fun <get-sourceId>(): kotlin/String // com.rohittp.rentile/ValidatedDemTile.sourceId.<get-sourceId>|<get-sourceId>(){}[0]
+    final val sourceTile // com.rohittp.rentile/ValidatedDemTile.sourceTile|{}sourceTile[0]
+        final fun <get-sourceTile>(): com.rohittp.rentile/TileId // com.rohittp.rentile/ValidatedDemTile.sourceTile.<get-sourceTile>|<get-sourceTile>(){}[0]
+
+    final fun component1(): com.rohittp.rentile/TileId // com.rohittp.rentile/ValidatedDemTile.component1|component1(){}[0]
+    final fun component2(): com.rohittp.rentile/TileId // com.rohittp.rentile/ValidatedDemTile.component2|component2(){}[0]
+    final fun component3(): kotlin/String // com.rohittp.rentile/ValidatedDemTile.component3|component3(){}[0]
+    final fun component4(): com.rohittp.rentile/TerrainDemEncoding // com.rohittp.rentile/ValidatedDemTile.component4|component4(){}[0]
+    final fun component5(): kotlin/ByteArray // com.rohittp.rentile/ValidatedDemTile.component5|component5(){}[0]
+    final fun component6(): kotlin/String // com.rohittp.rentile/ValidatedDemTile.component6|component6(){}[0]
+    final fun copy(com.rohittp.rentile/TileId = ..., com.rohittp.rentile/TileId = ..., kotlin/String = ..., com.rohittp.rentile/TerrainDemEncoding = ..., kotlin/ByteArray = ..., kotlin/String = ...): com.rohittp.rentile/ValidatedDemTile // com.rohittp.rentile/ValidatedDemTile.copy|copy(com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.String;com.rohittp.rentile.TerrainDemEncoding;kotlin.ByteArray;kotlin.String){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/ValidatedDemTile.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/ValidatedDemTile.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/ValidatedDemTile.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/ValidatedMvtTile { // com.rohittp.rentile/ValidatedMvtTile|null[0]
+    constructor <init>(com.rohittp.rentile/TileId, com.rohittp.rentile/TileId, kotlin/String, kotlin/ByteArray, kotlin/String) // com.rohittp.rentile/ValidatedMvtTile.<init>|<init>(com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.String;kotlin.ByteArray;kotlin.String){}[0]
+
+    final val bytes // com.rohittp.rentile/ValidatedMvtTile.bytes|{}bytes[0]
+        final fun <get-bytes>(): kotlin/ByteArray // com.rohittp.rentile/ValidatedMvtTile.bytes.<get-bytes>|<get-bytes>(){}[0]
+    final val contentDigest // com.rohittp.rentile/ValidatedMvtTile.contentDigest|{}contentDigest[0]
+        final fun <get-contentDigest>(): kotlin/String // com.rohittp.rentile/ValidatedMvtTile.contentDigest.<get-contentDigest>|<get-contentDigest>(){}[0]
+    final val requestedTile // com.rohittp.rentile/ValidatedMvtTile.requestedTile|{}requestedTile[0]
+        final fun <get-requestedTile>(): com.rohittp.rentile/TileId // com.rohittp.rentile/ValidatedMvtTile.requestedTile.<get-requestedTile>|<get-requestedTile>(){}[0]
+    final val sourceId // com.rohittp.rentile/ValidatedMvtTile.sourceId|{}sourceId[0]
+        final fun <get-sourceId>(): kotlin/String // com.rohittp.rentile/ValidatedMvtTile.sourceId.<get-sourceId>|<get-sourceId>(){}[0]
+    final val sourceTile // com.rohittp.rentile/ValidatedMvtTile.sourceTile|{}sourceTile[0]
+        final fun <get-sourceTile>(): com.rohittp.rentile/TileId // com.rohittp.rentile/ValidatedMvtTile.sourceTile.<get-sourceTile>|<get-sourceTile>(){}[0]
+
+    final fun component1(): com.rohittp.rentile/TileId // com.rohittp.rentile/ValidatedMvtTile.component1|component1(){}[0]
+    final fun component2(): com.rohittp.rentile/TileId // com.rohittp.rentile/ValidatedMvtTile.component2|component2(){}[0]
+    final fun component3(): kotlin/String // com.rohittp.rentile/ValidatedMvtTile.component3|component3(){}[0]
+    final fun component4(): kotlin/ByteArray // com.rohittp.rentile/ValidatedMvtTile.component4|component4(){}[0]
+    final fun component5(): kotlin/String // com.rohittp.rentile/ValidatedMvtTile.component5|component5(){}[0]
+    final fun copy(com.rohittp.rentile/TileId = ..., com.rohittp.rentile/TileId = ..., kotlin/String = ..., kotlin/ByteArray = ..., kotlin/String = ...): com.rohittp.rentile/ValidatedMvtTile // com.rohittp.rentile/ValidatedMvtTile.copy|copy(com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.String;kotlin.ByteArray;kotlin.String){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/ValidatedMvtTile.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/ValidatedMvtTile.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/ValidatedMvtTile.toString|toString(){}[0]
 }
 
 sealed class com.rohittp.rentile/RentileException : kotlin/Exception { // com.rohittp.rentile/RentileException|null[0]

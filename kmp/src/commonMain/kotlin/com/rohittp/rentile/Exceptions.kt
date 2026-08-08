@@ -15,6 +15,8 @@ public enum class RentileErrorCode {
     FOREIGN_PREPARED_BATCH,
     INVALID_TILE_ID,
     TILE_NOT_IN_PREPARED_BATCH,
+    TILE_SUBSTITUTION_LIMIT_EXCEEDED,
+    TILE_SUBSTITUTION_FAILED,
     BATCH_RENDER_FAILED,
 }
 
@@ -179,6 +181,38 @@ public class TileNotInPreparedBatchException(
     stage = PipelineStage.LIFECYCLE,
     message = message,
     affectedTiles = listOf(tile),
+)
+
+public class TileSubstitutionLimitException(
+    public val maximumSubstitutedTiles: Int,
+    public val requiredSubstitutedTiles: Int,
+    public val primaryFailure: ResourceAcquisitionException,
+    affectedTiles: List<TileId>,
+    message: String = "Tile substitution allowance was exceeded",
+) : RentileException(
+    code = RentileErrorCode.TILE_SUBSTITUTION_LIMIT_EXCEEDED,
+    stage = PipelineStage.RESOURCE_ACQUISITION,
+    message = message,
+    diagnostics = primaryFailure.diagnostics,
+    affectedTiles = affectedTiles,
+    cause = primaryFailure,
+)
+
+public class TileSubstitutionException(
+    public val tile: TileId,
+    public val resourceClass: ResourceClass,
+    public val sanitizedResourceId: String,
+    public val attemptedStrategies: List<TileSubstitutionStrategy>,
+    public val primaryFailure: ResourceAcquisitionException,
+    public val substitutionFailures: List<RentileException>,
+    message: String = "No eligible tile substitute could be acquired",
+) : RentileException(
+    code = RentileErrorCode.TILE_SUBSTITUTION_FAILED,
+    stage = PipelineStage.RESOURCE_ACQUISITION,
+    message = message,
+    diagnostics = primaryFailure.diagnostics + substitutionFailures.flatMap { it.diagnostics },
+    affectedTiles = listOf(tile),
+    cause = primaryFailure,
 )
 
 public class BatchRenderException(
