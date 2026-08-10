@@ -110,6 +110,12 @@ kotlin {
         }
     }
 
+    jvm {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_21)
+        }
+    }
+
     iosArm64()
     iosSimulatorArm64()
     linuxX64()
@@ -154,6 +160,10 @@ kotlin {
                     implementation(libs.ktor.client.darwin)
                 }
             }
+        }
+
+        getByName("jvmTest").dependencies {
+            implementation("org.jetbrains.skiko:skiko-awt-runtime-$skikoHostOs-$skikoHostArch:${libs.versions.skiko.get()}")
         }
 
         getByName("androidHostTest").dependencies {
