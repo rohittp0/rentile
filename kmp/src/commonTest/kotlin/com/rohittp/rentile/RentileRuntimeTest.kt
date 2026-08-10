@@ -806,6 +806,68 @@ class RentileRuntimeTest {
         }
     }
 
+    /**
+     * `tileSize` declares the source's tile grid, not the byte size of any one served image, so
+     * a source may legitimately serve an image smaller than its declared tile size and Rentile
+     * must scale it into the requested output tile. Pinning this keeps a caller from "fixing" a
+     * small fixture image by shrinking the declared tile size out of the compatibility profile.
+     */
+    @Test
+    fun aDeclaredRasterTileSizeDoesNotHaveToMatchTheServedImageSize() = runTest {
+        val sourcePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { TransportResponse(200, sourcePng) },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"imagery":{"type":"raster","tiles":["https://tiles.example.test/{z}/{x}/{y}.png"],"tileSize":256}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#1f3f5f"}},{"id":"imagery","type":"raster","source":"imagery"}]}""",
+                ),
+            )
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+
+            assertTrue(output.pngBytes.startsWithPngSignature())
+            assertEquals(256, output.pngBytes.pngWidth())
+            assertEquals(256, output.pngBytes.pngHeight())
+            assertColorClose(
+                expected = Color.makeARGB(255, 22, 76, 60),
+                actual = output.pngBytes.centerPixelColor(),
+                tolerance = 1,
+            )
+            // The served image is not already the requested output size, so the drawn result is a
+            // real composite rather than the pass-through of ADR 0009.
+            assertTrue(output.diagnostics.none { it.code == DiagnosticCode.RASTER_PASSTHROUGH_USED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aRasterTileSizeOutsideTheCompatibilityProfileFailsPreparationWithAPreciseDiagnostic() = runTest {
+        val rasterizer = testRasterizer()
+        try {
+            val error = assertFailsWith<StylePreparationException> {
+                rasterizer.prepare(
+                    StyleInput.InlineJson(
+                        """{"version":8,"sources":{"imagery":{"type":"raster","tiles":["https://tiles.example.test/{z}/{x}/{y}.png"],"tileSize":8}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#1f3f5f"}},{"id":"imagery","type":"raster","source":"imagery"}]}""",
+                    ),
+                )
+            }
+
+            assertEquals(RentileErrorCode.STYLE_PREPARATION_FAILED, error.code)
+            val diagnostic = error.diagnostics.single { it.severity == DiagnosticSeverity.ERROR }
+            assertEquals(DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT, diagnostic.code)
+            assertEquals(PipelineStage.STYLE_PREPARATION, diagnostic.stage)
+            assertEquals("Raster source tile size is outside the compatibility profile", diagnostic.message)
+            // The diagnostic names the offending raster layer, not the style as a whole.
+            assertEquals("1", diagnostic.details["layerIndex"])
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
     @Test
     fun failureOnOneTileKeepsCompletedRawCacheEntries() = runTest {
         val sourcePng = renderSyntheticPng(256)
