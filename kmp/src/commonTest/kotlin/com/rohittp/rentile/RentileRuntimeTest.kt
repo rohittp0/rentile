@@ -1082,6 +1082,64 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun preparedStyleExposesEveryPlaceNameSourceLayerAcrossBothTileSchemas() = runTest {
+        val vectorTile = overzoomVectorTile()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { TransportResponse(200, vectorTile) },
+        )
+        try {
+            // MapTiler Planet v4 splits v3's single `place` layer into one layer per class
+            // family; a v4 style therefore names several source-layers, and the POI and road
+            // label layers beside them must stay out of the place-name closure.
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v4":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}},"layers":[""" +
+                        """{"id":"Continent labels","type":"symbol","source":"v4","source-layer":"continent_label","layout":{"text-field":["get","name"]}},""" +
+                        """{"id":"Country labels","type":"symbol","source":"v4","source-layer":"country_label","layout":{"text-field":["get","name"]}},""" +
+                        """{"id":"Disputed country labels","type":"symbol","source":"v4","source-layer":"country_disputed_label","layout":{"text-field":["get","name"]}},""" +
+                        """{"id":"State labels","type":"symbol","source":"v4","source-layer":"state_label","layout":{"text-field":["get","name"]}},""" +
+                        """{"id":"City labels","type":"symbol","source":"v4","source-layer":"city_label","layout":{"text-field":["get","name"]}},""" +
+                        """{"id":"Town labels","type":"symbol","source":"v4","source-layer":"town_label","layout":{"text-field":["get","name"]}},""" +
+                        """{"id":"Place labels","type":"symbol","source":"v4","source-layer":"place_label","layout":{"text-field":["get","name"]}},""" +
+                        """{"id":"Island labels","type":"symbol","source":"v4","source-layer":"island_label","layout":{"text-field":["get","name"]}},""" +
+                        """{"id":"Archipelago labels","type":"symbol","source":"v4","source-layer":"archipelago_label","layout":{"text-field":["get","name"]}},""" +
+                        """{"id":"Road labels","type":"symbol","source":"v4","source-layer":"road_label","layout":{"text-field":["get","name"]}},""" +
+                        """{"id":"Water labels","type":"symbol","source":"v4","source-layer":"water_label","layout":{"text-field":["get","name"]}},""" +
+                        """{"id":"Points of interest","type":"symbol","source":"v4","source-layer":"poi","layout":{"text-field":["get","name"]}}""" +
+                        """]}""",
+                ),
+            )
+
+            val descriptors = rasterizer.labelLayerDescriptors(style)
+
+            assertEquals(
+                listOf(
+                    "continent_label",
+                    "country_label",
+                    "country_disputed_label",
+                    "state_label",
+                    "city_label",
+                    "town_label",
+                    "place_label",
+                    "island_label",
+                    "archipelago_label",
+                ),
+                descriptors.map(LabelLayerDescriptor::sourceLayer),
+            )
+            // Style order is preserved so the host can keep using it as draw/priority order.
+            assertEquals("Continent labels", descriptors.first().id)
+            assertEquals("Archipelago labels", descriptors.last().id)
+            // Every descriptor names the layer it must decode, not a schema-wide assumption.
+            descriptors.forEach { descriptor ->
+                assertTrue(descriptor.layerJson.contains(descriptor.sourceLayer))
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun auxiliaryLabelAcquisitionIsAllOrError() = runTest {
         val rasterizer = testRasterizer(
             transport = ResourceTransport { TransportResponse(404, ByteArray(0)) },

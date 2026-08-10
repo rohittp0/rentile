@@ -118,6 +118,34 @@ internal data class GeoJsonPosition(
 
 internal const val GEO_JSON_SOURCE_LAYER: String = "__rentile_geojson__"
 
+/**
+ * The vector source-layers that carry geographic place names, across both tile schemas the
+ * rolling style corpus serves.
+ *
+ * OpenMapTiles v3 aggregates every settlement, admin area and island name into one `place`
+ * layer whose `class` property discriminates them (`continent`, `country`, `state`,
+ * `province`, `city`, `town`, `village`, `hamlet`, `suburb`, `neighbourhood`, `island`,
+ * `islet` are all in use across the corpus). MapTiler Planet v4 splits that same content
+ * into one layer per class family, so the v4 names below are the exact counterpart of v3's
+ * single layer -- nothing more. Point-of-interest, road, water, terrain and protected-area
+ * naming stays out: a host that asked for place names never drew those under v3, and
+ * admitting them here would change what a style renders rather than repair it.
+ */
+internal val PLACE_NAME_SOURCE_LAYERS: Set<String> = setOf(
+    // OpenMapTiles v3
+    "place",
+    // MapTiler Planet v4
+    "continent_label",
+    "country_label",
+    "country_disputed_label",
+    "state_label",
+    "city_label",
+    "town_label",
+    "place_label",
+    "island_label",
+    "archipelago_label",
+)
+
 internal sealed interface CompiledDrawLayer {
     val minZoom: Double
     val maxZoom: Double

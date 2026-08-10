@@ -340,7 +340,8 @@ internal class StyleCompiler(
         sources: JsonObject,
     ): Boolean {
         if (hidden || !hasMeaningfulText(layout)) return false
-        if (layer["source-layer"]?.asPrimitive()?.takeIf { it.isString }?.content != "place") return false
+        val sourceLayer = layer["source-layer"]?.asPrimitive()?.takeIf { it.isString }?.content
+        if (sourceLayer !in PLACE_NAME_SOURCE_LAYERS) return false
         val sourceId = layer["source"]?.asPrimitive()?.takeIf { it.isString }?.content ?: return false
         val source = sources[sourceId] as? JsonObject ?: return false
         return source["type"]?.asPrimitive()?.takeIf { it.isString }?.content == "vector"
