@@ -1,8 +1,10 @@
 # Rentile
 
+[![Maven Central](https://img.shields.io/maven-central/v/com.rohittp.rentile/kmp)](https://central.sonatype.com/artifact/com.rohittp.rentile/kmp)
+
 Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a supported map style and north-up XYZ tile identities, performs bounded local CPU rendering, and returns encoded PNG bytes without a UI view or platform render loop.
 
-The implementation is under active development. The first Maven Central release will be `0.1.0`; `0.1.0-SNAPSHOT` is currently available only through local publication.
+Rentile is published on Maven Central. The badge above is the current release; `VERSION_NAME` in the root `gradle.properties` is its sole source, and changing that value to a non-snapshot on `main` is what publishes.
 
 ## Targets
 
@@ -16,7 +18,7 @@ Rentile publishes one consumer coordinate:
 
 ```kotlin
 commonMain.dependencies {
-    implementation("com.rohittp.rentile:kmp:0.1.0")
+    implementation("com.rohittp.rentile:kmp:0.1.3")
 }
 ```
 
