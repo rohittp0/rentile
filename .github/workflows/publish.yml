@@ -70,12 +70,14 @@ jobs:
           ./gradlew --no-configuration-cache clean
           :kmp:checkKotlinAbi
           :kmp:testAndroidHostTest
+          :kmp:jvmTest
           :kmp:compileKotlinIosArm64
           :kmp:compileKotlinIosSimulatorArm64
           :kmp:compileKotlinLinuxX64
           :kmp:compileKotlinLinuxArm64
           :kmp:publishAllPublicationsToLocalTestRepository
           :kmp:checkPomFileForAndroidPublication
+          :kmp:checkPomFileForJvmPublication
           :kmp:checkPomFileForIosArm64Publication
           :kmp:checkPomFileForIosSimulatorArm64Publication
           :kmp:checkPomFileForKotlinMultiplatformPublication
@@ -87,6 +89,7 @@ jobs:
           ./gradlew --no-configuration-cache -p consumer-smoke
           -PrentileVersion=${{ needs.detect-version.outputs.version }}
           compileAndroidMain
+          compileKotlinJvm
           compileKotlinIosArm64
           compileKotlinIosSimulatorArm64
           compileKotlinLinuxX64
