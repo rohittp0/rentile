@@ -17,8 +17,8 @@ jobs:
       - name: Validate credential-free coverage
         run: python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
 
-  android-linux:
-    name: Android and Linux
+  android-jvm-linux:
+    name: Android, JVM and Linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -33,6 +33,7 @@ jobs:
           ./gradlew --no-configuration-cache
           :kmp:checkKotlinAbi
           :kmp:testAndroidHostTest
+          :kmp:jvmTest
           :kmp:linuxX64Test
           :kmp:compileKotlinLinuxArm64
           :kmp:bundleAndroidMainAar
@@ -58,6 +59,7 @@ jobs:
         run: >-
           ./gradlew --no-configuration-cache -p consumer-smoke
           compileAndroidMain
+          compileKotlinJvm
           compileKotlinIosArm64
           compileKotlinIosSimulatorArm64
           compileKotlinLinuxX64
