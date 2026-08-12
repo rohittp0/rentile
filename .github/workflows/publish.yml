@@ -42,7 +42,7 @@ jobs:
               exit 1
             fi
             modules+=("$module")
-          done < <(printf '%s' "$MODULES_INPUT" | tr ',' '\n' | tr -d ' ')
+          done < <(printf '%s\n' "$MODULES_INPUT" | tr ',' '\n' | tr -d ' ')
 
           if (( ${#modules[@]} == 0 )); then
             echo "::error::At least one Gradle module is required"
