@@ -1,10 +1,10 @@
 # Rentile
 
-[![Maven Central](https://img.shields.io/maven-central/v/com.rohittp.rentile/kmp)](https://central.sonatype.com/artifact/com.rohittp.rentile/kmp)
+[Public Maven repository](https://maven.rohittp.com)
 
 Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a supported map style and north-up XYZ tile identities, performs bounded local CPU rendering, and returns encoded PNG bytes without a UI view or platform render loop.
 
-Rentile is published on Maven Central. The badge above is the current release; `VERSION_NAME` in the root `gradle.properties` is its sole source, and changing that value to a non-snapshot on `main` is what publishes.
+Rentile is published to the public repository at `https://maven.rohittp.com`. `VERSION_NAME` in the root `gradle.properties` is the sole release-version source. Releases are published by manually dispatching the `Build and Publish` workflow and cannot overwrite an existing coordinate.
 
 ## Targets
 
@@ -18,17 +18,18 @@ Rentile publishes one consumer coordinate:
 
 ```kotlin
 commonMain.dependencies {
-    implementation("com.rohittp.rentile:kmp:0.1.3")
+    implementation("com.rohittp.rentile:kmp:<version>")
 }
 ```
 
-Skiko's platform artifacts are resolved from JetBrains' public Compose repository, so consumers also need this narrow repository declaration:
+Add the shared public repository before the standard repositories. No repository credentials are required. Rentile is an ordinary KMP dependency, so it resolves through `dependencyResolutionManagement`; this project does not publish a Gradle plugin. Skiko's platform artifacts still come from JetBrains' public Compose repository.
 
 ```kotlin
 dependencyResolutionManagement {
     repositories {
-        google()
+        maven("https://maven.rohittp.com")
         mavenCentral()
+        google()
         maven("https://maven.pkg.jetbrains.space/public/p/compose/dev") {
             content { includeGroup("org.jetbrains.skiko") }
         }
@@ -48,9 +49,26 @@ python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
 ./gradlew -p consumer-smoke compileAndroidMain compileKotlinIosArm64 compileKotlinIosSimulatorArm64 compileKotlinLinuxX64 compileKotlinLinuxArm64
 ```
 
+Publish a release after its local and consumer gates pass:
+
+```text
+gh workflow run publish.yml --repo rohittp0/rentile --ref main -f modules=kmp
+gh run list --repo rohittp0/rentile --workflow publish.yml --limit 1
+gh run watch RUN_ID --repo rohittp0/rentile --exit-status
+```
+
 Architecture decisions and the evolving contract are in [`docs/`](docs/). Public documentation is prepared for `https://rohittp.com/rentile/`.
 
 The rolling corpus is discovered from the public paginated map catalog and checked against a credential-free Coverage Manifest. See [`compatibility/README.md`](compatibility/README.md) for local and workflow usage.
+
+### Static documentation version convention
+
+Release versions must not be hardcoded in HTML. Every displayed Rentile release uses
+`data-maven-version="kmp"`, and every applicable page loads the shared `docs/versions.js` script.
+The browser reads `<versioning><release>` directly from
+`https://maven.rohittp.com/com/rohittp/rentile/kmp/maven-metadata.xml`; it keeps the readable
+`latest` fallback if metadata cannot be loaded. The R2 CORS origin is `https://rohittp.com`.
+Publishing a new release requires no documentation commit or version-sync automation.
 
 ## Failure contract
 

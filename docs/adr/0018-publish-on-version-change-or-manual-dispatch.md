@@ -1,19 +1,17 @@
-# Publish on version change or manual dispatch
+# Publish manually to the immutable R2 Maven repository
 
-Rentile will publish `com.rohittp.rentile:kmp` and all target publications to Maven Central from GitHub Actions through either of two triggers: a push to `main` that changes the canonical project version, or an explicit `workflow_dispatch`. An ordinary push that does not change the version does not publish, and a GitHub Release is not required.
+Rentile publishes `com.rohittp.rentile:kmp` and all target publications to the public Maven repository at `https://maven.rohittp.com`. Publishing starts only through an explicit `workflow_dispatch` whose comma-separated module input currently accepts `kmp`. A push, tag, or GitHub Release does not publish by itself.
 
-`VERSION_NAME` in the root `gradle.properties` file is the sole canonical version. Gradle publication coordinates, local-repository verification, workflow change detection, and Maven Central upload all read that value; no workflow input, tag, module build file, or GitHub Release may supply a different publication version.
+`VERSION_NAME` in the root `gradle.properties` file remains the sole canonical version. Gradle publication coordinates, local-repository verification, the R2 immutability key, and public consumer verification all read that value; no workflow input, tag, module build file, or GitHub Release may supply a competing publication version.
 
-Versions ending in `-SNAPSHOT` are local-repository-only. A snapshot version may be built and verified, but neither a change on `main` nor a manual dispatch may contact Maven Central for it. Central publishing requires a non-snapshot `VERSION_NAME`.
+Versions ending in `-SNAPSHOT` are local-repository-only. The workflow rejects them before it reads or writes the R2 bucket.
 
-Development begins at `VERSION_NAME=0.1.0-SNAPSHOT`. After the required local-repository consumer gates pass, the first Maven Central release is `0.1.0`; there is no required alpha publication before it.
+Historical releases `0.1.0` through `0.1.4` were published to Maven Central. The shared R2 repository is canonical after this migration, and consumers must add `https://maven.rohittp.com` to `dependencyResolutionManagement`. No consumer credentials are required.
 
-The `0.1.0` release is also blocked until the versioned Coverage Manifest proves profile-complete rendering of all current styles resolved from the public map catalog through output zoom 22 on Android, iOS, Linux x64, and Linux ARM64. Partial background, raster, vector, or icon milestones remain `0.1.0-SNAPSHOT` local-repository builds and are not published as a reduced public contract.
+The release gate builds and tests the supported target set, publishes the exact version to an isolated local Maven repository, checks POM metadata and signatures, and resolves it from clean Android, JVM, iOS, and Linux consumers. The complete rolling map-catalog corpus gate must also pass and uploads a credential-free Corpus Report for inspection.
 
-The release gate is automated: preparation, capability coverage, decoded-pixel determinism, seam and ownership checks, and versioned perceptual comparison against the transformed MapLibre oracle must pass. Each corpus run also uploads a credential-free Corpus Report for human inspection, including failures, but visual approval is supplemental and cannot waive an automated failure.
+Before uploading, the workflow checks the exact primary POM key under `com/rohittp/rentile/kmp/<version>/` in R2. If that key exists, the release fails instead of overwriting any object. After upload, every locally published version artifact—including Gradle module metadata, JAR/AAR/KLIB files, sources, checksums, and signatures—must return HTTP 200 from the public repository. A fresh consumer with a fresh Gradle user home then resolves every supported target from that public URL without credentials.
 
-Both trigger paths run the same gates before contacting Maven Central: build and test the complete target set, publish the exact version to an isolated local Maven repository, and resolve and exercise it from clean Android, iOS, and Linux consumers. Only a fully passing gate may upload the coordinated KMP publication set from one host. Maven Central automatically releases the deployment only after Central validation succeeds. Republishing an immutable version is a workflow failure, never an overwrite.
-
-The workflow expects `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_KEY_ID`, `SIGNING_KEY_PASSWORD`, and the ASCII-armored private key in `SIGNING_KEY`. Secrets are never stored in repository files or emitted by validation tasks.
+The workflow expects `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `SIGNING_KEY`, `SIGNING_KEY_ID`, and `SIGNING_KEY_PASSWORD` as GitHub secrets. It expects `R2_ENDPOINT`, `R2_BUCKET`, and `R2_PUBLIC_URL` as GitHub variables. Credentials are never stored in repository files or passed to the public consumer check.
 
 The published POM project URL is `https://rohittp.com/rentile/`, backed by the static documentation committed under `docs/`. Developer and SCM metadata use `rohittp0`, `Rohit T P`, `https://rohittp.com`, and `https://github.com/rohittp0/rentile` respectively.

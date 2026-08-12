@@ -59,13 +59,12 @@
           <span class="tag">Kotlin Multiplatform</span>
           <span class="tag">Android · iOS · Linux</span>
           <span class="tag">Apache-2.0</span>
+          <span class="tag">v<span data-maven-version="kmp">latest</span></span>
         </div>
         <div class="draft-banner">
-          <strong>Rentile is pre-release.</strong>
-          The public Maven artifact is not available yet. These examples match the API on
-          <code>main</code>, where the lifecycle, raster path, strict MVT decoding, vector
-          overzoom, and the first fill/line slice are implemented. See <a href="#compatibility">current renderer coverage</a>
-          before evaluating a real style.
+          <strong>Public releases need no repository credentials.</strong>
+          Rentile is available from <code>https://maven.rohittp.com</code>. See
+          <a href="#compatibility">current renderer coverage</a> before evaluating a real style.
         </div>
       </header>
 
@@ -73,16 +72,19 @@
         <p class="doc-label">Step 1</p>
         <h2>Add the dependency</h2>
         <p>
-          Rentile has one coordinate for common code. Your project also needs JetBrains'
-          public Compose repository for the Skiko platform artifacts used by the renderer.
-          The content filter keeps that repository limited to Skiko.
+          Rentile has one coordinate for common code. Add the shared public repository before
+          the standard repositories. <code>dependencyResolutionManagement</code> resolves Rentile
+          because it is an ordinary KMP dependency, not a Gradle plugin. Your project also needs
+          JetBrains' public Compose repository for the Skiko platform artifacts used by the
+          renderer. The content filter keeps that repository limited to Skiko.
         </p>
         <div class="code-card doc-code">
           <div class="code-head"><span>settings.gradle.kts</span></div>
           <pre><code>dependencyResolutionManagement {
     repositories {
-        google()
+        maven(<span class="str">"https://maven.rohittp.com"</span>)
         mavenCentral()
+        google()
         maven(<span class="str">"https://maven.pkg.jetbrains.space/public/p/compose/dev"</span>) {
             content { includeGroup(<span class="str">"org.jetbrains.skiko"</span>) }
         }
@@ -94,15 +96,15 @@
           <pre><code>kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation(<span class="str">"com.rohittp.rentile:kmp:&lt;version&gt;"</span>)
+            implementation(<span class="str">"com.rohittp.rentile:kmp:<span data-maven-version="kmp">latest</span>"</span>)
         }
     }
 }</code></pre>
         </div>
         <div class="callout">
-          Replace <code>&lt;version&gt;</code> with a published version. Until the first artifact is
-          available, use the source repository to evaluate the API rather than adding a
-          snapshot coordinate to an application build.
+          This page reads the published release directly from the artifact's Maven metadata.
+          If metadata cannot be loaded, the readable fallback remains <code>latest</code>.
+          The public repository requires no username, password, or token.
         </div>
       </section>
 
@@ -434,7 +436,10 @@ rasterizer.prepareBatch(style, requestedTiles).use { batch -&gt;
     <div class="shell footer-inner">
       <div>
         <a class="footer-brand" href="index.html">Rentile</a>
-        <p>Headless basemap tile rendering for Kotlin Multiplatform.</p>
+        <p class="footer-meta">
+          com.rohittp.rentile:kmp ·
+          v<span data-maven-version="kmp">latest</span>
+        </p>
       </div>
       <div class="footer-links">
         <a href="index.html">Overview</a>
@@ -444,5 +449,6 @@ rasterizer.prepareBatch(style, requestedTiles).use { batch -&gt;
       </div>
     </div>
   </footer>
+  <script src="versions.js" defer></script>
 </body>
 </html>

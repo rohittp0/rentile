@@ -9,14 +9,17 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        // The Rentile group resolves only from the local test repository, so this harness proves the
-        // publication produced by this build rather than an already-released Central artifact that
-        // happens to share the version.
+        val rentileRepositoryUrl = providers.gradleProperty("rentileRepositoryUrl")
+            .orElse(uri(file("../build/local-maven")).toString())
+
+        // The Rentile group resolves only from the repository under test. Release workflows first
+        // use the isolated local repository, then repeat with the public R2 URL and a fresh Gradle
+        // user home so neither Central nor a previous dependency cache can mask a broken release.
         exclusiveContent {
             forRepository {
                 maven {
-                    name = "LocalTest"
-                    url = uri(file("../build/local-maven"))
+                    name = "RentileUnderTest"
+                    url = uri(rentileRepositoryUrl.get())
                 }
             }
             filter {

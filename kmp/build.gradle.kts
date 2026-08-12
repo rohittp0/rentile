@@ -192,7 +192,6 @@ extensions.configure<KotlinMultiplatformAndroidComponentsExtension> {
 }
 
 mavenPublishing {
-    publishToMavenCentral(automaticRelease = true)
     if (System.getenv("ORG_GRADLE_PROJECT_signingInMemoryKey") != null) {
         signAllPublications()
     }

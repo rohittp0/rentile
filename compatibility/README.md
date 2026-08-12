@@ -31,4 +31,4 @@ The report contains PNG tiles, available 3×3 mosaics, `results.tsv`, capability
 
 ## GitHub Actions
 
-The map-catalog workflow runs on pushes to `main` and explicit workflow dispatches. Maven Central publication runs the same corpus gate before upload. No map-catalog secret or base64 JSON is required.
+The map-catalog workflow runs on pushes to `main` and explicit workflow dispatches. R2 Maven publication runs the same corpus gate before upload. No map-catalog secret or base64 JSON is required.

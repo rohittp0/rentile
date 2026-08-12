@@ -45,6 +45,7 @@
       <a class="nav-brand" href="index.html" aria-current="page">Rentile</a>
       <div class="nav-links">
         <a href="#why-rentile">Why Rentile</a>
+        <a href="#common-setup">Setup</a>
         <a href="kmp.html">Integration guide</a>
         <a href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
       </div>
@@ -61,6 +62,9 @@
           It runs in shared Kotlin code, so previews, exports, background jobs, and native
           services can render a basemap without opening a screen or managing a graphics loop.
         </p>
+        <div class="tag-row">
+          <span class="tag">Published v<span data-maven-version="kmp">latest</span></span>
+        </div>
         <div class="hero-actions">
           <a class="button primary" href="kmp.html#install">Start integrating</a>
           <a class="button secondary" href="#how-it-works">See how it works</a>
@@ -129,6 +133,32 @@
       </div>
     </section>
 
+    <section class="section shell" id="common-setup">
+      <div class="section-heading">
+        <p class="eyebrow">Root project setup</p>
+        <h2>Add the public repository once.</h2>
+        <p>
+          Put this block in the root <code>settings.gradle.kts</code>.
+          <code>dependencyResolutionManagement</code> resolves ordinary Maven and KMP
+          coordinates such as Rentile. No consumer credentials are required.
+        </p>
+      </div>
+
+      <div class="code-card">
+        <div class="code-head">
+          <span>settings.gradle.kts</span>
+          <span class="status-pill">root project</span>
+        </div>
+        <pre><code>dependencyResolutionManagement {
+    repositories {
+        maven(<span class="str">"https://maven.rohittp.com"</span>)
+        mavenCentral()
+        google()
+    }
+}</code></pre>
+      </div>
+    </section>
+
     <section class="section shell" id="install">
       <div class="section-heading">
         <p class="eyebrow">Add it once</p>
@@ -149,7 +179,7 @@
     sourceSets {
         commonMain.dependencies {
             implementation(
-                <span class="str">"com.rohittp.rentile:kmp:&lt;version&gt;"</span>
+                <span class="str">"com.rohittp.rentile:kmp:<span data-maven-version="kmp">latest</span>"</span>
             )
         }
     }
@@ -157,14 +187,14 @@
         </div>
 
         <aside class="status-card">
-          <p class="note-kicker">Before you integrate</p>
-          <h3>Rentile is currently pre-release.</h3>
+          <p class="note-kicker">Public Maven repository</p>
+          <h3>No consumer credentials.</h3>
           <p>
-            The API and first raster rendering slice are available in source, but the public
-            Maven artifact has not shipped yet. The guide documents the current API so you can
-            evaluate it without mistaking planned renderer coverage for finished support.
+            Add <code>https://maven.rohittp.com</code> to
+            <code>dependencyResolutionManagement</code>, then use the single common coordinate.
+            The integration guide includes the complete settings setup and current renderer coverage.
           </p>
-          <a href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">Follow the source on GitHub <span aria-hidden="true">↗</span></a>
+          <a href="kmp.html#install">Open repository setup <span aria-hidden="true">→</span></a>
         </aside>
       </div>
     </section>
@@ -339,7 +369,10 @@
     <div class="shell footer-inner">
       <div>
         <a class="footer-brand" href="index.html">Rentile</a>
-        <p>Headless basemap tile rendering for Kotlin Multiplatform.</p>
+        <p class="footer-meta">
+          com.rohittp.rentile:kmp ·
+          v<span data-maven-version="kmp">latest</span>
+        </p>
       </div>
       <div class="footer-links">
         <a href="kmp.html">Integration guide</a>
@@ -348,5 +381,6 @@
       </div>
     </div>
   </footer>
+  <script src="versions.js" defer></script>
 </body>
 </html>

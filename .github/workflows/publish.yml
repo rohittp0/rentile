@@ -1,71 +1,161 @@
-name: Publish to Maven Central
+name: Build and Publish
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - gradle.properties
   workflow_dispatch:
+    inputs:
+      modules:
+        description: "Comma-separated Gradle modules"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
-  detect-version:
-    name: Detect releasable version
+  detect:
+    name: Validate release request
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      publish: ${{ steps.version.outputs.publish }}
+      modules: ${{ steps.release.outputs.modules }}
+      version: ${{ steps.release.outputs.version }}
+
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 2
-      - name: Read and validate version
-        id: version
+
+      - id: release
+        name: Read modules and version
         shell: bash
+        env:
+          MODULES_INPUT: ${{ inputs.modules }}
         run: |
           set -euo pipefail
-          version=$(sed -n 's/^VERSION_NAME=//p' gradle.properties)
-          if [[ -z "$version" ]]; then
-            echo "VERSION_NAME is missing" >&2
+
+          modules=()
+          while IFS= read -r module; do
+            [[ -z "$module" ]] && continue
+            if [[ ! "$module" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+              echo "::error::Invalid Gradle module: $module"
+              exit 1
+            fi
+            if [[ "$module" != "kmp" ]]; then
+              echo "::error::Unknown publishable module: $module"
+              exit 1
+            fi
+            modules+=("$module")
+          done < <(printf '%s' "$MODULES_INPUT" | tr ',' '\n' | tr -d ' ')
+
+          if (( ${#modules[@]} == 0 )); then
+            echo "::error::At least one Gradle module is required"
             exit 1
           fi
 
-          changed=false
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            changed=true
-          elif git diff HEAD^ HEAD -- gradle.properties | grep -qE '^[+-]VERSION_NAME='; then
-            changed=true
+          modules_json=$(printf '%s\n' "${modules[@]}" \
+            | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
+          version=$(sed -n 's/^VERSION_NAME=//p' gradle.properties)
+
+          if [[ -z "$version" ]]; then
+            echo "::error::VERSION_NAME is missing"
+            exit 1
+          fi
+          if [[ "$version" == *-SNAPSHOT ]]; then
+            echo "::error::Snapshot versions cannot be published to the public repository: $version"
+            exit 1
           fi
 
-          publish=false
-          if [[ "$changed" == true && "$version" != *-SNAPSHOT ]]; then
-            publish=true
-          fi
-
+          echo "modules=$modules_json" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "Version: $version; publish: $publish"
 
   publish:
-    name: Publish ${{ needs.detect-version.outputs.version }}
-    needs: detect-version
-    if: needs.detect-version.outputs.publish == 'true'
+    needs: detect
+    name: Publish ${{ matrix.module }} ${{ needs.detect.outputs.version }}
     runs-on: macos-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.detect.outputs.modules) }}
+
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
           cache: gradle
-      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Verify publishing configuration
+        shell: bash
+        env:
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_KEY_ID: ${{ secrets.SIGNING_KEY_ID }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          required=(
+            R2_ENDPOINT
+            R2_BUCKET
+            R2_PUBLIC_URL
+            R2_ACCESS_KEY_ID
+            R2_SECRET_ACCESS_KEY
+            SIGNING_KEY
+            SIGNING_KEY_ID
+            SIGNING_KEY_PASSWORD
+          )
+
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing publishing value: $name"
+              exit 1
+            fi
+          done
+
+      - name: Reject an existing release
+        shell: bash
+        env:
+          MODULE: ${{ matrix.module }}
+          VERSION: ${{ needs.detect.outputs.version }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          set -euo pipefail
+          group_path="com/rohittp/rentile"
+          key="${group_path}/${MODULE}/${VERSION}/${MODULE}-${VERSION}.pom"
+
+          count=$(aws \
+            --endpoint-url "$R2_ENDPOINT" \
+            s3api list-objects-v2 \
+            --bucket "$R2_BUCKET" \
+            --prefix "$key" \
+            --max-keys 1 \
+            --query KeyCount \
+            --output text)
+
+          if [[ "$count" != "0" ]]; then
+            echo "::error::Release already exists: $key"
+            exit 1
+          fi
 
       - name: Validate credential-free coverage
         run: python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
 
       - name: Test and publish to isolated local repository
+        env:
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: >-
           ./gradlew --no-configuration-cache clean
           :kmp:checkKotlinAbi
@@ -75,6 +165,7 @@ jobs:
           :kmp:compileKotlinIosSimulatorArm64
           :kmp:compileKotlinLinuxX64
           :kmp:compileKotlinLinuxArm64
+          :kmp:bundleAndroidMainAar
           :kmp:publishAllPublicationsToLocalTestRepository
           :kmp:checkPomFileForAndroidPublication
           :kmp:checkPomFileForJvmPublication
@@ -84,10 +175,34 @@ jobs:
           :kmp:checkPomFileForLinuxArm64Publication
           :kmp:checkPomFileForLinuxX64Publication
 
-      - name: Resolve aggregate coordinate from clean consumer
+      - name: Verify signed local publication
+        shell: bash
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          artifact_root="build/local-maven/com/rohittp/rentile"
+          publication_count=0
+
+          while IFS= read -r pom; do
+            publication_count=$((publication_count + 1))
+            if [[ ! -f "$pom.asc" ]]; then
+              echo "::error::Unsigned publication POM: $pom"
+              exit 1
+            fi
+          done < <(find "$artifact_root" -type f -path "*/$VERSION/*" -name '*.pom' | sort)
+
+          if (( publication_count == 0 )); then
+            echo "::error::The local repository contains no publication POMs"
+            exit 1
+          fi
+
+      - name: Resolve aggregate coordinate from isolated local repository
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
         run: >-
           ./gradlew --no-configuration-cache -p consumer-smoke
-          -PrentileVersion=${{ needs.detect-version.outputs.version }}
+          -PrentileVersion="$VERSION"
           compileAndroidMain
           compileKotlinJvm
           compileKotlinIosArm64
@@ -108,16 +223,73 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: rentile-corpus-${{ needs.detect-version.outputs.version }}
+          name: rentile-corpus-${{ matrix.module }}-${{ needs.detect.outputs.version }}
           path: build/reports/rentile-corpus
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Publish coordinated KMP artifacts
-        run: ./gradlew --no-configuration-cache :kmp:publishToMavenCentral
+      - name: Publish coordinated KMP artifacts to R2
         env:
-          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MODULE: ${{ matrix.module }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+        run: ./gradlew --no-configuration-cache ":${MODULE}:publishAllPublicationsToR2Repository"
+
+      - name: Verify public artifacts
+        shell: bash
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
+          R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          repository_root="build/local-maven"
+          artifact_root="$repository_root/com/rohittp/rentile"
+          artifact_count=0
+
+          while IFS= read -r artifact; do
+            relative_path="${artifact#"$repository_root/"}"
+            url="${R2_PUBLIC_URL%/}/$relative_path"
+            curl --fail --silent --show-error \
+              --retry 12 --retry-delay 5 --retry-all-errors \
+              --output /dev/null "$url"
+            artifact_count=$((artifact_count + 1))
+          done < <(find "$artifact_root" -type f -path "*/$VERSION/*" \
+            ! -name 'maven-metadata.xml*' | sort)
+
+          if (( artifact_count == 0 )); then
+            echo "::error::No local publication artifacts were available to verify"
+            exit 1
+          fi
+
+      - name: Resolve from the public repository without credentials
+        shell: bash
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
+          R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          smoke_project="$RUNNER_TEMP/rentile-r2-consumer"
+          gradle_home="$RUNNER_TEMP/rentile-r2-gradle-home"
+          cp -R consumer-smoke "$smoke_project"
+          cp gradlew "$smoke_project/gradlew"
+          cp -R gradle "$smoke_project/gradle"
+
+          "$smoke_project/gradlew" --no-configuration-cache \
+            --gradle-user-home "$gradle_home" \
+            --refresh-dependencies \
+            -p "$smoke_project" \
+            -PrentileRepositoryUrl="$R2_PUBLIC_URL" \
+            -PrentileVersion="$VERSION" \
+            compileAndroidMain \
+            compileKotlinJvm \
+            compileKotlinIosArm64 \
+            compileKotlinIosSimulatorArm64 \
+            compileKotlinLinuxX64 \
+            compileKotlinLinuxArm64

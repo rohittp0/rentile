@@ -6,15 +6,16 @@ This guide integrates the published Rentile artifact into:
 /Users/rohittp/Data/Lascade/travel-animator-android
 ```
 
-**This integration is done.** Travel Animator consumes `com.rohittp.rentile:kmp` from Maven Central
-in `shared/build.gradle.kts`, and `settings.gradle.kts` already declares the two repositories it
-needs. The guide is kept as the record of *why* the wiring looks the way it does — the native-runtime
-owner, the host adapters, the caller-owned PNG caching and the verification list below are all still
-current. Do not re-run the setup steps against a working tree.
+**The `0.1.3` integration is done.** Travel Animator currently consumes that historical release from
+Maven Central. Rentile's newer releases come from `https://maven.rohittp.com`, so add the shared
+repository before raising `rentileVersion` beyond `0.1.3`. The guide is kept as the record of *why*
+the wiring looks the way it does — the native-runtime owner, the host adapters, the caller-owned PNG
+caching and the verification list below are all still current. Do not re-run unrelated setup steps
+against a working tree.
 
 ## The published artifact
 
-One consumer coordinate, resolved from Maven Central:
+One consumer coordinate, resolved from Rentile's public Maven repository for new releases:
 
 ```text
 com.rohittp.rentile:kmp
@@ -30,16 +31,21 @@ itself.
 ## 1. Repositories
 
 Travel Animator centralizes repositories in `settings.gradle.kts` and rejects project-level
-repositories (`FAIL_ON_PROJECT_REPOS`). Two are required and both are already declared:
+repositories (`FAIL_ON_PROJECT_REPOS`). Three are required for a current Rentile release:
 
-- `mavenCentral()` — Rentile itself.
+- `https://maven.rohittp.com` — Rentile itself; no consumer credentials are required.
+- `mavenCentral()` — Kotlin and other ordinary dependencies.
 - `https://maven.pkg.jetbrains.space/public/p/compose/dev` — `org.jetbrains.skiko:skiko`'s
   `androidJvm` variant redirects to the `skiko-android` artifact, which is published only there.
 
+Add `maven("https://maven.rohittp.com")` before `mavenCentral()` inside
+`dependencyResolutionManagement.repositories`. Rentile is an ordinary KMP coordinate, not a Gradle
+plugin, so this integration does not require a matching `pluginManagement` entry.
+
 **There is no `mavenLocal()`, and adding one is a regression.** An earlier revision of this guide
 told you to add a Rentile-scoped `mavenLocal()` because the only artifact was a local
-`0.1.0-SNAPSHOT`. Rentile has been on Maven Central since `0.1.0`, so that step now adds a
-repository that resolves nothing and can shadow a real dependency.
+`0.1.0-SNAPSHOT`. Released coordinates now come from the shared public repository, so that step adds
+a repository that can shadow a real dependency.
 
 ### Developing Rentile against Travel Animator
 
@@ -52,7 +58,7 @@ cd /Users/rohittp/Data/Other/rentile
 
 Then add a Rentile-scoped `mavenLocal()` ahead of the remote repositories, point `rentileVersion` at
 the local version, and build with `--refresh-dependencies`. **Revert both before committing.** A
-snapshot version never reaches Maven Central (ADR 0018), so a committed snapshot dependency breaks
+snapshot version never reaches the public R2 repository (ADR 0018), so a committed snapshot dependency breaks
 every other checkout and CI.
 
 ## 2. Add the one common KMP dependency
@@ -305,7 +311,7 @@ cd /Users/rohittp/Data/Lascade/travel-animator-android
 
 Then verify:
 
-1. Gradle selected `com.rohittp.rentile:kmp` at `rentileVersion` from Maven Central, through root KMP metadata.
+1. Gradle selected `com.rohittp.rentile:kmp` at `rentileVersion` from the intended public or local test repository, through root KMP metadata.
 2. Wire resolves once at 6.4.5.
 3. Skiko resolves once at 0.148.2.
 4. The APK contains one Rentile-provided Skiko library for each supported Android ABI.
@@ -316,7 +322,7 @@ Then verify:
 9. No credential or session value appears in logs, cache paths, exceptions, or content keys.
 10. The existing remote path still works after a local-render failure.
 
-The correction for the previously dark Terrain-style zoom-0 output shipped in `0.1.0`. After any later Rentile change, publish the new version (or `publishToMavenLocal` while iterating) and rerun the consumer with `--refresh-dependencies` before comparing images — Gradle caches a release version indefinitely, so a rebuilt artifact at an unchanged version will not be picked up.
+The correction for the previously dark Terrain-style zoom-0 output shipped in `0.1.0`. After any later Rentile change, publish a new immutable version (or `publishToMavenLocal` while iterating) and rerun the consumer with `--refresh-dependencies` before comparing images. Never rebuild a released coordinate: R2 publication rejects an existing primary POM.
 
 ## 11. Commit boundary
 

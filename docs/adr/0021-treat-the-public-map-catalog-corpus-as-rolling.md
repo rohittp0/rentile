@@ -4,4 +4,4 @@ The latest map list and style documents fetched from `https://dashboard.lascade.
 
 The catalog is paginated. The harness follows bounded same-origin `next` links, requires the declared total to equal the collected unique map count, and requires the resulting ID set to equal the Coverage Manifest. Pagination cannot silently reduce corpus coverage.
 
-No catalog secret or base64-encoded index is required. The full corpus gate runs for pushes to `main`, explicit workflow dispatches, and the Maven Central release gate. Ordinary pull requests retain the credential-free unit and fixture suite; the catalog gate remains separate because it performs live provider requests and can be substantially slower.
+No catalog secret or base64-encoded index is required. The full corpus gate runs for pushes to `main`, explicit workflow dispatches, and the R2 Maven release gate. Ordinary pull requests retain the credential-free unit and fixture suite; the catalog gate remains separate because it performs live provider requests and can be substantially slower.

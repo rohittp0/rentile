@@ -12,8 +12,9 @@ Rentile is a headless Kotlin Multiplatform dependency that prepares supported ma
 ## Public artifact
 
 - Coordinate: com.rohittp.rentile:kmp
-- Development version: 0.1.0-SNAPSHOT
-- First Maven Central version: 0.1.0
+- Repository: https://maven.rohittp.com
+- Consumer credentials: none
+- Historical Maven Central versions: 0.1.0 through 0.1.4
 - License: Apache-2.0
 
 ## Scope
