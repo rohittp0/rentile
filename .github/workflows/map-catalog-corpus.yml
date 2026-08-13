@@ -1,8 +1,9 @@
 name: Map catalog corpus
 
 on:
-  push:
-    branches: [main]
+  # Pushes to main run this gate inside the release workflow, which publishes
+  # from the same run. Triggering here as well would duplicate a slow live
+  # network gate on every push.
   workflow_dispatch:
 
 permissions:

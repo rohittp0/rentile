@@ -1,5 +1,7 @@
 # Publish manually to the immutable R2 Maven repository
 
+> Superseded by [ADR 0023](0023-publish-continuously-from-the-r2-version-line.md). Pushes to `main` now publish, and the release version is resolved from the R2 version line rather than read solely from `gradle.properties`. The repository layout, gate sequence, immutability rule, and credential expectations below still hold.
+
 Rentile publishes `com.rohittp.rentile:kmp` and all target publications to the public Maven repository at `https://maven.rohittp.com`. Publishing starts only through an explicit `workflow_dispatch` whose comma-separated module input currently accepts `kmp`. A push, tag, or GitHub Release does not publish by itself.
 
 `VERSION_NAME` in the root `gradle.properties` file remains the sole canonical version. Gradle publication coordinates, local-repository verification, the R2 immutability key, and public consumer verification all read that value; no workflow input, tag, module build file, or GitHub Release may supply a competing publication version.

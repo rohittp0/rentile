@@ -4,7 +4,7 @@
 
 Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a supported map style and north-up XYZ tile identities, performs bounded local CPU rendering, and returns encoded PNG bytes without a UI view or platform render loop.
 
-Rentile is published to the public repository at `https://maven.rohittp.com`. `VERSION_NAME` in the root `gradle.properties` is the sole release-version source. Releases are published by manually dispatching the `Build and Publish` workflow and cannot overwrite an existing coordinate.
+Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
 ## Targets
 
@@ -45,17 +45,17 @@ dependencyResolutionManagement {
 ```text
 python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
 ./gradlew :kmp:checkKotlinAbi
-./gradlew :kmp:testAndroidHostTest
+./gradlew :kmp:testAndroidHostTest :kmp:jvmTest :kmp:macosArm64Test
 ./gradlew :kmp:compileKotlinIosArm64 :kmp:compileKotlinIosSimulatorArm64
 ./gradlew :kmp:compileKotlinLinuxX64 :kmp:compileKotlinLinuxArm64
 ./gradlew :kmp:publishAllPublicationsToLocalTestRepository
-./gradlew -p consumer-smoke compileAndroidMain compileKotlinIosArm64 compileKotlinIosSimulatorArm64 compileKotlinLinuxX64 compileKotlinLinuxArm64
+./gradlew -p consumer-smoke compileAndroidMain compileKotlinJvm compileKotlinIosArm64 compileKotlinIosSimulatorArm64 compileKotlinMacosArm64 compileKotlinLinuxX64 compileKotlinLinuxArm64
 ```
 
-Publish a release after its local and consumer gates pass:
+Merging to `main` publishes once the release gates pass. To run a release manually, or to watch the one a push started:
 
 ```text
-gh workflow run publish.yml --repo rohittp0/rentile --ref main -f modules=kmp
+gh workflow run publish.yml --repo rohittp0/rentile --ref main
 gh run list --repo rohittp0/rentile --workflow publish.yml --limit 1
 gh run watch RUN_ID --repo rohittp0/rentile --exit-status
 ```
