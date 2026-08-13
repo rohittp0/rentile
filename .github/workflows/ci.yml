@@ -49,11 +49,12 @@ jobs:
           java-version: "21"
           cache: gradle
       - uses: gradle/actions/setup-gradle@v6
-      - name: Compile Apple targets and publish locally
+      - name: Compile and test Apple targets and publish locally
         run: >-
           ./gradlew --no-configuration-cache
           :kmp:compileKotlinIosArm64
           :kmp:compileKotlinIosSimulatorArm64
+          :kmp:macosArm64Test
           :kmp:publishAllPublicationsToLocalTestRepository
       - name: Resolve aggregate coordinate from clean consumer
         run: >-
@@ -62,5 +63,6 @@ jobs:
           compileKotlinJvm
           compileKotlinIosArm64
           compileKotlinIosSimulatorArm64
+          compileKotlinMacosArm64
           compileKotlinLinuxX64
           compileKotlinLinuxArm64

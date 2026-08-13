@@ -57,7 +57,7 @@
         </p>
         <div class="tag-row">
           <span class="tag">Kotlin Multiplatform</span>
-          <span class="tag">Android · iOS · Linux</span>
+          <span class="tag">Android · JVM · iOS · macOS · Linux</span>
           <span class="tag">Apache-2.0</span>
           <span class="tag">v<span data-maven-version="kmp">latest</span></span>
         </div>
@@ -406,8 +406,10 @@ rasterizer.prepareBatch(style, requestedTiles).use { batch -&gt;
             <tbody>
               <tr><td>Android arm64</td><td><code>androidTarget</code></td><td>Background work; no View or Looper contract</td></tr>
               <tr><td>Android x86_64</td><td><code>androidTarget</code></td><td>Background work; emulator-compatible native runtime</td></tr>
+              <tr><td>JVM</td><td><code>jvm</code></td><td>Server or desktop process; AWT-backed Skia runtime</td></tr>
               <tr><td>iPhone and iPad</td><td><code>iosArm64</code></td><td>Background work; no UIKit view</td></tr>
               <tr><td>Apple Silicon Simulator</td><td><code>iosSimulatorArm64</code></td><td>Background work</td></tr>
+              <tr><td>Apple Silicon Mac</td><td><code>macosArm64</code></td><td>Headless native process</td></tr>
               <tr><td>Linux x64</td><td><code>linuxX64</code></td><td>Headless native process</td></tr>
               <tr><td>Linux arm64</td><td><code>linuxArm64</code></td><td>Headless native process</td></tr>
             </tbody>

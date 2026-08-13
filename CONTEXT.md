@@ -66,7 +66,7 @@ Performance profiling and numeric acceptance budgets are intentionally deferred 
 
 ## Distribution
 
-The public consumer coordinate is `com.rohittp.rentile:kmp`, with `VERSION_NAME` in the root `gradle.properties` as its sole version source. Releases `0.1.0` through `0.1.4` remain on Maven Central; the shared repository at `https://maven.rohittp.com` is canonical after the migration and publishes only through an explicit workflow dispatch. Snapshot versions remain local-repository-only. The release workflow rejects an existing primary POM before upload, requires the exact version to pass signed local publication plus Android, JVM, iOS, Linux, and rolling-corpus gates, verifies every public artifact, then resolves it from a fresh credential-free consumer. A GitHub Release is not required, and an ordinary push never publishes.
+The public consumer coordinate is `com.rohittp.rentile:kmp`, with `VERSION_NAME` in the root `gradle.properties` as its sole version source. Releases `0.1.0` through `0.1.4` remain on Maven Central; the shared repository at `https://maven.rohittp.com` is canonical after the migration and publishes only through an explicit workflow dispatch. Snapshot versions remain local-repository-only. The release workflow rejects an existing primary POM before upload, requires the exact version to pass signed local publication plus Android, JVM, iOS, macOS, Linux, and rolling-corpus gates, verifies every public artifact, then resolves it from a fresh credential-free consumer. A GitHub Release is not required, and an ordinary push never publishes.
 
 Rentile is licensed under Apache-2.0. Published artifacts also carry a maintained third-party notices inventory for dependencies and copied or adapted upstream code.
 

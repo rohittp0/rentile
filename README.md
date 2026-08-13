@@ -9,8 +9,11 @@ Rentile is published to the public repository at `https://maven.rohittp.com`. `V
 ## Targets
 
 - Android: `arm64-v8a` and `x86_64`
-- Apple: `iosArm64` and `iosSimulatorArm64`
+- JVM: `jvm`
+- Apple: `iosArm64`, `iosSimulatorArm64`, and `macosArm64`
 - Linux: `linuxX64` and `linuxArm64`
+
+Apple support is Apple Silicon only; Rentile does not publish `iosX64` or `macosX64`. See [ADR 0022](docs/adr/0022-support-apple-silicon-macs-only.md).
 
 ## Dependency
 
