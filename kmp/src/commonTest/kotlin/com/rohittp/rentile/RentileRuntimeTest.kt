@@ -850,6 +850,48 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun everyLayerThatCannotDrawWithoutASpriteStillFailsPreparationWhenTheSpriteIsUnusable() = runTest {
+        // The loud half of the sprite split, which nothing pinned. If
+        // layerRequiresSpriteUnconditionally were ever narrowed - to false, or to symbol layers
+        // only - every one of these styles would start preparing successfully and pattern fills
+        // would silently render unpatterned, with the whole suite still green. The three sprite
+        // shapes are exactly the ones resolveOptionalSpriteAtlas tolerates for a merely desiring
+        // layer: absent key, style-spec v8 array form, and a relative reference with no base URI.
+        // For a layer that cannot draw anything at all without an atlas, all three must still fail
+        // preparation. The throwing default transport also proves the failure is decided offline,
+        // before any fetch is attempted.
+        val vectorSource = """"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"""
+        val layersThatCannotDrawWithoutASprite = mapOf(
+            "background-pattern" to """{"id":"bg","type":"background","paint":{"background-pattern":"marker"}}""",
+            "fill-pattern" to """{"id":"land","type":"fill","source":"v","source-layer":"land","paint":{"fill-pattern":"marker"}}""",
+            "line-pattern" to """{"id":"road","type":"line","source":"v","source-layer":"roads","paint":{"line-pattern":"marker"}}""",
+            "icon-only-symbol" to """{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker"}}""",
+        )
+        val unusableSprites = mapOf(
+            "absent" to "",
+            "array-form" to """"sprite":[{"id":"default","url":"https://sprite.example.test/icons"}],""",
+            "relative-with-no-base-uri" to """"sprite":"icons/default",""",
+        )
+        val rasterizer = testRasterizer()
+        try {
+            for ((layerName, layerJson) in layersThatCannotDrawWithoutASprite) {
+                for ((spriteName, spriteJson) in unusableSprites) {
+                    assertFailsWith<StylePreparationException>(
+                        "$layerName with a $spriteName sprite must still fail preparation",
+                    ) {
+                        rasterizer.prepare(
+                            StyleInput.InlineJson("""{"version":8,$spriteJson$vectorSource"layers":[$layerJson]}"""),
+                        )
+                    }
+                }
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun aRepairedIconLayerSkipsAFeatureWithAMalformedPropertyAndStillRendersTheRest() = runTest {
         // icon-offset is data-driven here. The "good" feature has no "offset" property, so
         // ["get","offset"] evaluates to Null and falls back to its default [0, 0]. The "bad"
