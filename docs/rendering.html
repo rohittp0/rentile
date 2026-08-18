@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rendering process — Rentile</title>
+  <meta name="description" content="Follow the Rentile rendering process from a prepared map style and XYZ tile batch to individual PNG tiles and a composed mosaic." />
+  <meta name="theme-color" content="#0b3026" />
+  <link rel="canonical" href="https://rohittp.com/rentile/rendering.html" />
+  <link rel="stylesheet" href="style.css" />
+
+  <meta property="og:type" content="article" />
+  <meta property="og:site_name" content="Rentile" />
+  <meta property="og:title" content="Rendering process — Rentile" />
+  <meta property="og:description" content="See how Rentile prepares a style and tile batch, draws each XYZ tile, and returns PNG bytes." />
+  <meta property="og:url" content="https://rohittp.com/rentile/rendering.html" />
+  <meta property="og:image" content="https://rohittp.com/rentile/og.png" />
+  <meta property="og:image:alt" content="Rentile — Basemap tiles. No map view." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Rendering process — Rentile" />
+  <meta name="twitter:description" content="From map style and XYZ coordinates to individual PNG tiles." />
+  <meta name="twitter:image" content="https://rohittp.com/rentile/og.png" />
+</head>
+<body>
+  <nav class="site-nav" aria-label="Primary navigation">
+    <div class="nav-inner">
+      <a class="nav-brand" href="index.html">Rentile</a>
+      <div class="nav-links">
+        <a href="kmp.html">Integration guide</a>
+        <a class="active" href="rendering.html" aria-current="page">Rendering process</a>
+        <a href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="docs-shell">
+    <aside class="docs-sidebar" aria-label="On this page">
+      <p class="sidebar-title">Rendering process</p>
+      <a href="#overview">Overview</a>
+      <a href="#renderer">Create the renderer</a>
+      <a href="#style">Prepare the style</a>
+      <a href="#tiles">Define the tile grid</a>
+      <a href="#batch">Prepare the batch</a>
+      <a href="#render">Render PNGs</a>
+      <a href="#mosaic">Place the outputs</a>
+    </aside>
+
+    <article class="docs-content">
+      <header class="docs-header" id="overview">
+        <p class="eyebrow">From input to output</p>
+        <h1>Rendering process</h1>
+        <p class="docs-lead">
+          Rentile separates style preparation, resource acquisition, and drawing. This walkthrough
+          follows one nine-tile XYZ batch through those boundaries and shows the PNG files returned
+          at the end.
+        </p>
+        <div class="tag-row">
+          <span class="tag">Common Kotlin</span>
+          <span class="tag">Nine XYZ tiles</span>
+          <span class="tag">512×512 PNG output</span>
+        </div>
+        <div class="callout process-summary">
+          <strong>Style + tile IDs → prepared resources → CPU drawing → PNG bytes.</strong>
+          The renderer returns individual tiles. A larger image is composed by the caller from
+          those outputs.
+        </div>
+      </header>
+
+      <section class="doc-section" id="renderer">
+        <p class="doc-label">Step 1</p>
+        <h2>Create the renderer</h2>
+        <p>
+          The host supplies a <code>ResourceTransport</code> for network exchanges and a
+          <code>RawResourceStore</code> for validated source bytes. Rentile owns the rendering
+          workers and native drawing resources behind one <code>BasemapRasterizer</code>.
+        </p>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>Common Kotlin</span><span>process-local owner</span></div>
+          <pre><code><span class="kw">val</span> rasterizer = Rentile.create(
+    RentileConfiguration(
+        transport = AppResourceTransport(httpClient),
+        rawResourceStore = AppRawResourceStore(cacheDirectory),
+    )
+)</code></pre>
+        </div>
+        <div class="callout">
+          <code>AppResourceTransport</code> and <code>AppRawResourceStore</code> represent adapters
+          implemented by the host application.
+        </div>
+      </section>
+
+      <section class="doc-section" id="style">
+        <p class="doc-label">Step 2</p>
+        <h2>Prepare the map style once</h2>
+        <p>
+          <code>prepare</code> acquires the style through the configured transport, validates it
+          against the compatibility policy, and compiles a reusable <code>PreparedStyle</code>.
+          Invalid or unsupported retained constructs fail here instead of producing an incomplete map.
+        </p>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>Style preparation</span><span>suspending API</span></div>
+          <pre><code><span class="kw">val</span> style: PreparedStyle = rasterizer.prepare(
+    StyleInput.Remote(<span class="str">"https://example.com/style.json"</span>)
+)</code></pre>
+        </div>
+      </section>
+
+      <section class="doc-section" id="tiles">
+        <p class="doc-label">Step 3</p>
+        <h2>Describe the required XYZ tiles</h2>
+        <p>
+          This example requests a contiguous 3×3 region at zoom 12. Each <code>TileId</code> is one
+          north-up XYZ output tile; the list order does not change its geographic identity.
+        </p>
+        <div class="tile-coordinate-grid" aria-label="Nine XYZ tile coordinates at zoom 12">
+          <code>12/1204/1539</code>
+          <code>12/1205/1539</code>
+          <code>12/1206/1539</code>
+          <code>12/1204/1540</code>
+          <code>12/1205/1540</code>
+          <code>12/1206/1540</code>
+          <code>12/1204/1541</code>
+          <code>12/1205/1541</code>
+          <code>12/1206/1541</code>
+        </div>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>3×3 tile grid</span><span>z/x/y</span></div>
+          <pre><code><span class="kw">val</span> requestedTiles = buildList {
+    <span class="kw">for</span> (y <span class="kw">in</span> 1539..1541) {
+        <span class="kw">for</span> (x <span class="kw">in</span> 1204..1206) {
+            add(TileId(z = 12, x = x, y = y))
+        }
+    }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="doc-section" id="batch">
+        <p class="doc-label">Step 4</p>
+        <h2>Prepare a network-free render batch</h2>
+        <p>
+          <code>prepareBatch</code> plans the requested outputs, acquires and validates their raw
+          resources, and freezes the complete drawing input. When it returns, each tile has a stable
+          content key and <code>render</code> no longer needs the transport or raw-resource store.
+        </p>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>Batch preparation</span><span>512 px output</span></div>
+          <pre><code>rasterizer.prepareBatch(
+    style = style,
+    tiles = requestedTiles,
+    options = RenderOptions(outputSizePx = 512),
+).use { batch -&gt;
+    batch.contentKeys.forEach { (tileId, contentKey) -&gt;
+        println(<span class="str">"$tileId will render as $contentKey"</span>)
+    }
+
+    <span class="comment">// Drawing happens inside this prepared boundary.</span>
+}</code></pre>
+        </div>
+        <p>
+          The prepared batch is an <code>AutoCloseable</code> resource owner. Keep it open while
+          rendering and close it with <code>use</code> when the batch is no longer needed.
+        </p>
+      </section>
+
+      <section class="doc-section" id="render">
+        <p class="doc-label">Step 5</p>
+        <h2>Draw and save the individual PNG tiles</h2>
+        <p>
+          <code>render</code> draws the prepared tiles on the CPU and encodes each successful output
+          as PNG. The operation is all-or-error: a successful <code>RenderBatch</code> contains every
+          requested result, including its <code>TileId</code>, <code>pngBytes</code>, content key, and
+          sanitized diagnostics.
+        </p>
+        <div class="code-card doc-code">
+          <div class="code-head"><span>Complete render</span><span>close owned resources</span></div>
+          <pre><code><span class="kw">try</span> {
+    <span class="kw">val</span> style = rasterizer.prepare(
+        StyleInput.Remote(styleUrl)
+    )
+
+    rasterizer.prepareBatch(
+        style = style,
+        tiles = requestedTiles,
+        options = RenderOptions(outputSizePx = 512),
+    ).use { batch -&gt;
+        <span class="kw">val</span> result: RenderBatch = rasterizer.render(batch)
+
+        result.tiles.forEach { tile -&gt;
+            savePng(
+                name = <span class="str">"${tile.id.z}-${tile.id.x}-${tile.id.y}.png"</span>,
+                bytes = tile.pngBytes,
+            )
+        }
+    }
+} <span class="kw">finally</span> {
+    rasterizer.close()
+    rasterizer.awaitClosed()
+}</code></pre>
+        </div>
+
+        <h3>The same center tile with different styles</h3>
+        <p>
+          Style preparation changes the drawing program; the requested XYZ coordinate and PNG
+          output contract remain the same.
+        </p>
+        <div class="render-grid process-output-grid">
+          <figure class="render-card">
+            <img src="examples/topo-z12-1205-1540.png" width="512" height="512" loading="lazy" alt="Topographic vector rendering of the center XYZ tile" />
+            <figcaption><h3>Topographic vector</h3></figcaption>
+          </figure>
+          <figure class="render-card">
+            <img src="examples/glow-z12-1205-1540.png" width="512" height="512" loading="lazy" alt="Dark vector rendering of the center XYZ tile" />
+            <figcaption><h3>Dark vector</h3></figcaption>
+          </figure>
+          <figure class="render-card">
+            <img src="examples/satellite-z12-1205-1540.png" width="512" height="512" loading="lazy" alt="Satellite raster rendering of the center XYZ tile" />
+            <figcaption><h3>Satellite raster</h3></figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="doc-section" id="mosaic">
+        <p class="doc-label">Output placement</p>
+        <h2>Place PNGs by their tile coordinates</h2>
+        <p>
+          Rentile returns nine independent 512×512 PNGs for this request. The caller places them
+          in XYZ order to form the 1536×1536 image below. The grid overlay identifies the original
+          tile boundaries; mosaic composition itself is outside the Rentile API.
+        </p>
+        <figure class="mosaic-figure">
+          <div class="mosaic-frame">
+            <img
+              src="examples/topographic-nine-tile-mosaic.png"
+              width="1536"
+              height="1536"
+              loading="lazy"
+              alt="Nine topographic PNG tiles placed as a contiguous three by three mosaic"
+            />
+            <span class="mosaic-grid-overlay" aria-hidden="true">
+              <i></i><i></i><i></i>
+              <i></i><i></i><i></i>
+              <i></i><i></i><i></i>
+            </span>
+          </div>
+          <figcaption>
+            Nine separately rendered PNG tiles, arranged from x=1204–1206 and y=1539–1541 at z=12.
+          </figcaption>
+        </figure>
+        <div class="callout">
+          Use the returned <code>TileId</code> for placement and the returned
+          <code>contentKey</code> for caller-owned output caching. Do not infer placement from the
+          order in which asynchronous work completed.
+        </div>
+        <div class="doc-actions">
+          <a class="button primary" href="kmp.html#render">Continue to the integration guide</a>
+          <a class="button secondary" href="index.html#rendered-output">Back to output examples</a>
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-inner">
+      <div>
+        <a class="footer-brand" href="index.html">Rentile</a>
+        <p class="footer-meta">Headless Kotlin Multiplatform basemap rendering</p>
+      </div>
+      <div class="footer-links">
+        <a href="index.html">Overview</a>
+        <a href="kmp.html">Integration guide</a>
+        <a href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">Source</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

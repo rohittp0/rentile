@@ -135,6 +135,65 @@
       </div>
     </section>
 
+    <section class="section shell output-section" id="rendered-output">
+      <div class="section-heading">
+        <p class="eyebrow">Output examples</p>
+        <h2>Rendered tile examples</h2>
+        <p>
+          The examples below show the same XYZ tile rendered with three different styles.
+          Each image is a 512×512 PNG returned through the same rendering API.
+        </p>
+      </div>
+
+      <div class="render-grid">
+        <figure class="render-card">
+          <img
+            src="examples/topo-z12-1205-1540.png"
+            width="512"
+            height="512"
+            loading="lazy"
+            alt="Topographic vector basemap tile around New York Harbor"
+          />
+          <figcaption>
+            <h3>Topographic vector</h3>
+            <p>Vector fills, roads, shorelines, and route details encoded as a PNG tile.</p>
+          </figcaption>
+        </figure>
+
+        <figure class="render-card">
+          <img
+            src="examples/glow-z12-1205-1540.png"
+            width="512"
+            height="512"
+            loading="lazy"
+            alt="Dark vector basemap tile around New York Harbor"
+          />
+          <figcaption>
+            <h3>Dark vector</h3>
+            <p>The same XYZ coordinate rendered with a contrasting vector style.</p>
+          </figcaption>
+        </figure>
+
+        <figure class="render-card">
+          <img
+            src="examples/satellite-z12-1205-1540.png"
+            width="512"
+            height="512"
+            loading="lazy"
+            alt="Satellite raster basemap tile around New York Harbor"
+          />
+          <figcaption>
+            <h3>Satellite raster</h3>
+            <p>Raster imagery follows the same tile API and returns encoded PNG bytes.</p>
+          </figcaption>
+        </figure>
+      </div>
+
+      <div class="render-actions">
+        <a class="button secondary" href="rendering.html">See the rendering process</a>
+      </div>
+    </section>
+
     <section class="section shell" id="common-setup">
       <div class="section-heading">
         <p class="eyebrow">Root project setup</p>
@@ -377,6 +436,7 @@
         </p>
       </div>
       <div class="footer-links">
+        <a href="rendering.html">Rendering process</a>
         <a href="kmp.html">Integration guide</a>
         <a href="https://github.com/rohittp0/rentile" target="_blank" rel="noopener noreferrer">Source</a>
         <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener noreferrer">Apache-2.0</a>
