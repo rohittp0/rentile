@@ -1393,8 +1393,7 @@ internal class StyleCompiler(
             return SymbolClassification(true, null)
         }
 
-        val iconTextFit = layout["icon-text-fit"]?.asPrimitive()?.content
-        if (iconTextFit == null || iconTextFit == "none") {
+        if (retainsIconIndependentOfText(layout)) {
             val diagnostic = diagnostic(
                 code = DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED,
                 severity = DiagnosticSeverity.WARNING,
@@ -1411,6 +1410,21 @@ internal class StyleCompiler(
         ))
     }
 
+    /**
+     * The single source of truth for whether a symbol layer's icon geometry is independent of
+     * its text: true when the layer has a meaningful `icon-image` and `icon-text-fit` is absent
+     * or `none`, so the sprite and `icon-size` alone determine the icon. Shared by
+     * [classifySymbol] (which decides whether to retain the icon) and [layerRequiresSprite]
+     * (which decides whether to fetch the sprite atlas at all) so the two can never drift apart.
+     */
+    private fun retainsIconIndependentOfText(layout: JsonObject): Boolean {
+        val icon = layout["icon-image"]
+        val meaningfulIcon = icon != null && !(icon is JsonPrimitive && icon.isString && icon.content.isEmpty())
+        if (!meaningfulIcon) return false
+        val iconTextFit = layout["icon-text-fit"]?.asPrimitive()?.content
+        return iconTextFit == null || iconTextFit == "none"
+    }
+
     private fun layerRequiresSprite(element: JsonElement): Boolean {
         val layer = element as? JsonObject ?: return false
         val layout = layer["layout"] as? JsonObject ?: JsonObject(emptyMap())
@@ -1425,11 +1439,7 @@ internal class StyleCompiler(
                 val meaningfulIcon = icon != null && !(icon is JsonPrimitive && icon.isString && icon.content.isEmpty())
                 val text = layout["text-field"]
                 val meaningfulText = text != null && !(text is JsonPrimitive && text.isString && text.content.isEmpty())
-                meaningfulIcon && (
-                    !meaningfulText ||
-                        (layout["text-optional"]?.asPrimitive()?.booleanOrNull == true &&
-                            layout["icon-text-fit"]?.asPrimitive()?.content.let { it == null || it == "none" })
-                    )
+                meaningfulIcon && (!meaningfulText || retainsIconIndependentOfText(layout))
             }
             else -> false
         }

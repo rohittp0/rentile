@@ -315,10 +315,52 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun anIconSizedFromTextExtentsStaysExcluded() = runTest {
+    fun onlySpriteRequiringLayerWithRequiredTextStillFetchesSprite() = runTest {
         val spritePng = renderSyntheticPng(8)
+        val requestedClasses = mutableListOf<ResourceClass>()
+        val requestedClassesMutex = Mutex()
         val rasterizer = testRasterizer(
             transport = ResourceTransport { request ->
+                requestedClassesMutex.withLock { requestedClasses += request.resourceClass }
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            // This style's only symbol layer has a meaningful icon-image and a required
+            // (non-optional) text-field with no icon-text-fit. The icon's geometry does not
+            // depend on the text, so the layer is retained and must fetch the sprite atlas it
+            // needs to draw that icon.
+            rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertEquals(
+                setOf(ResourceClass.SPRITE_JSON, ResourceClass.SPRITE_IMAGE),
+                requestedClassesMutex.withLock { requestedClasses.toSet() },
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun anIconSizedFromTextExtentsStaysExcluded() = runTest {
+        val spritePng = renderSyntheticPng(8)
+        val requestedClasses = mutableListOf<ResourceClass>()
+        val requestedClassesMutex = Mutex()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                requestedClassesMutex.withLock { requestedClasses += request.resourceClass }
                 when (request.resourceClass) {
                     ResourceClass.SPRITE_JSON -> TransportResponse(
                         200,
@@ -337,6 +379,9 @@ class RentileRuntimeTest {
             )
 
             assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            // This style's only symbol layer is icon-text-fit coupled and therefore excluded; it
+            // must not require the sprite it can never use, so no sprite request should occur.
+            assertEquals(emptySet(), requestedClassesMutex.withLock { requestedClasses.toSet() })
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
