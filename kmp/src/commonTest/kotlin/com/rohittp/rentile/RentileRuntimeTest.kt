@@ -616,6 +616,140 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun aTextBearingIconLayerWithAnUnfetchableSpriteDoesNotFailAStyleThatUsedToPrepare() = runTest {
+        // The sprite reference resolves perfectly - absolute URL, nothing offline about it - and
+        // then the fetch fails with a 403. resolveSprite throws ResourceAcquisitionException,
+        // which is not a StylePreparationException, so it used to escape every try block and kill
+        // a style that prepared fine before this layer could ever be retained. A style behind an
+        // expired sprite credential is exactly this shape.
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(403, ByteArray(0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+            assertTrue(output.pngBytes.startsWithPngSignature())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aTextBearingIconLayerWithUndecodableSpriteJsonDoesNotFailAStyleThatUsedToPrepare() = runTest {
+        // Same shape, but the sprite fetch succeeds and the sprite JSON will not decode, so
+        // resolveSprite throws ResourceDecodeException instead. Also not a
+        // StylePreparationException, so it needs the same degradation.
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(200, "not sprite json at all".encodeToByteArray())
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, renderSyntheticPng(8))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+            assertTrue(output.pngBytes.startsWithPngSignature())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun anUnfetchableSpriteStillFailsPreparationLoudlyWhenALayerRequiresIt() = runTest {
+        // The loud half of the same rule: a fill-pattern cannot draw at all without an atlas, so
+        // it goes through resolveRequiredSpriteAtlas and a 403 must still propagate untouched.
+        // Degrading this one would render pattern fills silently unpatterned.
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(403, ByteArray(0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            assertFailsWith<ResourceAcquisitionException> {
+                rasterizer.prepare(
+                    StyleInput.InlineJson(
+                        """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"land","type":"fill","source":"v","source-layer":"land","paint":{"fill-pattern":"marker"}}]}""",
+                    ),
+                )
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aSourceReachableOnlyThroughATextBearingIconLayerDoesNotFailAStyleThatUsedToPrepare() = runTest {
+        // The same hole one step later. This GeoJSON source is referenced only by the text-bearing
+        // symbol layer, so nothing fetched it during preparation until this compatibility profile
+        // started retaining that layer's icon. compileIconLayer -> compileLayerVectorSource ->
+        // resolveGeoJson throws ResourceAcquisitionException on the 404 - not a
+        // StylePreparationException - so the repair guard used to let it kill the style.
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, renderSyntheticPng(8))
+                    ResourceClass.GEO_JSON -> TransportResponse(404, ByteArray(0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"pois":{"type":"geojson","data":"https://data.example.test/pois.json"}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"pois","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            val excluded = style.diagnostics.single { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED }
+            // The cause is the typed error code, never the resource exception's message: only
+            // failRetained's reason strings carry the no-secrets contract that lets a message be
+            // folded into a public diagnostic.
+            assertEquals("RESOURCE_ACQUISITION_FAILED", excluded.details["cause"])
+            assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+            assertTrue(output.pngBytes.startsWithPngSignature())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun aRepairedIconLayerSkipsAFeatureWithAMalformedPropertyAndStillRendersTheRest() = runTest {
         // icon-offset is data-driven here. The "good" feature has no "offset" property, so
         // ["get","offset"] evaluates to Null and falls back to its default [0, 0]. The "bad"

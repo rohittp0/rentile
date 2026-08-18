@@ -6,6 +6,7 @@ import com.rohittp.rentile.DiagnosticSeverity
 import com.rohittp.rentile.LabelLayerDescriptor
 import com.rohittp.rentile.PipelineStage
 import com.rohittp.rentile.RenderDiagnostic
+import com.rohittp.rentile.RentileException
 import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.StylePreparationException
 import com.rohittp.rentile.internal.canonicalJson
@@ -16,6 +17,7 @@ import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import com.rohittp.rentile.internal.metadata.ResolvedTileJson
 import com.rohittp.rentile.internal.metadata.resolveHttpReference
 import com.rohittp.rentile.internal.sprite.CompiledSpriteAtlas
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -213,21 +215,47 @@ internal class StyleCompiler(
                                 retainedIndependentOfText = true,
                             )
                             diagnostics += retainedIconDiagnostic
-                        } catch (error: StylePreparationException) {
-                            // The cause is the only signal about what to fix next in the corpus -
-                            // it names the exact rejected construct (e.g. "an icon layout property
-                            // is unsupported", "viewport-aligned line icons are outside the
+                        } catch (error: CancellationException) {
+                            // Cancellation is control flow, not a Rentile failure (ADR 0011): it
+                            // propagates unwrapped and must never be degraded into an exclusion.
+                            throw error
+                        } catch (error: RentileException) {
+                            // Two different classes of failure degrade to the same exclusion here.
+                            //
+                            // A rejected construct (StylePreparationException carrying
+                            // UNSUPPORTED_RETAINED_CONSTRUCT) is the original case, and its cause
+                            // is the only signal about what to fix next in the corpus - it names
+                            // the exact rejected construct (e.g. "an icon layout property is
+                            // unsupported", "viewport-aligned line icons are outside the
                             // compatibility profile") with this layer's identity already attached.
                             // failRetained never puts secrets in that message, so folding it into
                             // details is as safe as the UNSUPPORTED_RETAINED_CONSTRUCT diagnostic
                             // this cause came from.
-                            val cause = error.diagnostics.firstOrNull { it.code == DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT }
-                                ?: throw error
+                            //
+                            // A failed resource acquisition or decode is the second case.
+                            // compileIconLayer -> compileLayerVectorSource resolves this layer's
+                            // TileJSON or GeoJSON, which for a source reachable only through a
+                            // text-bearing symbol layer is work no style paid for before such a
+                            // layer could be retained. A 404 on it - or a decode failure, or a
+                            // safety limit - must therefore leave this one layer excluded rather
+                            // than fail a style that used to prepare, offline included. Only the
+                            // error code goes into details: a resource exception's message is not
+                            // covered by failRetained's no-secrets contract.
+                            //
+                            // Anything else stays loud. A StylePreparationException with no
+                            // rejected-construct diagnostic is a malformed style, not a construct
+                            // this profile declines to draw, and it propagates exactly as before.
+                            val cause = when (error) {
+                                is StylePreparationException ->
+                                    error.diagnostics.firstOrNull { it.code == DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT }?.message
+                                        ?: throw error
+                                else -> error.code.name
+                            }
                             diagnostics += diagnostic(
                                 code = DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED,
                                 severity = DiagnosticSeverity.INFO,
                                 message = "A text-coupled icon layer could not be compiled and is excluded by the compatibility profile",
-                                details = identity + ("cause" to cause.message),
+                                details = identity + ("cause" to cause),
                             )
                         }
                         continue
@@ -1564,6 +1592,17 @@ internal class StyleCompiler(
      * permanent, deterministic, offline conditions that a style could have carried before this
      * compatibility profile ever retained such a layer. None of them may fail preparation here;
      * they simply leave the atlas unresolved so the wanting layers fall back to exclusion.
+     *
+     * The same applies once the reference *does* resolve. Fetching it is new work that no style
+     * paid for before such a layer could be retained, so every way that fetch can fail - a 401,
+     * 403 or 404, a transport timeout, sprite JSON that will not decode, a sprite image over its
+     * byte limit - must leave the atlas unresolved too, not fail preparation. That is why the
+     * catch is the whole [RentileException] hierarchy rather than [StylePreparationException]
+     * alone: [resolveSprite] throws `ResourceAcquisitionException`, `ResourceDecodeException` or
+     * `SafetyLimitException`, none of which are `StylePreparationException`. A sprite a layer
+     * genuinely *requires* still goes through [resolveRequiredSpriteAtlas] and still fails loudly.
+     * `CancellationException` is control flow, not a Rentile failure (ADR 0011), so it is
+     * rethrown unwrapped before the degrading catch can see it.
      */
     private suspend fun resolveOptionalSpriteAtlas(
         root: JsonObject,
@@ -1572,7 +1611,13 @@ internal class StyleCompiler(
     ): CompiledSpriteAtlas? {
         val spriteReference = root["sprite"]?.asPrimitive()?.takeIf { it.isString }?.content ?: return null
         val resolvedSpriteUrl = resolveAbsoluteSpriteUrl(spriteReference, baseUri) ?: return null
-        return resolveSprite(secretContext.protectUrl(resolvedSpriteUrl).resolve())
+        return try {
+            resolveSprite(secretContext.protectUrl(resolvedSpriteUrl).resolve())
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: RentileException) {
+            null
+        }
     }
 
     private fun validateZoomRange(layer: JsonObject) {
