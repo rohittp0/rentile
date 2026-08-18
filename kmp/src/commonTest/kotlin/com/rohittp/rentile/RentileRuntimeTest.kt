@@ -389,6 +389,37 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun anExpressionValuedIconTextFitStaysExcluded() = runTest {
+        // icon-text-fit is data-driven in the style spec. An expression value is a JsonArray, not
+        // a JsonPrimitive, so asPrimitive() returns null for it - indistinguishable from an absent
+        // icon-text-fit unless retainsIconIndependentOfText treats a non-primitive as coupled. If
+        // it did not, this layer would be retained and its icon drawn unstretched even though the
+        // expression could resolve to "width" or "both" per feature.
+        val requestedClasses = mutableListOf<ResourceClass>()
+        val requestedClassesMutex = Mutex()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                requestedClassesMutex.withLock { requestedClasses += request.resourceClass }
+                error("Unexpected resource class ${request.resourceClass}")
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-text-fit":["case",["==",["get","kind"],"shield"],"both","none"],"text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            // No layer ends up retaining or desiring the sprite, so it must not be requested.
+            assertEquals(emptySet(), requestedClassesMutex.withLock { requestedClasses.toSet() })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun textCoupledIconWithAnUnsupportedConstructIsExcludedInsteadOfFailingPreparation() = runTest {
         val spritePng = renderSyntheticPng(8)
         val rasterizer = testRasterizer(
@@ -415,8 +446,14 @@ class RentileRuntimeTest {
                 ),
             )
 
-            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            val excluded = style.diagnostics.single { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED }
             assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+            // The original failRetained reason must survive into the exclusion diagnostic's
+            // details, since it is the only signal about what to fix next in the corpus.
+            assertEquals(
+                "viewport-aligned line icons are outside the compatibility profile",
+                excluded.details["cause"],
+            )
 
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
             assertTrue(output.pngBytes.startsWithPngSignature())

@@ -29,6 +29,15 @@ import kotlinx.serialization.json.intOrNull
 private data class SymbolClassification(
     val retained: Boolean,
     val diagnostic: RenderDiagnostic?,
+    /**
+     * True only when [retained] is true because the layer's text was removed and its icon is
+     * retained independently of that text ([retainsIconIndependentOfText]). This is the sole
+     * signal the main compile loop uses to decide whether an icon layer is newly reachable and
+     * therefore needs the compile-then-fall-back-to-excluded handling: an explicit field rather
+     * than an inferred comparison against [diagnostic]'s code, so a future retained-with-diagnostic
+     * outcome cannot silently fall through to the unguarded (fail-loudly) path.
+     */
+    val retainedIndependentOfText: Boolean = false,
 )
 
 internal class StyleCompiler(
@@ -169,10 +178,7 @@ internal class StyleCompiler(
                     }
                     val classification = classifySymbol(layout, hidden, identity)
                     val retainedIconDiagnostic = classification.diagnostic
-                    if (classification.retained &&
-                        retainedIconDiagnostic != null &&
-                        retainedIconDiagnostic.code == DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED
-                    ) {
+                    if (classification.retained && classification.retainedIndependentOfText && retainedIconDiagnostic != null) {
                         // This layer has meaningful text, so classifySymbol used to exclude it
                         // outright and compileIconLayer never ran against it. Now that its icon is
                         // reachable, attempt the compile; if the compatibility profile rejects a
@@ -207,14 +213,20 @@ internal class StyleCompiler(
                             )
                             diagnostics += retainedIconDiagnostic
                         } catch (error: StylePreparationException) {
-                            if (error.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT }) {
-                                throw error
-                            }
+                            // The cause is the only signal about what to fix next in the corpus -
+                            // it names the exact rejected construct (e.g. "an icon layout property
+                            // is unsupported", "viewport-aligned line icons are outside the
+                            // compatibility profile") with this layer's identity already attached.
+                            // failRetained never puts secrets in that message, so folding it into
+                            // details is as safe as the UNSUPPORTED_RETAINED_CONSTRUCT diagnostic
+                            // this cause came from.
+                            val cause = error.diagnostics.firstOrNull { it.code == DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT }
+                                ?: throw error
                             diagnostics += diagnostic(
                                 code = DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED,
                                 severity = DiagnosticSeverity.INFO,
                                 message = "A text-coupled icon layer could not be compiled and is excluded by the compatibility profile",
-                                details = identity,
+                                details = identity + ("cause" to cause.message),
                             )
                         }
                         continue
@@ -1420,9 +1432,8 @@ internal class StyleCompiler(
         hidden: Boolean,
         identity: Map<String, String>,
     ): SymbolClassification {
-        val iconImage = layout["icon-image"]
-        val iconDeclared = iconImage != null
-        val meaningfulIcon = iconDeclared && !(iconImage is JsonPrimitive && iconImage.isString && iconImage.content == "")
+        val iconDeclared = layout["icon-image"] != null
+        val meaningfulIcon = meaningfulLayoutValue(layout, "icon-image")
         val textField = layout["text-field"]
         val meaningfulText = textField != null && !(textField is JsonPrimitive && textField.isString && textField.content == "")
 
@@ -1454,7 +1465,7 @@ internal class StyleCompiler(
                 message = "Text is removed and the icon is retained independently",
                 details = identity,
             )
-            return SymbolClassification(true, diagnostic)
+            return SymbolClassification(true, diagnostic, retainedIndependentOfText = true)
         }
         return SymbolClassification(false, diagnostic(
             code = DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED,
@@ -1467,17 +1478,22 @@ internal class StyleCompiler(
     /**
      * The single source of truth for whether a symbol layer's icon geometry is independent of
      * its text: true when the layer has a meaningful `icon-image` and `icon-text-fit` is absent
-     * or `none`, so the sprite and `icon-size` alone determine the icon. Shared by
-     * [classifySymbol] (which decides whether to retain the icon) and
-     * [layerDesiresSpriteIndependentOfText] (which decides whether the layer merely hopes for a
-     * sprite atlas) so the two can never drift apart.
+     * or the constant `"none"`, so the sprite and `icon-size` alone determine the icon.
+     * `icon-text-fit` is data-driven in the current style spec, so an expression value (any
+     * `JsonElement` that is not a `JsonPrimitive`, e.g. `["case", ..., "both", "none"]`) is
+     * treated as coupled rather than independent: this compatibility profile has no way to
+     * evaluate it per-feature at prepare time, and assuming independence would draw a genuinely
+     * text-sized icon unstretched. Shared by [classifySymbol] (which decides whether to retain
+     * the icon) and [layerDesiresSpriteIndependentOfText] (which decides whether the layer merely
+     * hopes for a sprite atlas) so the two can never drift apart.
      */
     private fun retainsIconIndependentOfText(layout: JsonObject): Boolean {
-        val icon = layout["icon-image"]
-        val meaningfulIcon = icon != null && !(icon is JsonPrimitive && icon.isString && icon.content.isEmpty())
-        if (!meaningfulIcon) return false
-        val iconTextFit = layout["icon-text-fit"]?.asPrimitive()?.content
-        return iconTextFit == null || iconTextFit == "none"
+        if (!meaningfulLayoutValue(layout, "icon-image")) return false
+        return when (val iconTextFit = layout["icon-text-fit"]) {
+            null -> true
+            is JsonPrimitive -> iconTextFit.content == "none"
+            else -> false
+        }
     }
 
     private fun meaningfulLayoutValue(layout: JsonObject, property: String): Boolean {
