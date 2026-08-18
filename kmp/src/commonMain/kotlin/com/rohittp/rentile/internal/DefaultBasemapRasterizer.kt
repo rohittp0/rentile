@@ -1018,6 +1018,12 @@ private class DefaultBasemapRasterizer(
             }
         }
 
+        // Render-stage diagnostics reach the caller two ways, and both matter. The sink is
+        // optional - DiagnosticSink.None is the default - so anything only routed there is
+        // invisible to a caller that never configured one. TileRender.diagnostics is the
+        // always-available per-tile list that becomes RenderedTile.diagnostics, the way
+        // RASTER_PASSTHROUGH_USED above reaches both.
+        val renderDiagnostics = mutableListOf<RenderDiagnostic>()
         val png = renderCompositedTile(
             style = batch.style,
             layers = activeLayers,
@@ -1025,8 +1031,9 @@ private class DefaultBasemapRasterizer(
             vectorResources = vectorResources,
             sizePx = batch.options.outputSizePx,
             tile = tile,
+            diagnostics = renderDiagnostics,
         )
-        return TileRender(tile, png, emptyList())
+        return TileRender(tile, png, renderDiagnostics.toList())
     }
 
     private fun renderCompositedTile(
@@ -1036,6 +1043,7 @@ private class DefaultBasemapRasterizer(
         vectorResources: List<VectorResource>,
         sizePx: Int,
         tile: TileId,
+        diagnostics: MutableList<RenderDiagnostic>,
     ): ByteArray {
         val surface = Surface.makeRasterN32Premul(sizePx, sizePx)
         val spriteContext = style.spriteAtlas?.let(::SpriteRenderContext)
@@ -1051,6 +1059,7 @@ private class DefaultBasemapRasterizer(
                     atlas = style.spriteAtlas,
                     sizePx = sizePx,
                     tile = tile,
+                    diagnostics = diagnostics,
                 )
             }
             for (layer in layers) {
@@ -1657,6 +1666,7 @@ private class DefaultBasemapRasterizer(
         atlas: CompiledSpriteAtlas,
         sizePx: Int,
         tile: TileId,
+        diagnostics: MutableList<RenderDiagnostic>,
     ): Map<Int, List<PlacedIcon>> {
         val accepted = mutableMapOf<Int, MutableList<PlacedIcon>>()
         val collisionBoxes = mutableListOf<CollisionBox>()
@@ -1664,12 +1674,17 @@ private class DefaultBasemapRasterizer(
             val resource = resources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest } ?: continue
             val sourceLayer = resource.tile.layers.singleOrNull { it.name == layer.sourceLayer } ?: continue
             val candidates = mutableListOf<IconCandidate>()
-            var skippedInvalidPropertyFeature = false
+            // Counted, not flagged: a layer that skipped every candidate feature it had is an
+            // authoring error in the style, while a layer that skipped some of them is bad data on
+            // those features. Only the count can tell the two apart. See the escalation below.
+            var candidateFeatures = 0
+            var skippedFeatures = 0
             for ((featureIndex, feature) in sourceLayer.features.withIndex()) {
                 val baseContext = featureContext(tile, feature).copy(imageAvailable = atlas.entries::containsKey)
                 if (!layer.filter.matches(baseContext)) continue
                 val imageName = evaluateIconImageName(layer.image.evaluate(baseContext), feature) ?: continue
                 val sprite = sprites.image(imageName) ?: continue
+                candidateFeatures++
                 // A repaired layer (retained only because its text was removed and its icon does
                 // not depend on it) was never validated as a retained construct before this
                 // compatibility profile grew that feature: one feature's data-driven property
@@ -1740,21 +1755,44 @@ private class DefaultBasemapRasterizer(
                     }
                 } catch (error: RasterizationException) {
                     if (!layer.retainedIndependentOfText) throw error
-                    skippedInvalidPropertyFeature = true
+                    skippedFeatures++
                 }
             }
-            if (skippedInvalidPropertyFeature) {
-                recordDiagnosticSafely(
-                    RenderDiagnostic(
-                        code = DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY,
-                        severity = DiagnosticSeverity.WARNING,
-                        stage = PipelineStage.RASTERIZATION,
-                        message = "A repaired icon layer skipped one or more features whose properties " +
-                            "failed to evaluate rather than failing the tile",
-                        details = mapOf("layerIndex" to layer.layerOrder.toString()),
-                        affectedTiles = listOf(tile),
+            if (skippedFeatures > 0) {
+                // A constant invalid value - icon-halo-width: -1, symbol-spacing: 0,
+                // icon-size: "big" - throws identically for every feature, and nothing validates
+                // it at prepare time, so the layer draws nothing at all while preparation reports
+                // success. Skipping every candidate a layer had is therefore a whole-layer
+                // authoring error, not bad data on one feature, and reporting it at the same
+                // WARNING severity as a single malformed feature would bury it.
+                //
+                // It escalates in severity only, never into a thrown exception. Failing the tile
+                // is exactly the all-or-error behaviour this per-feature catch exists to remove:
+                // these layers were not drawn at all before this compatibility profile retained
+                // them, so a style that rendered fine (icon-less) must keep rendering. The counts
+                // travel in details so a caller can see how much of the layer was lost, and the
+                // diagnostic goes to both sinks so an ERROR here is actually observable.
+                val everyCandidateSkipped = skippedFeatures == candidateFeatures
+                val diagnostic = RenderDiagnostic(
+                    code = DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY,
+                    severity = if (everyCandidateSkipped) DiagnosticSeverity.ERROR else DiagnosticSeverity.WARNING,
+                    stage = PipelineStage.RASTERIZATION,
+                    message = if (everyCandidateSkipped) {
+                        "A repaired icon layer drew none of its candidate features because every one of " +
+                            "them failed to evaluate an icon property, which is a whole-layer authoring error"
+                    } else {
+                        "A repaired icon layer skipped one or more features whose properties " +
+                            "failed to evaluate rather than failing the tile"
+                    },
+                    details = mapOf(
+                        "layerIndex" to layer.layerOrder.toString(),
+                        "candidateFeatures" to candidateFeatures.toString(),
+                        "skippedFeatures" to skippedFeatures.toString(),
                     ),
+                    affectedTiles = listOf(tile),
                 )
+                recordDiagnosticSafely(diagnostic)
+                diagnostics += diagnostic
             }
             for (candidate in candidates.sortedWith(compareBy(IconCandidate::sortKey, IconCandidate::stableOrder))) {
                 if (!layer.allowOverlap && collisionBoxes.any { it.intersects(candidate.box) }) continue

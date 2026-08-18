@@ -943,6 +943,107 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun severalBadFeaturesOnOneRepairedLayerRecordExactlyOneDiagnosticPerTile() = runTest {
+        // The diagnostic bound is once per layer per tile, which is what other render-stage
+        // diagnostics do. Nothing pinned it: moving the record call inside the catch would make it
+        // per-feature and every other test would still pass. Four candidate features, three of
+        // them bad, must produce exactly one diagnostic carrying the aggregate counts - and one
+        // good feature keeps this on the WARNING side of the escalation below.
+        val mvt = iconOffsetVectorTile(goodFeatureCount = 1, badFeatureCount = 3)
+        val spritePng = renderSyntheticPng(8)
+        val recordedDiagnostics = mutableListOf<RenderDiagnostic>()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(200, mvt)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+            diagnosticSink = DiagnosticSink { recordedDiagnostics += it },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-offset":["get","offset"],"text-field":["get","name"]},"paint":{"icon-color":"#ff0000"}}]}""",
+                ),
+            )
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+
+            val skipped = recordedDiagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY }
+            assertEquals(DiagnosticSeverity.WARNING, skipped.severity)
+            assertEquals("4", skipped.details["candidateFeatures"])
+            assertEquals("3", skipped.details["skippedFeatures"])
+            assertEquals(
+                1,
+                output.diagnostics.count { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY },
+            )
+            // The one good feature still drew, so the escalation below is genuinely about layers
+            // that lost everything rather than layers that lost most of it.
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 0, 0),
+                actual = output.pngBytes.centerPixelColor(),
+                tolerance = 1,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aRepairedIconLayerThatDrawsNoneOfItsFeaturesEscalatesToAnObservableError() = runTest {
+        // icon-halo-width: -1 is a style-level constant that nothing validates at prepare time, so
+        // every feature throws identically: the layer draws nothing at all while prepare() reports
+        // success. That is a whole-layer authoring error, not bad data on one feature, so it must
+        // not be reported at the same severity as a single skipped feature - and it must not fail
+        // the tile either, since these layers were not drawn at all before this profile retained
+        // them. No diagnosticSink is configured here on purpose: DiagnosticSink.None is the
+        // default, so the always-available RenderedTile.diagnostics list is the only place a
+        // caller can see this, and routing it to the sink alone would make it unobservable.
+        val mvt = iconOffsetVectorTile()
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(200, mvt)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]},"paint":{"icon-halo-width":-1}}]}""",
+                ),
+            )
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED })
+            assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+
+            assertTrue(output.pngBytes.startsWithPngSignature())
+            val skipped = output.diagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY }
+            assertEquals(DiagnosticSeverity.ERROR, skipped.severity)
+            assertEquals(PipelineStage.RASTERIZATION, skipped.stage)
+            assertEquals(skipped.details["candidateFeatures"], skipped.details["skippedFeatures"])
+            assertEquals("2", skipped.details["candidateFeatures"])
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun anIconOnlyLayerWithTheSameMalformedPropertyStillFailsRendering() = runTest {
         // The same "bad" offset property, but on a layer with no text at all - author-intended as
         // an icon layer. Unlike the repaired case above, this must still fail the tile exactly as
@@ -2134,28 +2235,48 @@ class RentileRuntimeTest {
     }
 
     /**
-     * A single "poi" layer with two point features at zoom-0 tile coordinates. "good" has no
+     * A single "poi" layer of point features at zoom-0 tile coordinates. A "good" feature has no
      * "offset" property, so a data-driven icon-offset expression evaluates to Null and falls back
-     * to its default. "bad" declares "offset" as a string, so the same expression evaluates to a
-     * value that is not a numeric array and cannot be an icon-offset.
+     * to its default. A "bad" feature declares "offset" as a string, so the same expression
+     * evaluates to a value that is not a numeric array and cannot be an icon-offset. The first
+     * feature emitted sits at the tile's exact center, which centerPixelColor() reads.
      */
-    private fun iconOffsetVectorTile(): ByteArray {
-        val good = Tile.Feature(
-            type = Tile.GeomType.POINT,
-            geometry = listOf(command(1, 1), zigZag(2048), zigZag(2048)),
+    private fun iconOffsetVectorTile(goodFeatureCount: Int = 1, badFeatureCount: Int = 1): ByteArray {
+        val positions = listOf(
+            2048 to 2048,
+            1024 to 1024,
+            3072 to 3072,
+            1024 to 3072,
+            3072 to 1024,
         )
-        val bad = Tile.Feature(
-            tags = listOf(0, 0),
-            type = Tile.GeomType.POINT,
-            geometry = listOf(command(1, 1), zigZag(1024), zigZag(1024)),
-        )
+        val features = buildList {
+            repeat(goodFeatureCount) { index ->
+                val (x, y) = positions[size]
+                add(
+                    Tile.Feature(
+                        type = Tile.GeomType.POINT,
+                        geometry = listOf(command(1, 1), zigZag(x), zigZag(y)),
+                    ),
+                )
+            }
+            repeat(badFeatureCount) { index ->
+                val (x, y) = positions[size]
+                add(
+                    Tile.Feature(
+                        tags = listOf(0, 0),
+                        type = Tile.GeomType.POINT,
+                        geometry = listOf(command(1, 1), zigZag(x), zigZag(y)),
+                    ),
+                )
+            }
+        }
         return Tile.ADAPTER.encode(
             Tile(
                 layers = listOf(
                     Tile.Layer(
                         version = 2,
                         name = "poi",
-                        features = listOf(good, bad),
+                        features = features,
                         keys = listOf("offset"),
                         values = listOf(Tile.Value(string_value = "not-an-array")),
                         extent = 4096,
