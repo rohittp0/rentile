@@ -681,7 +681,10 @@ class RentileRuntimeTest {
                 ),
             )
 
-            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            val excluded = style.diagnostics.single { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED }
+            // Nothing was fetched, so there is no cause to report. That absence is what makes a
+            // real fetch failure legible in the tests above.
+            assertFalse("causeCode" in excluded.details)
             assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
 
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
@@ -763,7 +766,10 @@ class RentileRuntimeTest {
                 ),
             )
 
-            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            // The blast radius is the whole style, so the failure must stay legible: an expired
+            // sprite credential cannot look identical to a style that has no sprite key.
+            val excluded = style.diagnostics.single { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED }
+            assertEquals("RESOURCE_ACQUISITION_FAILED", excluded.details["causeCode"])
             assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
 
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
@@ -795,7 +801,10 @@ class RentileRuntimeTest {
                 ),
             )
 
-            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            // A decode failure must be distinguishable from an acquisition failure, not just from
+            // an absent sprite.
+            val excluded = style.diagnostics.single { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED }
+            assertEquals("RESOURCE_DECODE_FAILED", excluded.details["causeCode"])
             assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
 
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()

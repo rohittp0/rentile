@@ -42,6 +42,17 @@ private data class SymbolClassification(
     val retainedIndependentOfText: Boolean = false,
 )
 
+/**
+ * The outcome of resolving a style's sprite reference. [causeCode] is set only when a reference
+ * that did resolve then failed to fetch or decode, carrying that failure's `RentileErrorCode`
+ * name; the three offline shapes (absent key, v8 array form, relative with no base URI) leave it
+ * null, so a consumer can tell "no sprite to fetch" from "the sprite could not be fetched".
+ */
+private class SpriteAtlasResolution(
+    val atlas: CompiledSpriteAtlas? = null,
+    val causeCode: String? = null,
+)
+
 internal class StyleCompiler(
     private val owner: Any,
     private val resolveTileJson: suspend (String) -> ResolvedTileJson,
@@ -112,13 +123,14 @@ internal class StyleCompiler(
         // compatibility profile grew this feature, so a style that omits, array-forms, or cannot
         // resolve its sprite reference must keep preparing exactly as it did before - those layers
         // simply fall back to a text-coupled exclusion instead (handled per-layer below).
-        val spriteAtlas = when {
+        val spriteResolution = when {
             layers.any(::layerRequiresSpriteUnconditionally) ->
-                resolveRequiredSpriteAtlas(root, baseUri, secretContext)
+                SpriteAtlasResolution(resolveRequiredSpriteAtlas(root, baseUri, secretContext))
             layers.any(::layerDesiresSpriteIndependentOfText) ->
                 resolveOptionalSpriteAtlas(root, baseUri, secretContext)
-            else -> null
+            else -> SpriteAtlasResolution()
         }
+        val spriteAtlas = spriteResolution.atlas
         val compiledRasterSources = mutableMapOf<String, CompiledRasterSource>()
         val compiledVectorSources = mutableMapOf<String, CompiledVectorSource>()
         val layerIds = mutableSetOf<String>()
@@ -199,7 +211,12 @@ internal class StyleCompiler(
                                 code = DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED,
                                 severity = DiagnosticSeverity.INFO,
                                 message = "A text-coupled icon layer is excluded because no sprite atlas could be resolved",
-                                details = identity,
+                                // Same split as the per-layer degradation below: "causeCode" holds
+                                // a typed RentileErrorCode and is absent when the sprite reference
+                                // was never fetchable in the first place.
+                                details = identity + listOfNotNull(
+                                    spriteResolution.causeCode?.let { "causeCode" to it },
+                                ),
                             )
                             continue
                         }
@@ -1663,15 +1680,22 @@ internal class StyleCompiler(
         root: JsonObject,
         baseUri: String?,
         secretContext: SecretContext,
-    ): CompiledSpriteAtlas? {
-        val spriteReference = root["sprite"]?.asPrimitive()?.takeIf { it.isString }?.content ?: return null
-        val resolvedSpriteUrl = resolveAbsoluteSpriteUrl(spriteReference, baseUri) ?: return null
+    ): SpriteAtlasResolution {
+        val spriteReference = root["sprite"]?.asPrimitive()?.takeIf { it.isString }?.content
+            ?: return SpriteAtlasResolution()
+        val resolvedSpriteUrl = resolveAbsoluteSpriteUrl(spriteReference, baseUri)
+            ?: return SpriteAtlasResolution()
         return try {
-            resolveSprite(secretContext.protectUrl(resolvedSpriteUrl).resolve())
+            SpriteAtlasResolution(resolveSprite(secretContext.protectUrl(resolvedSpriteUrl).resolve()))
         } catch (error: CancellationException) {
             throw error
-        } catch (_: RentileException) {
-            null
+        } catch (error: RentileException) {
+            // The blast radius here is the whole style - one 403 removes every text-coupled icon
+            // in it - so the typed error code is the only thing a consumer has to distinguish an
+            // expired sprite credential, malformed sprite JSON, an oversized sprite and a broken
+            // cache from "this style simply has no sprite key". The three offline shapes above
+            // deliberately carry no cause, which is what makes a real failure legible.
+            SpriteAtlasResolution(causeCode = error.code.name)
         }
     }
 
