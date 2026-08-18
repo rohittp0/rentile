@@ -601,6 +601,29 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun aTextOptionalIconSizedFromTextExtentsNeedsNoSpriteAndStillPrepares() = runTest {
+        // The boundary of the rule above. text-optional: true puts a layer back on the strict
+        // path, but only for the layers this profile was actually drawing icons for. This one's
+        // icon is sized from text extents, so it was never retained and never needed an atlas:
+        // demanding one would fail a style that prepared fine, which is the exact class of
+        // regression this branch exists to avoid. It must stay excluded and stay silent.
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-text-fit":"width","text-field":["get","name"],"text-optional":true}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun aNonConstructFailureInARepairedLayerIsRethrownRatherThanExcluded() = runTest {
         // The catch guarding the repair-compile attempt must only swallow an
         // UNSUPPORTED_RETAINED_CONSTRUCT failure. A malformed vector tile template ("tiles":[123],

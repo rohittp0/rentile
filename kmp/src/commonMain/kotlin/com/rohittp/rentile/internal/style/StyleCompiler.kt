@@ -1563,8 +1563,16 @@ internal class StyleCompiler(
             "background" -> "background-pattern" in paint
             "fill" -> "fill-pattern" in paint
             "line" -> "line-pattern" in paint
+            // The text-optional clause is narrowed by retainsIconIndependentOfText on purpose: a
+            // `text-optional: true` layer whose icon *is* sized from text extents was never
+            // retained, so it never needed an atlas either, and demanding one would fail a style
+            // that used to prepare. Together the two clauses reproduce exactly the set of symbol
+            // layers this profile was already drawing icons for.
             "symbol" -> meaningfulLayoutValue(layout, "icon-image") &&
-                (!meaningfulLayoutValue(layout, "text-field") || authorDeclaredTextOptional(layout))
+                (
+                    !meaningfulLayoutValue(layout, "text-field") ||
+                        (authorDeclaredTextOptional(layout) && retainsIconIndependentOfText(layout))
+                    )
             else -> false
         }
     }
