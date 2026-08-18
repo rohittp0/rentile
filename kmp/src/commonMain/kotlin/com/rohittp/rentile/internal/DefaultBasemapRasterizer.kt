@@ -2641,13 +2641,21 @@ private data class PreparedResources(
     val vector: Map<TileId, List<VectorResource>>,
     /**
      * Diagnostics produced while resolving resources that have no surviving resource to hang
-     * themselves on - today, a best-effort vector source that was skipped. Carried on the
-     * resources so `retryExact` can rebuild batch state without losing them.
+     * themselves on - today, a best-effort vector source that was skipped.
+     *
+     * A skip leaves no entry in [vector] at all, and `recoverVectorResources` only revisits a
+     * resource that carries a substitution, so `retryExact` cannot recover one: the icons stay
+     * absent for the batch's lifetime even after the network returns. These are carried on the
+     * resources so that rebuilding batch state does not *lose* them, which is a weaker promise
+     * than recovering them. Re-acquiring a skipped source means preparing the batch again.
+     *
+     * No default: a construction site that forgets this field should not compile, because the
+     * failure mode of forgetting it is a diagnostic that silently stops reaching the caller.
      */
-    val acquisitionDiagnostics: List<RenderDiagnostic> = emptyList(),
+    val acquisitionDiagnostics: List<RenderDiagnostic>,
 ) {
     companion object {
-        val Empty: PreparedResources = PreparedResources(emptyMap(), emptyMap())
+        val Empty: PreparedResources = PreparedResources(emptyMap(), emptyMap(), emptyList())
     }
 }
 

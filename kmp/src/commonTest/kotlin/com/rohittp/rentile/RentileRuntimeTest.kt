@@ -1522,6 +1522,69 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun retryExactCannotRecoverASkippedIconSourceButKeepsItsDiagnostic() = runTest {
+        // A skip leaves no resource entry, and recoverVectorResources only revisits resources
+        // carrying a substitution, so retryExact cannot bring the icons back - it must at least
+        // not lose the diagnostic when it rebuilds batch state. The raster basemap does substitute
+        // and then recovers, which is what gets retryExact past its empty-substitutions guard.
+        val spritePng = renderSyntheticPng(8)
+        val basemapPng = renderSyntheticPng(256)
+        var exactAvailable = false
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(404, ByteArray(0))
+                    ResourceClass.RASTER_TILE ->
+                        if (request.url.contains("/1/0/0.png") && !exactAvailable) {
+                            TransportResponse(404, ByteArray(0))
+                        } else {
+                            TransportResponse(200, basemapPng)
+                        }
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"base":{"type":"raster","tiles":["https://tiles.example.test/{z}/{x}/{y}.png"],"tileSize":256},"pois":{"type":"vector","tiles":["https://pois.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"raster","source":"base"},{"id":"poi","type":"symbol","source":"pois","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+            val tile = TileId(1, 0, 0)
+            val batch = rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(tile),
+                options = RenderOptions(256),
+                substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+            )
+            try {
+                // The skipped POI source never counted against the budget of one, which the raster
+                // substitution needed in full.
+                assertTrue(batch.diagnostics.any { it.code == DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE })
+                exactAvailable = true
+
+                val recovery = rasterizer.retryExact(batch)
+
+                assertEquals(setOf(tile), recovery.upgradedTiles)
+                // Rebuilt state, diagnostic still there - and still there, not recovered.
+                assertTrue(batch.diagnostics.any { it.code == DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE })
+                val output = rasterizer.render(batch).tiles.single()
+                assertTrue(output.diagnostics.any { it.code == DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE })
+            } finally {
+                batch.close()
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun hiddenLayerDoesNotMakeItsSourceSyntaxReachable() = runTest {
         val rasterizer = testRasterizer()
         try {
