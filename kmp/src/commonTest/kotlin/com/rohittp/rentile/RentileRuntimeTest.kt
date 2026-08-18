@@ -19,6 +19,8 @@ import org.jetbrains.skia.Image
 import org.jetbrains.skia.Paint
 import org.jetbrains.skia.Rect
 import org.jetbrains.skia.Surface
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -99,11 +101,14 @@ class RentileRuntimeTest {
     @Test
     fun backgroundPatternLoadsAndCachesTheSpriteAtlas() = runTest {
         val spritePng = renderSyntheticPng(8)
+        // SpriteResourceAcquirer fetches the sprite JSON and the sprite PNG in two concurrent
+        // coroutines, so this lambda runs twice at once and an unguarded ArrayList loses an append.
         val requested = mutableListOf<Pair<ResourceClass, String>>()
+        val requestedMutex = Mutex()
         val rasterizer = Rentile.create(
             RentileConfiguration(
                 transport = ResourceTransport { request ->
-                    requested += request.resourceClass to request.url
+                    requestedMutex.withLock { requested += request.resourceClass to request.url }
                     when (request.resourceClass) {
                         ResourceClass.SPRITE_JSON -> TransportResponse(
                             200,
@@ -131,9 +136,9 @@ class RentileRuntimeTest {
                     ResourceClass.SPRITE_JSON to "https://sprite.example.test/atlas.json?key=private",
                     ResourceClass.SPRITE_IMAGE to "https://sprite.example.test/atlas.png?key=private",
                 ),
-                requested.toSet(),
+                requestedMutex.withLock { requested.toSet() },
             )
-            assertEquals(2, requested.size)
+            assertEquals(2, requestedMutex.withLock { requested.size })
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -944,7 +949,7 @@ class RentileRuntimeTest {
         // the good feature's icon must still draw, at the exact pixel a retained icon promises.
         val mvt = iconOffsetVectorTile()
         val spritePng = renderSyntheticPng(8)
-        val recordedDiagnostics = mutableListOf<RenderDiagnostic>()
+        val recordedDiagnostics = RecordingDiagnosticSink()
         val rasterizer = testRasterizer(
             transport = ResourceTransport { request ->
                 when (request.resourceClass) {
@@ -957,7 +962,7 @@ class RentileRuntimeTest {
                     else -> error("Unexpected resource class ${request.resourceClass}")
                 }
             },
-            diagnosticSink = DiagnosticSink { recordedDiagnostics += it },
+            diagnosticSink = recordedDiagnostics,
         )
         try {
             val style = rasterizer.prepare(
@@ -969,7 +974,7 @@ class RentileRuntimeTest {
 
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
 
-            assertTrue(recordedDiagnostics.any { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED })
+            assertTrue(recordedDiagnostics.snapshot().any { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED })
             // The good feature sits at the vector tile's exact center, which output pixel (128,
             // 128) of a 256px tile maps to - the same pixel centerPixelColor() reads. A red,
             // fully-opaque icon-color there proves the icon actually drew, not just that
@@ -994,7 +999,7 @@ class RentileRuntimeTest {
         // good feature keeps this on the WARNING side of the escalation below.
         val mvt = iconOffsetVectorTile(goodFeatureCount = 1, badFeatureCount = 3)
         val spritePng = renderSyntheticPng(8)
-        val recordedDiagnostics = mutableListOf<RenderDiagnostic>()
+        val recordedDiagnostics = RecordingDiagnosticSink()
         val rasterizer = testRasterizer(
             transport = ResourceTransport { request ->
                 when (request.resourceClass) {
@@ -1007,7 +1012,7 @@ class RentileRuntimeTest {
                     else -> error("Unexpected resource class ${request.resourceClass}")
                 }
             },
-            diagnosticSink = DiagnosticSink { recordedDiagnostics += it },
+            diagnosticSink = recordedDiagnostics,
         )
         try {
             val style = rasterizer.prepare(
@@ -1017,7 +1022,7 @@ class RentileRuntimeTest {
             )
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
 
-            val skipped = recordedDiagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED }
+            val skipped = recordedDiagnostics.snapshot().single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED }
             assertEquals(DiagnosticSeverity.WARNING, skipped.severity)
             assertEquals("4", skipped.details["candidateFeatures"])
             assertEquals("3", skipped.details["skippedFeatures"])
@@ -1196,7 +1201,7 @@ class RentileRuntimeTest {
         // at planning time. The tile must render without its icons instead.
         val spritePng = renderSyntheticPng(8)
         val basemapPng = renderSyntheticPng(256)
-        val recordedDiagnostics = mutableListOf<RenderDiagnostic>()
+        val recordedDiagnostics = RecordingDiagnosticSink()
         val rasterizer = testRasterizer(
             transport = ResourceTransport { request ->
                 when (request.resourceClass) {
@@ -1210,7 +1215,7 @@ class RentileRuntimeTest {
                     else -> error("Unexpected resource class ${request.resourceClass}")
                 }
             },
-            diagnosticSink = DiagnosticSink { recordedDiagnostics += it },
+            diagnosticSink = recordedDiagnostics,
         )
         try {
             val style = rasterizer.prepare(
@@ -1229,7 +1234,9 @@ class RentileRuntimeTest {
             assertEquals("404", skipped.details["statusCode"])
             assertEquals("RESOURCE_ACQUISITION_FAILED", skipped.details["causeCode"])
             // Also reaches a configured sink, and never burns the substitution budget on the way.
-            assertTrue(recordedDiagnostics.any { it.code == DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE })
+            assertTrue(
+                recordedDiagnostics.snapshot().any { it.code == DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE },
+            )
             assertTrue(output.diagnostics.none { it.code == DiagnosticCode.TILE_RESOURCE_SUBSTITUTED })
         } finally {
             rasterizer.close()
@@ -2328,10 +2335,13 @@ class RentileRuntimeTest {
     @Test
     fun substitutionPrefersAllImmediateChildren() = runTest {
         val sourcePng = renderSyntheticPng(256)
+        // substituteRaster acquires all four immediate children in one awaitAll, so this lambda
+        // runs four times at once.
         val requestedUrls = mutableListOf<String>()
+        val requestedUrlsMutex = Mutex()
         val rasterizer = testRasterizer(
             transport = ResourceTransport { request ->
-                requestedUrls += request.url
+                requestedUrlsMutex.withLock { requestedUrls += request.url }
                 when {
                     request.url.contains("/1/0/0.png") -> TransportResponse(404, ByteArray(0))
                     else -> TransportResponse(200, sourcePng)
@@ -2356,7 +2366,7 @@ class RentileRuntimeTest {
                     setOf(TileId(2, 0, 0), TileId(2, 1, 0), TileId(2, 0, 1), TileId(2, 1, 1)),
                     substitution.sourceTiles.toSet(),
                 )
-                assertTrue(requestedUrls.none { it.contains("/0/0/0.png") })
+                assertTrue(requestedUrlsMutex.withLock { requestedUrls.none { url -> url.contains("/0/0/0.png") } })
                 assertTrue(rendered.pngBytes.startsWithPngSignature())
             } finally {
                 batch.close()
@@ -2559,10 +2569,12 @@ class RentileRuntimeTest {
     @Test
     fun failedChildSetFallsBackToNearestAncestor() = runTest {
         val sourcePng = renderSyntheticPng(256)
+        // Same concurrent child fan-out in substituteRaster before the ancestor fallback runs.
         val requestedUrls = mutableListOf<String>()
+        val requestedUrlsMutex = Mutex()
         val rasterizer = testRasterizer(
             transport = ResourceTransport { request ->
-                requestedUrls += request.url
+                requestedUrlsMutex.withLock { requestedUrls += request.url }
                 when {
                     request.url.contains("/1/0/0.png") -> TransportResponse(404, ByteArray(0))
                     request.url.contains("/2/1/1.png") -> TransportResponse(404, ByteArray(0))
@@ -2585,8 +2597,9 @@ class RentileRuntimeTest {
                 assertEquals(TileSubstitutionStrategy.ANCESTOR, substitution.strategy)
                 assertEquals(1, substitution.ancestorZoomDistance)
                 assertEquals(listOf(TileId(0, 0, 0)), substitution.sourceTiles)
-                assertTrue(requestedUrls.any { it.contains("/2/1/1.png") })
-                assertTrue(requestedUrls.any { it.contains("/0/0/0.png") })
+                val urls = requestedUrlsMutex.withLock { requestedUrls.toList() }
+                assertTrue(urls.any { it.contains("/2/1/1.png") })
+                assertTrue(urls.any { it.contains("/0/0/0.png") })
             } finally {
                 batch.close()
             }
@@ -2724,11 +2737,16 @@ class RentileRuntimeTest {
         val transportStarted = CompletableDeferred<Unit>()
         val joined = CompletableDeferred<Unit>()
         val releaseTransport = CompletableDeferred<Unit>()
+        // Two prepareBatch calls race toward this lambda and single-flight is what stops the
+        // second one entering it - which is the assertion. An unguarded counter could lose an
+        // increment and report 1 for two real entries, making a single-flight regression look
+        // like a pass. The lock is released before the await so it cannot serialise the test.
         var requests = 0
+        val requestsMutex = Mutex()
         val rasterizer = Rentile.create(
             RentileConfiguration(
                 transport = ResourceTransport {
-                    requests += 1
+                    requestsMutex.withLock { requests += 1 }
                     transportStarted.complete(Unit)
                     releaseTransport.await()
                     TransportResponse(200, sourcePng)
@@ -2752,7 +2770,7 @@ class RentileRuntimeTest {
             val survivingBatch = second.await()
             survivingBatch.close()
 
-            assertEquals(1, requests)
+            assertEquals(1, requestsMutex.withLock { requests })
         } finally {
             releaseTransport.complete(Unit)
             rasterizer.close()
@@ -2915,6 +2933,29 @@ class RentileRuntimeTest {
             surface.close()
         }
     }
+}
+
+/**
+ * Collects what a [DiagnosticSink] is given, safely.
+ *
+ * Rentile may record diagnostics from several coroutines at once - `prepareBatch` runs the raster
+ * and vector acquisition plans concurrently and each acquirer records its own cache diagnostics -
+ * so appending to a plain list from the sink lambda can lose entries. [DiagnosticSink.record] is
+ * not a suspend function, so the Mutex the transport lambdas use cannot guard it; this mirrors
+ * SecretContext's compare-and-set accumulation instead, which exists for the same reason.
+ */
+@OptIn(ExperimentalAtomicApi::class)
+private class RecordingDiagnosticSink : DiagnosticSink {
+    private val recorded = AtomicReference<List<RenderDiagnostic>>(emptyList())
+
+    override fun record(diagnostic: RenderDiagnostic) {
+        while (true) {
+            val current = recorded.load()
+            if (recorded.compareAndSet(current, current + diagnostic)) return
+        }
+    }
+
+    fun snapshot(): List<RenderDiagnostic> = recorded.load()
 }
 
 /** Fails every read for one resource class, so the acquirer raises ResourceStoreException. */
