@@ -616,6 +616,94 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun aRepairedIconLayerSkipsAFeatureWithAMalformedPropertyAndStillRendersTheRest() = runTest {
+        // icon-offset is data-driven here. The "good" feature has no "offset" property, so
+        // ["get","offset"] evaluates to Null and falls back to its default [0, 0]. The "bad"
+        // feature's "offset" is a string, so evaluatedNumberArray throws RasterizationException.
+        // This layer is retained only because its text was removed and its icon is independent of
+        // that text, so the failure must skip just the bad feature - not fail the whole tile - and
+        // the good feature's icon must still draw, at the exact pixel a retained icon promises.
+        val mvt = iconOffsetVectorTile()
+        val spritePng = renderSyntheticPng(8)
+        val recordedDiagnostics = mutableListOf<RenderDiagnostic>()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(200, mvt)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+            diagnosticSink = DiagnosticSink { recordedDiagnostics += it },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-offset":["get","offset"],"text-field":["get","name"]},"paint":{"icon-color":"#ff0000"}}]}""",
+                ),
+            )
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED })
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+
+            assertTrue(recordedDiagnostics.any { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY })
+            // The good feature sits at the vector tile's exact center, which output pixel (128,
+            // 128) of a 256px tile maps to - the same pixel centerPixelColor() reads. A red,
+            // fully-opaque icon-color there proves the icon actually drew, not just that
+            // rendering did not throw.
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 0, 0),
+                actual = output.pngBytes.centerPixelColor(),
+                tolerance = 1,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun anIconOnlyLayerWithTheSameMalformedPropertyStillFailsRendering() = runTest {
+        // The same "bad" offset property, but on a layer with no text at all - author-intended as
+        // an icon layer. Unlike the repaired case above, this must still fail the tile exactly as
+        // before this change: retainedIndependentOfText is false, so the render-time catch must
+        // not apply here.
+        val mvt = iconOffsetVectorTile()
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(200, mvt)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-offset":["get","offset"]}}]}""",
+                ),
+            )
+
+            assertFailsWith<RasterizationException> {
+                rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256))
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun hiddenLayerDoesNotMakeItsSourceSyntaxReachable() = runTest {
         val rasterizer = testRasterizer()
         try {
@@ -1700,10 +1788,12 @@ class RentileRuntimeTest {
 
     private fun testRasterizer(
         transport: ResourceTransport = ResourceTransport { error("Unexpected transport request") },
+        diagnosticSink: DiagnosticSink = DiagnosticSink.None,
     ): BasemapRasterizer = Rentile.create(
         RentileConfiguration(
             transport = transport,
             rawResourceStore = InMemoryRawResourceStore(),
+            diagnosticSink = diagnosticSink,
         ),
     )
 
@@ -1760,6 +1850,38 @@ class RentileRuntimeTest {
                         version = 2,
                         name = "roads",
                         features = listOf(road),
+                        extent = 4096,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    /**
+     * A single "poi" layer with two point features at zoom-0 tile coordinates. "good" has no
+     * "offset" property, so a data-driven icon-offset expression evaluates to Null and falls back
+     * to its default. "bad" declares "offset" as a string, so the same expression evaluates to a
+     * value that is not a numeric array and cannot be an icon-offset.
+     */
+    private fun iconOffsetVectorTile(): ByteArray {
+        val good = Tile.Feature(
+            type = Tile.GeomType.POINT,
+            geometry = listOf(command(1, 1), zigZag(2048), zigZag(2048)),
+        )
+        val bad = Tile.Feature(
+            tags = listOf(0, 0),
+            type = Tile.GeomType.POINT,
+            geometry = listOf(command(1, 1), zigZag(1024), zigZag(1024)),
+        )
+        return Tile.ADAPTER.encode(
+            Tile(
+                layers = listOf(
+                    Tile.Layer(
+                        version = 2,
+                        name = "poi",
+                        features = listOf(good, bad),
+                        keys = listOf("offset"),
+                        values = listOf(Tile.Value(string_value = "not-an-array")),
                         extent = 4096,
                     ),
                 ),

@@ -1664,72 +1664,97 @@ private class DefaultBasemapRasterizer(
             val resource = resources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest } ?: continue
             val sourceLayer = resource.tile.layers.singleOrNull { it.name == layer.sourceLayer } ?: continue
             val candidates = mutableListOf<IconCandidate>()
+            var skippedInvalidPropertyFeature = false
             for ((featureIndex, feature) in sourceLayer.features.withIndex()) {
                 val baseContext = featureContext(tile, feature).copy(imageAvailable = atlas.entries::containsKey)
                 if (!layer.filter.matches(baseContext)) continue
                 val imageName = evaluateIconImageName(layer.image.evaluate(baseContext), feature) ?: continue
                 val sprite = sprites.image(imageName) ?: continue
-                val size = evaluatedNumber(layer.size.evaluate(baseContext), "icon-size", tile)
-                val opacity = evaluatedOpacity(layer.opacity.evaluate(baseContext), "icon-opacity", tile)
-                val haloWidth = evaluatedNumber(layer.haloWidth.evaluate(baseContext), "icon-halo-width", tile)
-                val haloBlur = evaluatedNumber(layer.haloBlur.evaluate(baseContext), "icon-halo-blur", tile)
-                val rotate = evaluatedNumber(layer.rotate.evaluate(baseContext), "icon-rotate", tile)
-                val spacing = evaluatedNumber(layer.spacing.evaluate(baseContext), "symbol-spacing", tile)
-                if (size <= 0.0) continue
-                if (haloWidth < 0.0 || haloBlur < 0.0 || spacing <= 0.0) {
-                    throw RasterizationException(
-                        message = "Retained icon halo or spacing values are outside their valid range",
+                // A repaired layer (retained only because its text was removed and its icon does
+                // not depend on it) was never validated as a retained construct before this
+                // compatibility profile grew that feature: one feature's data-driven property
+                // failing to evaluate must not turn "this icon is missing" into "the whole tile
+                // fails to render". An author-intended icon-only layer keeps the original
+                // fail-loudly behaviour, exactly as it always has.
+                try {
+                    val size = evaluatedNumber(layer.size.evaluate(baseContext), "icon-size", tile)
+                    val opacity = evaluatedOpacity(layer.opacity.evaluate(baseContext), "icon-opacity", tile)
+                    val haloWidth = evaluatedNumber(layer.haloWidth.evaluate(baseContext), "icon-halo-width", tile)
+                    val haloBlur = evaluatedNumber(layer.haloBlur.evaluate(baseContext), "icon-halo-blur", tile)
+                    val rotate = evaluatedNumber(layer.rotate.evaluate(baseContext), "icon-rotate", tile)
+                    val spacing = evaluatedNumber(layer.spacing.evaluate(baseContext), "symbol-spacing", tile)
+                    if (size <= 0.0) continue
+                    if (haloWidth < 0.0 || haloBlur < 0.0 || spacing <= 0.0) {
+                        throw RasterizationException(
+                            message = "Retained icon halo or spacing values are outside their valid range",
+                            affectedTiles = listOf(tile),
+                        )
+                    }
+                    val offset = evaluatedNumberArray(layer.offset.evaluate(baseContext), "icon-offset", tile, 2)
+                    val translate = evaluatedNumberArray(layer.translate.evaluate(baseContext), "icon-translate", tile, 2)
+                    val logicalWidth = sprite.entry.width / sprite.entry.pixelRatio * size
+                    val logicalHeight = sprite.entry.height / sprite.entry.pixelRatio * size
+                    val anchorShift = iconAnchorShift(layer.anchor, logicalWidth, logicalHeight)
+                    val anchors = iconAnchors(
+                        geometry = feature.geometry,
+                        placement = layer.placement,
+                        resource = resource,
+                        extent = sourceLayer.extent,
+                        sizePx = sizePx,
+                        spacing = spacing,
+                    )
+                    val sortKey = when (val value = layer.sortKey?.evaluate(baseContext)) {
+                        null, StyleValue.Null -> 0.0
+                        else -> evaluatedNumber(value, "symbol-sort-key", tile)
+                    }
+                    anchors.forEachIndexed { anchorIndex, anchor ->
+                        val centerX = anchor.x + anchorShift.first + offset[0] * size + translate[0]
+                        val centerY = anchor.y + anchorShift.second + offset[1] * size + translate[1]
+                        if (centerX !in 0.0..<sizePx.toDouble() || centerY !in 0.0..<sizePx.toDouble()) return@forEachIndexed
+                        val padding = layer.padding + haloWidth
+                        val box = CollisionBox(
+                            left = centerX - logicalWidth / 2.0 - padding,
+                            top = centerY - logicalHeight / 2.0 - padding,
+                            right = centerX + logicalWidth / 2.0 + padding,
+                            bottom = centerY + logicalHeight / 2.0 + padding,
+                        )
+                        if (layer.avoidEdges && !box.isInside(sizePx.toDouble())) return@forEachIndexed
+                        candidates += IconCandidate(
+                            stableOrder = featureIndex.toLong() * 1_000_000L + anchorIndex,
+                            sortKey = sortKey,
+                            box = box,
+                            icon = PlacedIcon(
+                                sprite = sprite,
+                                centerX = centerX,
+                                centerY = centerY,
+                                width = logicalWidth,
+                                height = logicalHeight,
+                                rotationDegrees = rotate + anchor.rotationDegrees,
+                                opacity = opacity,
+                                color = evaluatedColor(layer.color.evaluate(baseContext), "icon-color", tile),
+                                haloColor = evaluatedColor(layer.haloColor.evaluate(baseContext), "icon-halo-color", tile),
+                                haloWidth = haloWidth,
+                                haloBlur = haloBlur,
+                            ),
+                        )
+                    }
+                } catch (error: RasterizationException) {
+                    if (!layer.retainedIndependentOfText) throw error
+                    skippedInvalidPropertyFeature = true
+                }
+            }
+            if (skippedInvalidPropertyFeature) {
+                recordDiagnosticSafely(
+                    RenderDiagnostic(
+                        code = DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY,
+                        severity = DiagnosticSeverity.WARNING,
+                        stage = PipelineStage.RASTERIZATION,
+                        message = "A repaired icon layer skipped one or more features whose properties " +
+                            "failed to evaluate rather than failing the tile",
+                        details = mapOf("layerIndex" to layer.layerOrder.toString()),
                         affectedTiles = listOf(tile),
-                    )
-                }
-                val offset = evaluatedNumberArray(layer.offset.evaluate(baseContext), "icon-offset", tile, 2)
-                val translate = evaluatedNumberArray(layer.translate.evaluate(baseContext), "icon-translate", tile, 2)
-                val logicalWidth = sprite.entry.width / sprite.entry.pixelRatio * size
-                val logicalHeight = sprite.entry.height / sprite.entry.pixelRatio * size
-                val anchorShift = iconAnchorShift(layer.anchor, logicalWidth, logicalHeight)
-                val anchors = iconAnchors(
-                    geometry = feature.geometry,
-                    placement = layer.placement,
-                    resource = resource,
-                    extent = sourceLayer.extent,
-                    sizePx = sizePx,
-                    spacing = spacing,
+                    ),
                 )
-                val sortKey = when (val value = layer.sortKey?.evaluate(baseContext)) {
-                    null, StyleValue.Null -> 0.0
-                    else -> evaluatedNumber(value, "symbol-sort-key", tile)
-                }
-                anchors.forEachIndexed { anchorIndex, anchor ->
-                    val centerX = anchor.x + anchorShift.first + offset[0] * size + translate[0]
-                    val centerY = anchor.y + anchorShift.second + offset[1] * size + translate[1]
-                    if (centerX !in 0.0..<sizePx.toDouble() || centerY !in 0.0..<sizePx.toDouble()) return@forEachIndexed
-                    val padding = layer.padding + haloWidth
-                    val box = CollisionBox(
-                        left = centerX - logicalWidth / 2.0 - padding,
-                        top = centerY - logicalHeight / 2.0 - padding,
-                        right = centerX + logicalWidth / 2.0 + padding,
-                        bottom = centerY + logicalHeight / 2.0 + padding,
-                    )
-                    if (layer.avoidEdges && !box.isInside(sizePx.toDouble())) return@forEachIndexed
-                    candidates += IconCandidate(
-                        stableOrder = featureIndex.toLong() * 1_000_000L + anchorIndex,
-                        sortKey = sortKey,
-                        box = box,
-                        icon = PlacedIcon(
-                            sprite = sprite,
-                            centerX = centerX,
-                            centerY = centerY,
-                            width = logicalWidth,
-                            height = logicalHeight,
-                            rotationDegrees = rotate + anchor.rotationDegrees,
-                            opacity = opacity,
-                            color = evaluatedColor(layer.color.evaluate(baseContext), "icon-color", tile),
-                            haloColor = evaluatedColor(layer.haloColor.evaluate(baseContext), "icon-halo-color", tile),
-                            haloWidth = haloWidth,
-                            haloBlur = haloBlur,
-                        ),
-                    )
-                }
             }
             for (candidate in candidates.sortedWith(compareBy(IconCandidate::sortKey, IconCandidate::stableOrder))) {
                 if (!layer.allowOverlap && collisionBoxes.any { it.intersects(candidate.box) }) continue

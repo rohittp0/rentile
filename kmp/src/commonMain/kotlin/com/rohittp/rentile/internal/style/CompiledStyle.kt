@@ -282,6 +282,16 @@ internal data class IconDrawLayer(
     val spacing: CompiledStyleProperty,
     val allowOverlap: Boolean,
     val avoidEdges: Boolean,
+    /**
+     * True when this layer was retained only because its text was removed and its icon is
+     * independent of that text - meaning it was never validated as a retained construct before
+     * this compatibility profile grew that feature. Such a layer degrades per-feature at render
+     * time instead of failing the whole tile: a single feature whose data-driven property fails
+     * to evaluate is skipped rather than aborting every other layer's draw. An author-intended
+     * icon-only layer (`false`) keeps the original fail-loudly behaviour, since it always existed
+     * as the layer's sole purpose.
+     */
+    val retainedIndependentOfText: Boolean = false,
     override val minZoom: Double,
     override val maxZoom: Double,
 ) : VectorDrawLayer

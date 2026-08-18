@@ -210,6 +210,7 @@ internal class StyleCompiler(
                                 baseUri = baseUri,
                                 index = index,
                                 layerId = layerId,
+                                retainedIndependentOfText = true,
                             )
                             diagnostics += retainedIconDiagnostic
                         } catch (error: StylePreparationException) {
@@ -709,6 +710,7 @@ internal class StyleCompiler(
         baseUri: String?,
         index: Int,
         layerId: String,
+        retainedIndependentOfText: Boolean = false,
     ): IconDrawLayer {
         validateVectorLayerKeys(layer, index, layerId)
         val layout = objectOrEmpty(layer, "layout", index, layerId)
@@ -870,6 +872,7 @@ internal class StyleCompiler(
             ),
             allowOverlap = allowOverlap,
             avoidEdges = avoidEdges,
+            retainedIndependentOfText = retainedIndependentOfText,
             minZoom = layer["minzoom"]?.asPrimitive()?.doubleOrNull ?: 0.0,
             maxZoom = layer["maxzoom"]?.asPrimitive()?.doubleOrNull ?: 31.0,
         )
