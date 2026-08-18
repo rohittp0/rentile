@@ -1330,6 +1330,198 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun aSourceRequiredOnlyByALayerInactiveAtThisZoomIsStillBestEffort() = runTest {
+        // Source "v" backs a minzoom:14 fill and a repaired POI symbol layer. At z=10 the fill
+        // draws nothing and never asks for the tile, so on main nothing fetched "v" at this zoom
+        // and the tile rendered. A zoom-agnostic required set counted the fill anyway, so the 404
+        // failed the batch - the same invariant leaking, in the direction that fails loudly.
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(404, ByteArray(0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://v.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"buildings","type":"fill","source":"v","source-layer":"buildings","minzoom":14,"paint":{"fill-color":"#cccccc"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            val output = rasterizer.render(style, listOf(TileId(10, 0, 0)), RenderOptions(256)).tiles.single()
+
+            assertTrue(output.pngBytes.startsWithPngSignature())
+            assertTrue(output.diagnostics.any { it.code == DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aSourceSharedWithAnActiveFillLayerStillFailsAtThatZoom() = runTest {
+        // The other side of the same rule: at z=14 the fill is active, so "v" is required again
+        // and the identical 404 must still fail the batch. Without this, narrowing the required
+        // set to active layers could quietly become "never required".
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(404, ByteArray(0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://v.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"buildings","type":"fill","source":"v","source-layer":"buildings","minzoom":14,"paint":{"fill-color":"#cccccc"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertFailsWith<ResourceAcquisitionException> {
+                rasterizer.render(style, listOf(TileId(14, 0, 0)), RenderOptions(256))
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aVectorSourceSharedWithALineOrAnIconOnlyLayerIsNotBestEffort() = runTest {
+        // Subtraction is pinned for fill elsewhere; these are the two other vector-sourced layer
+        // kinds that must keep a source strict. Both styles 404 identically and both must throw.
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(404, ByteArray(0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        val sharedWith = mapOf(
+            "line" to """{"id":"roads","type":"line","source":"v","source-layer":"roads","paint":{"line-color":"#888888"}}""",
+            "author-intended-icon" to
+                """{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker"}}""",
+        )
+        try {
+            for ((kind, layerJson) in sharedWith) {
+                assertFailsWith<ResourceAcquisitionException>("a source shared with a $kind layer must stay strict") {
+                    rasterizer.render(
+                        rasterizer.prepare(
+                            StyleInput.InlineJson(
+                                """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://v.example.test/{z}/{x}/{y}.pbf"]}},"layers":[$layerJson,{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                            ),
+                        ),
+                        listOf(TileId(0, 0, 0)),
+                        RenderOptions(256),
+                    )
+                }
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aBestEffortSkipDoesNotMaskARequiredFailureInTheSameBatch() = runTest {
+        // Both vector sources 404 on the same tile. "pois" is reachable only through the repaired
+        // icon layer and is skipped; "land" backs a fill and must still fail the batch. The single
+        // ResourceAcquisitionException rather than a BatchRenderException is the assertion that
+        // matters: it proves exactly one failure survived filtering, so the skip neither masked
+        // the required failure nor joined it.
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(404, ByteArray(0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"land":{"type":"vector","tiles":["https://land.example.test/{z}/{x}/{y}.pbf"]},"pois":{"type":"vector","tiles":["https://pois.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"land","type":"fill","source":"land","source-layer":"land","paint":{"fill-color":"#00ff00"}},{"id":"poi","type":"symbol","source":"pois","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            val error = assertFailsWith<ResourceAcquisitionException> {
+                rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256))
+            }
+            assertEquals(404, error.statusCode)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun twoIconSourcesFailingOnOneTileAreReportedSeparately() = runTest {
+        // The diagnostics used to carry nothing identifying the source, so the .distinct() that
+        // builds batch state collapsed two identical failures into one and undercounted the loss.
+        // Each must name its own source, with redacted digests and no URL.
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(404, ByteArray(0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"poisA":{"type":"vector","tiles":["https://a.example.test/{z}/{x}/{y}.pbf"]},"poisB":{"type":"vector","tiles":["https://b.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poiA","type":"symbol","source":"poisA","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}},{"id":"poiB","type":"symbol","source":"poisB","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+
+            val skipped = output.diagnostics.filter { it.code == DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE }
+            assertEquals(2, skipped.size)
+            assertEquals(2, skipped.mapNotNull { it.details["sourceIdDigest"] }.distinct().size)
+            assertEquals(2, skipped.mapNotNull { it.details["resourceId"] }.distinct().size)
+            assertTrue(skipped.none { diagnostic -> diagnostic.details.values.any { "example.test" in it } })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun hiddenLayerDoesNotMakeItsSourceSyntaxReachable() = runTest {
         val rasterizer = testRasterizer()
         try {

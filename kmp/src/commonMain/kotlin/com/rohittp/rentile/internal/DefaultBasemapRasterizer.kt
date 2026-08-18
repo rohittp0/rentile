@@ -600,7 +600,12 @@ private class DefaultBasemapRasterizer(
             async { acquireOutcome { vectorAcquirer.acquire(sample, accessMode) } }
         }
         val outcomes = pending.mapValues { (_, deferred) -> deferred.await() }
-        VectorAcquisitionPlan(samplesByTile, outcomes, bestEffortVectorSourceDigests(style))
+        // Sampling above is zoom-scoped, so the classification has to be too - see
+        // bestEffortVectorSourceDigests. One entry per distinct zoom in the batch, not per tile:
+        // the answer depends only on which layers are active.
+        val bestEffortByZoom = tiles.map { it.z }.distinct()
+            .associateWith { zoom -> bestEffortVectorSourceDigests(style, zoom) }
+        VectorAcquisitionPlan(samplesByTile, outcomes, bestEffortByZoom)
     }
 
     /**
@@ -622,11 +627,25 @@ private class DefaultBasemapRasterizer(
      * The set is computed from the compiled draw layers rather than guessed at render time, and a
      * source shared with *any* fill, line, raster, hillshade or author-intended icon layer is
      * excluded from it, keeping today's strict behaviour exactly for everything else.
+     *
+     * It is scoped to [zoom] because sampling is: [planVectorResources] only samples layers
+     * passing `isActiveAt`, so only those layers can cause the fetch whose failure is being
+     * classified. A zoom-agnostic answer under-reaches - a source required solely by, say, a
+     * `minzoom: 14` fill would count as required at z=10, where that fill draws nothing and never
+     * asked for the tile, and the repaired POI layer sharing it would lose its best-effort
+     * treatment. On `main` neither layer fetched anything at z=10 and the tile rendered, so that
+     * is the same invariant leaking, just in the direction that fails loudly instead of quietly.
      */
-    private fun bestEffortVectorSourceDigests(style: CompiledPreparedStyle): Set<String> {
+    private fun bestEffortVectorSourceDigests(style: CompiledPreparedStyle, zoom: Int): Set<String> {
         val repaired = mutableSetOf<String>()
         val required = mutableSetOf<String>()
         for (layer in style.drawLayers) {
+            if (!layer.isActiveAt(zoom)) continue
+            // Exhaustive on purpose: no `else`. A new CompiledDrawLayer kind must be a compile
+            // error here, because the failure mode of forgetting one is a source that silently
+            // stops being subtracted - the exact silent-loss shape this whole path exists to
+            // avoid. The sibling `when` in planVectorResources states the same intent with
+            // error("unreachable").
             when (layer) {
                 is IconDrawLayer ->
                     if (layer.retainedIndependentOfText) repaired += layer.source.idDigest
@@ -635,7 +654,7 @@ private class DefaultBasemapRasterizer(
                 is LineDrawLayer -> required += layer.source.idDigest
                 is RasterDrawLayer -> required += layer.source.idDigest
                 is HillshadeDrawLayer -> required += layer.source.idDigest
-                else -> Unit
+                is BackgroundDrawLayer -> Unit
             }
         }
         return repaired - required
@@ -704,10 +723,10 @@ private class DefaultBasemapRasterizer(
                         is AcquisitionOutcome.Failure ->
                             // A best-effort source never consumes substitution: it must not burn
                             // the budget and then throw TileSubstitutionException, it just skips.
-                            if (plan.isBestEffort(sample, outcome.error)) {
+                            if (plan.isBestEffort(tile, sample, outcome.error)) {
                                 VectorResolutionItem(
                                     resource = null,
-                                    diagnostic = iconLayerSourceUnavailableDiagnostic(tile, outcome.error),
+                                    diagnostic = iconLayerSourceUnavailableDiagnostic(tile, sample, outcome.error),
                                 )
                             } else {
                                 VectorResolutionItem(
@@ -734,8 +753,18 @@ private class DefaultBasemapRasterizer(
      * goes to the sink *and* into the batch state, so it reaches `RenderedTile.diagnostics` for a
      * caller that configured no sink - which is the only way this is observable at all, since the
      * alternative it replaces was a thrown batch failure nobody could miss.
+     *
+     * It names the source two ways, both already-redacted digests and neither a URL.
+     * `sourceIdDigest` is stable across tiles and answers *which* source was lost;
+     * `resourceId` is per-sample, in the same form `RASTER_PASSTHROUGH_USED` uses, and is what
+     * stops the `.distinct()` in `buildPreparedBatchState` collapsing two different icon sources
+     * failing identically on one tile into a single diagnostic that undercounts the loss.
      */
-    private fun iconLayerSourceUnavailableDiagnostic(tile: TileId, error: Throwable): RenderDiagnostic {
+    private fun iconLayerSourceUnavailableDiagnostic(
+        tile: TileId,
+        sample: VectorTileSample,
+        error: Throwable,
+    ): RenderDiagnostic {
         val statusCode = (error as? ResourceAcquisitionException)?.statusCode
         return RenderDiagnostic(
             code = DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE,
@@ -745,6 +774,8 @@ private class DefaultBasemapRasterizer(
                 "so those layers are skipped for this tile",
             details = buildMap {
                 put("resourceClass", ResourceClass.VECTOR_TILE.name)
+                put("sourceIdDigest", sample.source.idDigest)
+                put("resourceId", sample.identity.sha256Hex())
                 (error as? RentileException)?.let { put("causeCode", it.code.name) }
                 statusCode?.let { put("statusCode", it.toString()) }
             },
@@ -2545,22 +2576,39 @@ private data class RasterAcquisitionPlan(
 private data class VectorAcquisitionPlan(
     val samplesByTile: Map<TileId, List<VectorTileSample>>,
     val outcomesByIdentity: Map<String, AcquisitionOutcome<VectorResource>>,
-    /** Sources reachable only through repaired icon layers; see `bestEffortVectorSourceDigests`. */
-    val bestEffortSourceDigests: Set<String> = emptySet(),
+    /**
+     * Sources reachable only through repaired icon layers, per zoom; see
+     * `bestEffortVectorSourceDigests`. Keyed by zoom because which layers are active decides the
+     * answer, and only active layers cause a fetch in the first place.
+     */
+    val bestEffortSourceDigestsByZoom: Map<Int, Set<String>> = emptyMap(),
 ) {
     /**
      * A best-effort failure is not a batch failure. Excluding it here is what keeps it out of
      * `validateSubstitutionAllowance` - so it neither fails the batch under the default
-     * TileSubstitutionPolicy.Disabled nor counts against the substitution budget. Only a typed
-     * [RentileException] degrades; an unexpected Throwable is a bug and still surfaces.
+     * TileSubstitutionPolicy.Disabled nor counts against the substitution budget.
+     *
+     * Only a failure to *obtain or understand* the resource degrades. The boundary is narrower
+     * than the whole [RentileException] hierarchy on purpose, and narrower than the compile-time
+     * sibling in `resolveOptionalSpriteAtlas`, because a different set of failures is reachable
+     * here. `ResourceStoreException` is thrown by the vector acquirer for a cache read, write or
+     * eviction that failed: that is the caller's own store misbehaving, not a tile that is
+     * missing, and turning it into a per-tile WARNING would hide a broken cache behind absent
+     * icons. `RasterizationException` and `PngEncodingException` belong to later stages, the
+     * lifecycle and identity failures are control flow, and an unexpected non-Rentile Throwable is
+     * a bug - all of them keep surfacing.
      */
-    fun isBestEffort(sample: VectorTileSample, error: Throwable): Boolean =
-        error is RentileException && sample.source.idDigest in bestEffortSourceDigests
+    fun isBestEffort(tile: TileId, sample: VectorTileSample, error: Throwable): Boolean {
+        val degradable = error is ResourceAcquisitionException ||
+            error is ResourceDecodeException ||
+            error is SafetyLimitException
+        return degradable && sample.source.idDigest in bestEffortSourceDigestsByZoom[tile.z].orEmpty()
+    }
 
     fun failures(): List<TileAcquisitionFailure> = samplesByTile.flatMap { (tile, samples) ->
         samples.mapNotNull { sample ->
             (outcomesByIdentity.getValue(sample.identity) as? AcquisitionOutcome.Failure)
-                ?.takeUnless { isBestEffort(sample, it.error) }
+                ?.takeUnless { isBestEffort(tile, sample, it.error) }
                 ?.let { TileAcquisitionFailure(tile, it.error) }
         }
     }
