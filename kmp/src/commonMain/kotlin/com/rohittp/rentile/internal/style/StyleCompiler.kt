@@ -238,9 +238,12 @@ internal class StyleCompiler(
                             // text-bearing symbol layer is work no style paid for before such a
                             // layer could be retained. A 404 on it - or a decode failure, or a
                             // safety limit - must therefore leave this one layer excluded rather
-                            // than fail a style that used to prepare, offline included. Only the
-                            // error code goes into details: a resource exception's message is not
-                            // covered by failRetained's no-secrets contract.
+                            // than fail a style that used to prepare, offline included. Such a
+                            // failure reports under its own details key, "causeCode", carrying the
+                            // typed RentileErrorCode name: a resource exception's message is not
+                            // covered by failRetained's no-secrets contract, and mixing enum names
+                            // into "cause" alongside construct sentences would give a consumer
+                            // grouping on that key two different vocabularies.
                             //
                             // Anything else stays loud. A StylePreparationException with no
                             // rejected-construct diagnostic is a malformed style, not a construct
@@ -252,15 +255,19 @@ internal class StyleCompiler(
                             // must be rethrown, not degraded into an exclusion.
                             val cause = when (error) {
                                 is StylePreparationException ->
-                                    error.diagnostics.firstOrNull { it.code == DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT }?.message
-                                        ?: throw error
-                                else -> error.code.name
+                                    "cause" to (
+                                        error.diagnostics
+                                            .firstOrNull { it.code == DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT }
+                                            ?.message
+                                            ?: throw error
+                                        )
+                                else -> "causeCode" to error.code.name
                             }
                             diagnostics += diagnostic(
                                 code = DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED,
                                 severity = DiagnosticSeverity.INFO,
                                 message = "A text-coupled icon layer could not be compiled and is excluded by the compatibility profile",
-                                details = identity + ("cause" to cause),
+                                details = identity + cause,
                             )
                         }
                         continue
@@ -1699,8 +1706,12 @@ internal class StyleCompiler(
      * Corpus Report. Nothing enforces this; every call site today passes a static string or an
      * already-redacted digest, and a new call site must do the same. Identity belongs in the
      * details map, which carries [layerIndex] and a digest of [layerId] rather than the id itself.
-     * A resource failure's message is deliberately *not* covered by this contract, which is why
-     * the degrading catch folds only the typed error code for those.
+     *
+     * A resource failure's message is deliberately *not* covered by this contract, so such a
+     * failure degrades under a separate `details["causeCode"]` key carrying only the typed
+     * `RentileErrorCode` name. `cause` therefore always holds a construct sentence from here and
+     * `causeCode` always holds an enum name, which keeps a consumer grouping on either key from
+     * seeing two vocabularies. The no-secrets contract applies to both.
      */
     private fun failRetained(
         layerIndex: Int,

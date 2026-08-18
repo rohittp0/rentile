@@ -454,6 +454,9 @@ class RentileRuntimeTest {
                 "viewport-aligned line icons are outside the compatibility profile",
                 excluded.details["cause"],
             )
+            // The construct sentence never doubles as a causeCode; that key is for typed resource
+            // error codes only.
+            assertFalse("causeCode" in excluded.details)
 
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
             assertTrue(output.pngBytes.startsWithPngSignature())
@@ -858,10 +861,13 @@ class RentileRuntimeTest {
             )
 
             val excluded = style.diagnostics.single { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED }
-            // The cause is the typed error code, never the resource exception's message: only
-            // failRetained's reason strings carry the no-secrets contract that lets a message be
-            // folded into a public diagnostic.
-            assertEquals("RESOURCE_ACQUISITION_FAILED", excluded.details["cause"])
+            // A resource failure reports the typed error code under its own key, never the
+            // exception's message: only failRetained's reason strings carry the no-secrets contract
+            // that lets a message be folded into a public diagnostic. It must not land in "cause",
+            // which always holds a construct sentence, or a consumer grouping on that key would see
+            // two vocabularies.
+            assertEquals("RESOURCE_ACQUISITION_FAILED", excluded.details["causeCode"])
+            assertFalse("cause" in excluded.details)
             assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
 
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
@@ -1019,15 +1025,17 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun aRepairedIconLayerThatDrawsNoneOfItsFeaturesEscalatesToAnObservableError() = runTest {
+    fun aRepairedIconLayerThatDrawsNoneOfItsFeaturesReportsTheWholeLayerLoss() = runTest {
         // icon-halo-width: -1 is a style-level constant that nothing validates at prepare time, so
         // every feature throws identically: the layer draws nothing at all while prepare() reports
-        // success. That is a whole-layer authoring error, not bad data on one feature, so it must
-        // not be reported at the same severity as a single skipped feature - and it must not fail
-        // the tile either, since these layers were not drawn at all before this profile retained
-        // them. No diagnosticSink is configured here on purpose: DiagnosticSink.None is the
-        // default, so the always-available RenderedTile.diagnostics list is the only place a
-        // caller can see this, and routing it to the sink alone would make it unobservable.
+        // success. That whole-layer loss is reported distinctly from one bad feature - equal
+        // skipped and candidate counts in details - but still as a WARNING, because in Rentile an
+        // ERROR diagnostic means the operation failed and nothing failed here: preparation
+        // succeeded and the tile rendered and is returned. It must not fail the tile either, since
+        // these layers were not drawn at all before this profile retained them. No diagnosticSink
+        // is configured here on purpose: DiagnosticSink.None is the default, so the
+        // always-available RenderedTile.diagnostics list is the only place a caller can see this,
+        // and routing it to the sink alone would make it unobservable.
         val mvt = iconOffsetVectorTile()
         val spritePng = renderSyntheticPng(8)
         val rasterizer = testRasterizer(
@@ -1056,10 +1064,14 @@ class RentileRuntimeTest {
 
             assertTrue(output.pngBytes.startsWithPngSignature())
             val skipped = output.diagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY }
-            assertEquals(DiagnosticSeverity.ERROR, skipped.severity)
+            assertEquals(DiagnosticSeverity.WARNING, skipped.severity)
             assertEquals(PipelineStage.RASTERIZATION, skipped.stage)
+            // Equal counts are the machine-readable signal that the layer lost everything, which
+            // is what distinguishes this case now that severity does not.
             assertEquals(skipped.details["candidateFeatures"], skipped.details["skippedFeatures"])
             assertEquals("2", skipped.details["candidateFeatures"])
+            // No render-stage diagnostic may claim the operation failed when it did not.
+            assertTrue(output.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()

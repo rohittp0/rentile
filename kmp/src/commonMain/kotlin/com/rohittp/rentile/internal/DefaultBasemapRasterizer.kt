@@ -1762,20 +1762,22 @@ private class DefaultBasemapRasterizer(
                 // A constant invalid value - icon-halo-width: -1, symbol-spacing: 0,
                 // icon-size: "big" - throws identically for every feature, and nothing validates
                 // it at prepare time, so the layer draws nothing at all while preparation reports
-                // success. Skipping every candidate a layer had is therefore a whole-layer
-                // authoring error, not bad data on one feature, and reporting it at the same
-                // WARNING severity as a single malformed feature would bury it.
+                // success. That is a whole-layer authoring error rather than bad data on one
+                // feature, and it gets its own message plus the skipped-versus-candidate counts so
+                // a caller can tell the two apart and see how much of the layer was lost.
                 //
-                // It escalates in severity only, never into a thrown exception. Failing the tile
-                // is exactly the all-or-error behaviour this per-feature catch exists to remove:
-                // these layers were not drawn at all before this compatibility profile retained
-                // them, so a style that rendered fine (icon-less) must keep rendering. The counts
-                // travel in details so a caller can see how much of the layer was lost, and the
-                // diagnostic goes to both sinks so an ERROR here is actually observable.
+                // It is deliberately still a WARNING, and deliberately never a thrown exception.
+                // In Rentile, ERROR means the operation failed - StyleCompiler's ERROR diagnostics
+                // fail preparation - and nothing failed here: preparation succeeded, the tile
+                // rendered, and it is being returned with some icons absent. Failing the tile
+                // would also be exactly the all-or-error behaviour this per-feature catch exists to
+                // remove, since these layers were not drawn at all before this compatibility
+                // profile retained them and a style that rendered fine icon-less must keep
+                // rendering. The distinction lives in the message and the counts, not in severity.
                 val everyCandidateSkipped = skippedFeatures == candidateFeatures
                 val diagnostic = RenderDiagnostic(
                     code = DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY,
-                    severity = if (everyCandidateSkipped) DiagnosticSeverity.ERROR else DiagnosticSeverity.WARNING,
+                    severity = DiagnosticSeverity.WARNING,
                     stage = PipelineStage.RASTERIZATION,
                     message = if (everyCandidateSkipped) {
                         "A repaired icon layer drew none of its candidate features because every one of " +
