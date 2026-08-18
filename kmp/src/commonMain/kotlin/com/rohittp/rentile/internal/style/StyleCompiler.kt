@@ -1666,6 +1666,22 @@ internal class StyleCompiler(
         }
     }
 
+    /**
+     * Fails preparation because a reachable retained construct is outside this compatibility
+     * profile, reporting [reason] as an `UNSUPPORTED_RETAINED_CONSTRUCT` diagnostic at ERROR
+     * severity.
+     *
+     * **Contract on [reason]: it must never interpolate a URL, a credential, a query string, or
+     * any other secret.** It is not merely an exception message. It is published twice over: as
+     * that diagnostic's `message`, and - when a repaired icon layer degrades to
+     * `TEXT_COUPLED_ICON_LAYER_EXCLUDED` instead of failing the style - folded verbatim into that
+     * public diagnostic's `details["cause"]`, where it reaches every `DiagnosticSink` and every
+     * Corpus Report. Nothing enforces this; every call site today passes a static string or an
+     * already-redacted digest, and a new call site must do the same. Identity belongs in the
+     * details map, which carries [layerIndex] and a digest of [layerId] rather than the id itself.
+     * A resource failure's message is deliberately *not* covered by this contract, which is why
+     * the degrading catch folds only the typed error code for those.
+     */
     private fun failRetained(
         layerIndex: Int,
         layerId: String,
