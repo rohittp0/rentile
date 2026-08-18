@@ -165,7 +165,42 @@ internal class StyleCompiler(
                         }
                     }
                     val classification = classifySymbol(layout, hidden, identity)
-                    classification.diagnostic?.let(diagnostics::add)
+                    val retainedIconDiagnostic = classification.diagnostic
+                    if (classification.retained &&
+                        retainedIconDiagnostic != null &&
+                        retainedIconDiagnostic.code == DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED
+                    ) {
+                        // This layer has meaningful text, so classifySymbol used to exclude it
+                        // outright and compileIconLayer never ran against it. Now that its icon is
+                        // reachable, attempt the compile; if the compatibility profile rejects a
+                        // construct in it, fall back to the pre-existing text-coupled exclusion
+                        // instead of failing the whole style over a layer that used to be silently
+                        // dropped anyway.
+                        try {
+                            drawLayers += compileIconLayer(
+                                layer = layer,
+                                sources = sources,
+                                compiledSources = compiledVectorSources,
+                                secretContext = secretContext,
+                                baseUri = baseUri,
+                                index = index,
+                                layerId = layerId,
+                            )
+                            diagnostics += retainedIconDiagnostic
+                        } catch (error: StylePreparationException) {
+                            if (error.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT }) {
+                                throw error
+                            }
+                            diagnostics += diagnostic(
+                                code = DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED,
+                                severity = DiagnosticSeverity.INFO,
+                                message = "A text-coupled icon layer could not be compiled and is excluded by the compatibility profile",
+                                details = identity,
+                            )
+                        }
+                        continue
+                    }
+                    retainedIconDiagnostic?.let(diagnostics::add)
                     if (classification.retained) {
                         drawLayers += compileIconLayer(
                             layer = layer,

@@ -389,6 +389,81 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun textCoupledIconWithAnUnsupportedConstructIsExcludedInsteadOfFailingPreparation() = runTest {
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            // This layer has meaningful text and no icon-text-fit, so classifySymbol retains it and
+            // compileIconLayer runs against it for the first time. Its viewport-aligned line
+            // placement is a construct the compatibility profile rejects; that rejection must fall
+            // back to the pre-existing text-coupled exclusion instead of failing the whole style,
+            // and the sibling background layer must still be usable.
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"],"symbol-placement":"line","icon-rotation-alignment":"viewport"}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+            assertTrue(output.pngBytes.startsWithPngSignature())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun iconOnlyLayerWithAnUnsupportedConstructStillFailsPreparation() = runTest {
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            // This layer has no text at all, so it is author-intended as an icon layer:
+            // classifySymbol has always retained it unconditionally and compileIconLayer has
+            // always run against it. Its viewport-aligned line placement must still fail
+            // preparation loudly, exactly as before this change - the new try/catch guarding the
+            // text-present branch must not weaken this contract.
+            val error = assertFailsWith<StylePreparationException> {
+                rasterizer.prepare(
+                    StyleInput.InlineJson(
+                        """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","symbol-placement":"line","icon-rotation-alignment":"viewport"}}]}""",
+                    ),
+                )
+            }
+
+            assertTrue(error.diagnostics.any { it.code == DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT })
+            assertTrue(error.diagnostics.any { it.severity == DiagnosticSeverity.ERROR })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun hiddenLayerDoesNotMakeItsSourceSyntaxReachable() = runTest {
         val rasterizer = testRasterizer()
         try {
