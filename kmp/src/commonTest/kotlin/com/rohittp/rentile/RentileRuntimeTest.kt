@@ -501,6 +501,45 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun aNonConstructFailureInARepairedLayerIsRethrownRatherThanExcluded() = runTest {
+        // The catch guarding the repair-compile attempt must only swallow an
+        // UNSUPPORTED_RETAINED_CONSTRUCT failure. A malformed vector tile template ("tiles":[123],
+        // a number instead of a string) throws a bare StylePreparationException with no
+        // diagnostics from deep inside compileVectorSource - a different class of problem
+        // (a malformed source, not a rejected construct) that must still fail preparation. This
+        // pins the rethrow branch: inverting its condition would silently swallow this failure
+        // into a text-coupled exclusion instead.
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val error = assertFailsWith<StylePreparationException> {
+                rasterizer.prepare(
+                    StyleInput.InlineJson(
+                        """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":[123]}},"layers":[{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                    ),
+                )
+            }
+
+            assertTrue(error.diagnostics.any { it.severity == DiagnosticSeverity.ERROR })
+            assertTrue(error.diagnostics.none { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun aTextBearingIconLayerWithNoSpriteKeyDoesNotFailAStyleThatUsedToPrepare() = runTest {
         // No "sprite" key at all. Before this fix, a text-bearing icon layer with no
         // icon-text-fit made the sprite block treat the sprite as unconditionally required, and
