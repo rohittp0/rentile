@@ -1888,11 +1888,17 @@ private class DefaultBasemapRasterizer(
             // increments skippedFeatures for an invalid property.
             if (layer.retainedIndependentOfText && skippedFeatures > 0) {
                 // A constant invalid value - icon-halo-width: -1, symbol-spacing: 0,
-                // icon-size: "big" - throws identically for every feature, and nothing validates
-                // it at prepare time, so the layer draws nothing at all while preparation reports
-                // success. That is a whole-layer authoring error rather than bad data on one
-                // feature, and it gets its own message plus the skipped-versus-candidate counts so
-                // a caller can tell the two apart and see how much of the layer was lost.
+                // icon-size: "big" - throws identically for every feature, so a layer carrying one
+                // draws nothing at all while preparation reports success. Losing every candidate
+                // gets its own message and the skipped-versus-candidate counts, so a caller can
+                // tell that from losing one feature and see how much was lost.
+                //
+                // Both messages state only what happened on this tile, because that is all this
+                // code knows. everyCandidateSkipped is computed per tile, and a layer that loses
+                // every candidate here can draw fine on the next one - a data-driven icon-image
+                // resolving to a name the atlas lacks for this tile's features is the common way
+                // that happens. Calling it a whole-layer authoring error would be a conclusion the
+                // counts do not support; the counts are there for the reader to draw their own.
                 //
                 // It is deliberately still a WARNING, and deliberately never a thrown exception.
                 // In Rentile, ERROR means the operation failed - StyleCompiler's ERROR diagnostics
@@ -1908,8 +1914,8 @@ private class DefaultBasemapRasterizer(
                     severity = DiagnosticSeverity.WARNING,
                     stage = PipelineStage.RASTERIZATION,
                     message = if (everyCandidateSkipped) {
-                        "A repaired icon layer drew none of its candidate features, which is a " +
-                            "whole-layer authoring error rather than bad data on one feature"
+                        "A repaired icon layer drew none of the features that wanted an icon on " +
+                            "this tile"
                     } else {
                         "A repaired icon layer skipped one or more features it could not draw " +
                             "rather than failing the tile"

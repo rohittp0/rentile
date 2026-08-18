@@ -1093,9 +1093,10 @@ class RentileRuntimeTest {
             assertEquals(skipped.details["candidateFeatures"], skipped.details["skippedFeatures"])
             assertEquals("2", skipped.details["candidateFeatures"])
             assertEquals("0", skipped.details["skippedMissingSprite"])
+            // Factual about this tile only: everyCandidateSkipped is a per-tile fact, and the same
+            // layer can draw fine on the next tile, so the message must not diagnose the style.
             assertEquals(
-                "A repaired icon layer drew none of its candidate features, which is a whole-layer " +
-                    "authoring error rather than bad data on one feature",
+                "A repaired icon layer drew none of the features that wanted an icon on this tile",
                 skipped.message,
             )
             // No render-stage diagnostic may claim the operation failed when it did not.
