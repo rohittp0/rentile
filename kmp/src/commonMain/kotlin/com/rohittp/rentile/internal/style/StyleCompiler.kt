@@ -93,17 +93,20 @@ internal class StyleCompiler(
         val sources = root["sources"]?.let { value ->
             value as? JsonObject ?: throw StylePreparationException("Style sources must be a JSON object")
         } ?: JsonObject(emptyMap())
-        val spriteAtlas = if (layers.any(::layerRequiresSprite)) {
-            val spriteReference = root["sprite"]?.asPrimitive()?.takeIf { it.isString }?.content
-                ?: failUnsupported("A retained pattern or icon layer requires a sprite URL")
-            val resolvedSpriteUrl = when {
-                spriteReference.startsWith("https://") || spriteReference.startsWith("http://") -> spriteReference
-                baseUri != null -> resolveHttpReference(baseUri, spriteReference)
-                else -> null
-            } ?: failUnsupported("The sprite URL cannot be resolved against the style base URI")
-            resolveSprite(secretContext.protectUrl(resolvedSpriteUrl).resolve())
-        } else {
-            null
+        // A sprite can be wanted for two different reasons. A background/fill/line pattern, or a
+        // symbol layer with no text at all, cannot draw without one: for those, an unresolvable
+        // sprite reference must still fail preparation loudly, exactly as always. A symbol layer
+        // retained only because its text was removed and its icon is independent of that text is
+        // merely hoping for a sprite: that layer did not exist as a retained construct before this
+        // compatibility profile grew this feature, so a style that omits, array-forms, or cannot
+        // resolve its sprite reference must keep preparing exactly as it did before - those layers
+        // simply fall back to a text-coupled exclusion instead (handled per-layer below).
+        val spriteAtlas = when {
+            layers.any(::layerRequiresSpriteUnconditionally) ->
+                resolveRequiredSpriteAtlas(root, baseUri, secretContext)
+            layers.any(::layerDesiresSpriteIndependentOfText) ->
+                resolveOptionalSpriteAtlas(root, baseUri, secretContext)
+            else -> null
         }
         val compiledRasterSources = mutableMapOf<String, CompiledRasterSource>()
         val compiledVectorSources = mutableMapOf<String, CompiledVectorSource>()
@@ -176,6 +179,22 @@ internal class StyleCompiler(
                         // construct in it, fall back to the pre-existing text-coupled exclusion
                         // instead of failing the whole style over a layer that used to be silently
                         // dropped anyway.
+                        //
+                        // This layer alone (via layerDesiresSpriteIndependentOfText) is also the
+                        // only reason an absent, non-primitive, or unresolvable sprite reference
+                        // does not fail preparation above: such a style prepared fine before this
+                        // layer could ever be retained, so a missing atlas here must fall back to
+                        // the same text-coupled exclusion rather than either failing preparation or
+                        // silently retaining an icon that has nothing to draw from.
+                        if (spriteAtlas == null) {
+                            diagnostics += diagnostic(
+                                code = DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED,
+                                severity = DiagnosticSeverity.INFO,
+                                message = "A text-coupled icon layer is excluded because no sprite atlas could be resolved",
+                                details = identity,
+                            )
+                            continue
+                        }
                         try {
                             drawLayers += compileIconLayer(
                                 layer = layer,
@@ -1449,8 +1468,9 @@ internal class StyleCompiler(
      * The single source of truth for whether a symbol layer's icon geometry is independent of
      * its text: true when the layer has a meaningful `icon-image` and `icon-text-fit` is absent
      * or `none`, so the sprite and `icon-size` alone determine the icon. Shared by
-     * [classifySymbol] (which decides whether to retain the icon) and [layerRequiresSprite]
-     * (which decides whether to fetch the sprite atlas at all) so the two can never drift apart.
+     * [classifySymbol] (which decides whether to retain the icon) and
+     * [layerDesiresSpriteIndependentOfText] (which decides whether the layer merely hopes for a
+     * sprite atlas) so the two can never drift apart.
      */
     private fun retainsIconIndependentOfText(layout: JsonObject): Boolean {
         val icon = layout["icon-image"]
@@ -1460,7 +1480,18 @@ internal class StyleCompiler(
         return iconTextFit == null || iconTextFit == "none"
     }
 
-    private fun layerRequiresSprite(element: JsonElement): Boolean {
+    private fun meaningfulLayoutValue(layout: JsonObject, property: String): Boolean {
+        val value = layout[property]
+        return value != null && !(value is JsonPrimitive && value.isString && value.content.isEmpty())
+    }
+
+    /**
+     * True for a layer that cannot draw anything at all without a sprite atlas: a
+     * background/fill/line pattern, or a symbol layer whose icon has no text to fall back on. An
+     * unresolvable sprite reference must still fail preparation loudly for these, exactly as
+     * before this compatibility profile retained any text-coupled icon.
+     */
+    private fun layerRequiresSpriteUnconditionally(element: JsonElement): Boolean {
         val layer = element as? JsonObject ?: return false
         val layout = layer["layout"] as? JsonObject ?: JsonObject(emptyMap())
         if (layout["visibility"]?.asPrimitive()?.content == "none") return false
@@ -1469,15 +1500,60 @@ internal class StyleCompiler(
             "background" -> "background-pattern" in paint
             "fill" -> "fill-pattern" in paint
             "line" -> "line-pattern" in paint
-            "symbol" -> {
-                val icon = layout["icon-image"]
-                val meaningfulIcon = icon != null && !(icon is JsonPrimitive && icon.isString && icon.content.isEmpty())
-                val text = layout["text-field"]
-                val meaningfulText = text != null && !(text is JsonPrimitive && text.isString && text.content.isEmpty())
-                meaningfulIcon && (!meaningfulText || retainsIconIndependentOfText(layout))
-            }
+            "symbol" -> meaningfulLayoutValue(layout, "icon-image") && !meaningfulLayoutValue(layout, "text-field")
             else -> false
         }
+    }
+
+    /**
+     * True for a symbol layer that would like a sprite atlas only to draw an icon that is also
+     * retained independently of its (meaningful) text. Such a layer did not exist as a retained
+     * construct before this compatibility profile grew this feature, so it must not turn an
+     * unresolvable sprite reference into a preparation failure for a style that used to prepare
+     * fine - it simply falls back to a text-coupled exclusion instead.
+     */
+    private fun layerDesiresSpriteIndependentOfText(element: JsonElement): Boolean {
+        val layer = element as? JsonObject ?: return false
+        if (layer["type"]?.asPrimitive()?.content != "symbol") return false
+        val layout = layer["layout"] as? JsonObject ?: JsonObject(emptyMap())
+        if (layout["visibility"]?.asPrimitive()?.content == "none") return false
+        return meaningfulLayoutValue(layout, "text-field") && retainsIconIndependentOfText(layout)
+    }
+
+    private fun resolveAbsoluteSpriteUrl(spriteReference: String, baseUri: String?): String? = when {
+        spriteReference.startsWith("https://") || spriteReference.startsWith("http://") -> spriteReference
+        baseUri != null -> resolveHttpReference(baseUri, spriteReference)
+        else -> null
+    }
+
+    private suspend fun resolveRequiredSpriteAtlas(
+        root: JsonObject,
+        baseUri: String?,
+        secretContext: SecretContext,
+    ): CompiledSpriteAtlas {
+        val spriteReference = root["sprite"]?.asPrimitive()?.takeIf { it.isString }?.content
+            ?: failUnsupported("A retained pattern or icon layer requires a sprite URL")
+        val resolvedSpriteUrl = resolveAbsoluteSpriteUrl(spriteReference, baseUri)
+            ?: failUnsupported("The sprite URL cannot be resolved against the style base URI")
+        return resolveSprite(secretContext.protectUrl(resolvedSpriteUrl).resolve())
+    }
+
+    /**
+     * Like [resolveRequiredSpriteAtlas], but for a sprite that only a
+     * [layerDesiresSpriteIndependentOfText] layer wants: an absent `sprite` key, a non-primitive
+     * (array-form) sprite, or a relative reference with no base URI to resolve against are all
+     * permanent, deterministic, offline conditions that a style could have carried before this
+     * compatibility profile ever retained such a layer. None of them may fail preparation here;
+     * they simply leave the atlas unresolved so the wanting layers fall back to exclusion.
+     */
+    private suspend fun resolveOptionalSpriteAtlas(
+        root: JsonObject,
+        baseUri: String?,
+        secretContext: SecretContext,
+    ): CompiledSpriteAtlas? {
+        val spriteReference = root["sprite"]?.asPrimitive()?.takeIf { it.isString }?.content ?: return null
+        val resolvedSpriteUrl = resolveAbsoluteSpriteUrl(spriteReference, baseUri) ?: return null
+        return resolveSprite(secretContext.protectUrl(resolvedSpriteUrl).resolve())
     }
 
     private fun validateZoomRange(layer: JsonObject) {
@@ -1540,7 +1616,7 @@ internal class StyleCompiler(
     private fun JsonElement.asPrimitive(): JsonPrimitive? = this as? JsonPrimitive
 
     private companion object {
-        const val RENDERER_SEMANTIC_VERSION = "rentile-renderer-2"
+        const val RENDERER_SEMANTIC_VERSION = "rentile-renderer-3"
         val SUPPORTED_LAYER_TYPES = setOf("background", "fill", "line", "raster", "hillshade")
         val EXCLUDED_ROOT_KEYS = setOf(
             "bearing",

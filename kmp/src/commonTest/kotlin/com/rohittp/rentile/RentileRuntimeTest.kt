@@ -464,6 +464,82 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun aTextBearingIconLayerWithNoSpriteKeyDoesNotFailAStyleThatUsedToPrepare() = runTest {
+        // No "sprite" key at all. Before this fix, a text-bearing icon layer with no
+        // icon-text-fit made the sprite block treat the sprite as unconditionally required, and
+        // an absent sprite failed preparation outright - even though a style shaped exactly like
+        // this prepared fine before this layer could ever be retained. The default (throwing)
+        // transport proves no network resource is requested: the icon layer falls back to
+        // exclusion before any sprite or vector tile fetch is attempted.
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+            assertTrue(output.pngBytes.startsWithPngSignature())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aTextBearingIconLayerWithAnArrayFormSpriteDoesNotFailAStyleThatUsedToPrepare() = runTest {
+        // "sprite" in the style-spec v8 array form ([{id, url}, ...]) rather than a single string.
+        // root["sprite"]?.asPrimitive() is null for a JsonArray, which used to be indistinguishable
+        // from an absent sprite and hit the same unconditional failUnsupported.
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":[{"id":"default","url":"https://sprite.example.test/icons"}],"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+            assertTrue(output.pngBytes.startsWithPngSignature())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aTextBearingIconLayerWithARelativeSpriteAndNoBaseUriDoesNotFailAStyleThatUsedToPrepare() = runTest {
+        // A relative sprite reference with no base URI to resolve it against - the situation for
+        // every StyleInput.InlineJson and StyleInput.Prefetched, since neither carries a base URI
+        // unless the caller supplies one. resolveHttpReference has nothing to resolve against, so
+        // this used to hit the "cannot be resolved against the style base URI" failure.
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"icons/default","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+            assertTrue(output.pngBytes.startsWithPngSignature())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun hiddenLayerDoesNotMakeItsSourceSyntaxReachable() = runTest {
         val rasterizer = testRasterizer()
         try {
