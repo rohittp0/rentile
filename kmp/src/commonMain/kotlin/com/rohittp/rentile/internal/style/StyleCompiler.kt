@@ -245,6 +245,11 @@ internal class StyleCompiler(
                             // Anything else stays loud. A StylePreparationException with no
                             // rejected-construct diagnostic is a malformed style, not a construct
                             // this profile declines to draw, and it propagates exactly as before.
+                            // Nothing but these two classes is reachable: compileIconLayer only
+                            // ever calls resource acquirers, and this compiler's SecretContext is
+                            // registered with the rasterizer only after compilation returns, so no
+                            // lifecycle fault can surface here. Should one ever become reachable it
+                            // must be rethrown, not degraded into an exclusion.
                             val cause = when (error) {
                                 is StylePreparationException ->
                                     error.diagnostics.firstOrNull { it.code == DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT }?.message
@@ -1631,6 +1636,13 @@ internal class StyleCompiler(
      * genuinely *requires* still goes through [resolveRequiredSpriteAtlas] and still fails loudly.
      * `CancellationException` is control flow, not a Rentile failure (ADR 0011), so it is
      * rethrown unwrapped before the degrading catch can see it.
+     *
+     * Catching the whole hierarchy is safe because every failure reachable from here is a resource
+     * failure: [resolveSprite] is a resource acquirer, and the [SecretContext] this compiler builds
+     * is registered with the rasterizer only after compilation returns, so no lifecycle fault
+     * (`RasterizerClosedException` and friends) can surface mid-compile. If a lifecycle or
+     * caller-identity failure ever does become reachable here it must be rethrown rather than
+     * degraded, since handing back a silently icon-less style would hide it.
      */
     private suspend fun resolveOptionalSpriteAtlas(
         root: JsonObject,
