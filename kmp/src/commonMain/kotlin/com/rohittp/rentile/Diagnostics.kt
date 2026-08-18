@@ -34,6 +34,7 @@ public enum class DiagnosticCode {
     ROOT_BEHAVIOR_EXCLUDED,
     UNSUPPORTED_RETAINED_CONSTRUCT,
     ICON_FEATURE_SKIPPED_INVALID_PROPERTY,
+    ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE,
 }
 
 /** Sanitized diagnostic. [details] must never contain secrets or signed URLs. */

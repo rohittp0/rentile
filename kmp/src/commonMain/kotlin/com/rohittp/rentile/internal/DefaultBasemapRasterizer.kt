@@ -246,7 +246,8 @@ private class DefaultBasemapRasterizer(
         val preparedResources = supervisorScope {
             val raster = async { resolveRasterResources(rasterPlan, resourceAccess) }
             val vector = async { resolveVectorResources(vectorPlan, resourceAccess) }
-            PreparedResources(raster.await(), vector.await())
+            val resolvedVector = vector.await()
+            PreparedResources(raster.await(), resolvedVector.resources, resolvedVector.diagnostics)
         }
         val state = buildPreparedBatchState(compiledStyle, stableTiles, options, preparedResources)
         state.diagnostics.filter { it.code == DiagnosticCode.TILE_RESOURCE_SUBSTITUTED }
@@ -288,7 +289,11 @@ private class DefaultBasemapRasterizer(
                 prepared.style,
                 prepared.tiles,
                 prepared.options,
-                PreparedResources(recoveredRaster.resources, recoveredVector.resources),
+                PreparedResources(
+                    recoveredRaster.resources,
+                    recoveredVector.resources,
+                    before.resources.acquisitionDiagnostics,
+                ),
             )
             prepared.replaceState(after)
             (recoveredRaster.upgradedTiles + recoveredVector.upgradedTiles).forEach {
@@ -595,7 +600,45 @@ private class DefaultBasemapRasterizer(
             async { acquireOutcome { vectorAcquirer.acquire(sample, accessMode) } }
         }
         val outcomes = pending.mapValues { (_, deferred) -> deferred.await() }
-        VectorAcquisitionPlan(samplesByTile, outcomes)
+        VectorAcquisitionPlan(samplesByTile, outcomes, bestEffortVectorSourceDigests(style))
+    }
+
+    /**
+     * Vector sources reachable *only* through repaired icon layers - layers this compatibility
+     * profile retained because their text was removed and their icon is independent of it.
+     *
+     * Such a source was fetched exactly never before this profile retained those layers: no fill,
+     * line or author-intended icon layer referenced it, and being an auxiliary *label* source is
+     * not enough, since `render` never acquires those. Adding it to the per-tile fetch set turns
+     * one 404 on an empty POI tile - the commonest tile-server behaviour there is - into a failed
+     * batch, because the default TileSubstitutionPolicy.Disabled makes any acquisition failure
+     * fatal at planning time. Under ResourceAccessMode.CACHE_ONLY every tile fails instead, since
+     * nothing ever warmed a tileset the renderer never used, which breaks offline export outright.
+     *
+     * So these sources are best-effort: if acquiring one fails, the layers that need it are simply
+     * not drawn for that tile. [placeIcons] already tolerates a missing resource, so nothing
+     * downstream needs to change - the gap was only that planning threw first.
+     *
+     * The set is computed from the compiled draw layers rather than guessed at render time, and a
+     * source shared with *any* fill, line, raster, hillshade or author-intended icon layer is
+     * excluded from it, keeping today's strict behaviour exactly for everything else.
+     */
+    private fun bestEffortVectorSourceDigests(style: CompiledPreparedStyle): Set<String> {
+        val repaired = mutableSetOf<String>()
+        val required = mutableSetOf<String>()
+        for (layer in style.drawLayers) {
+            when (layer) {
+                is IconDrawLayer ->
+                    if (layer.retainedIndependentOfText) repaired += layer.source.idDigest
+                    else required += layer.source.idDigest
+                is FillDrawLayer -> required += layer.source.idDigest
+                is LineDrawLayer -> required += layer.source.idDigest
+                is RasterDrawLayer -> required += layer.source.idDigest
+                is HillshadeDrawLayer -> required += layer.source.idDigest
+                else -> Unit
+            }
+        }
+        return repaired - required
     }
 
     private fun validateSubstitutionAllowance(
@@ -652,21 +695,61 @@ private class DefaultBasemapRasterizer(
     private suspend fun resolveVectorResources(
         plan: VectorAcquisitionPlan,
         accessMode: ResourceAccessMode,
-    ): Map<TileId, List<VectorResource>> = supervisorScope {
-        plan.samplesByTile.map { (tile, samples) ->
+    ): VectorResolution = supervisorScope {
+        val resolved = plan.samplesByTile.map { (tile, samples) ->
             tile to samples.map { sample ->
                 async {
                     when (val outcome = plan.outcomesByIdentity.getValue(sample.identity)) {
-                        is AcquisitionOutcome.Success -> outcome.value.forExactSample(sample)
-                        is AcquisitionOutcome.Failure -> substituteVector(
-                            requested = sample,
-                            primaryFailure = outcome.error as ResourceAcquisitionException,
-                            accessMode = accessMode,
-                        )
+                        is AcquisitionOutcome.Success -> VectorResolutionItem(outcome.value.forExactSample(sample))
+                        is AcquisitionOutcome.Failure ->
+                            // A best-effort source never consumes substitution: it must not burn
+                            // the budget and then throw TileSubstitutionException, it just skips.
+                            if (plan.isBestEffort(sample, outcome.error)) {
+                                VectorResolutionItem(
+                                    resource = null,
+                                    diagnostic = iconLayerSourceUnavailableDiagnostic(tile, outcome.error),
+                                )
+                            } else {
+                                VectorResolutionItem(
+                                    substituteVector(
+                                        requested = sample,
+                                        primaryFailure = outcome.error as ResourceAcquisitionException,
+                                        accessMode = accessMode,
+                                    ),
+                                )
+                            }
                     }
                 }
             }.awaitAll()
         }.toMap()
+        VectorResolution(
+            resources = resolved.mapValues { (_, items) -> items.mapNotNull { it.resource } },
+            diagnostics = resolved.values.flatten().mapNotNull { it.diagnostic },
+        )
+    }
+
+    /**
+     * Reported when a vector source reachable only through repaired icon layers could not be
+     * acquired, so those layers draw nothing for this tile and the tile is returned anyway. It
+     * goes to the sink *and* into the batch state, so it reaches `RenderedTile.diagnostics` for a
+     * caller that configured no sink - which is the only way this is observable at all, since the
+     * alternative it replaces was a thrown batch failure nobody could miss.
+     */
+    private fun iconLayerSourceUnavailableDiagnostic(tile: TileId, error: Throwable): RenderDiagnostic {
+        val statusCode = (error as? ResourceAcquisitionException)?.statusCode
+        return RenderDiagnostic(
+            code = DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE,
+            severity = DiagnosticSeverity.WARNING,
+            stage = PipelineStage.RESOURCE_ACQUISITION,
+            message = "A vector source reachable only through repaired icon layers is unavailable, " +
+                "so those layers are skipped for this tile",
+            details = buildMap {
+                put("resourceClass", ResourceClass.VECTOR_TILE.name)
+                (error as? RentileException)?.let { put("causeCode", it.code.name) }
+                statusCode?.let { put("statusCode", it.toString()) }
+            },
+            affectedTiles = listOf(tile),
+        ).also(configuration.diagnosticSink::recordSafely)
     }
 
     private suspend fun substituteRaster(
@@ -902,7 +985,8 @@ private class DefaultBasemapRasterizer(
     ): PreparedBatchState {
         val resourceDiagnostics = (
             resources.raster.values.flatten().flatMap { it.diagnostics } +
-                resources.vector.values.flatten().flatMap { it.diagnostics }
+                resources.vector.values.flatten().flatMap { it.diagnostics } +
+                resources.acquisitionDiagnostics
             ).distinct()
         val substitutions = tiles.mapNotNull { tile ->
             val tileSubstitutions = (
@@ -2445,15 +2529,36 @@ private data class RasterAcquisitionPlan(
 private data class VectorAcquisitionPlan(
     val samplesByTile: Map<TileId, List<VectorTileSample>>,
     val outcomesByIdentity: Map<String, AcquisitionOutcome<VectorResource>>,
+    /** Sources reachable only through repaired icon layers; see `bestEffortVectorSourceDigests`. */
+    val bestEffortSourceDigests: Set<String> = emptySet(),
 ) {
+    /**
+     * A best-effort failure is not a batch failure. Excluding it here is what keeps it out of
+     * `validateSubstitutionAllowance` - so it neither fails the batch under the default
+     * TileSubstitutionPolicy.Disabled nor counts against the substitution budget. Only a typed
+     * [RentileException] degrades; an unexpected Throwable is a bug and still surfaces.
+     */
+    fun isBestEffort(sample: VectorTileSample, error: Throwable): Boolean =
+        error is RentileException && sample.source.idDigest in bestEffortSourceDigests
+
     fun failures(): List<TileAcquisitionFailure> = samplesByTile.flatMap { (tile, samples) ->
         samples.mapNotNull { sample ->
-            (outcomesByIdentity.getValue(sample.identity) as? AcquisitionOutcome.Failure)?.let {
-                TileAcquisitionFailure(tile, it.error)
-            }
+            (outcomesByIdentity.getValue(sample.identity) as? AcquisitionOutcome.Failure)
+                ?.takeUnless { isBestEffort(sample, it.error) }
+                ?.let { TileAcquisitionFailure(tile, it.error) }
         }
     }
 }
+
+private data class VectorResolutionItem(
+    val resource: VectorResource?,
+    val diagnostic: RenderDiagnostic? = null,
+)
+
+private data class VectorResolution(
+    val resources: Map<TileId, List<VectorResource>>,
+    val diagnostics: List<RenderDiagnostic>,
+)
 
 private data class RecoveryItem<T>(
     val resource: T,
@@ -2470,6 +2575,12 @@ private data class ResourceRecovery<T>(
 private data class PreparedResources(
     val raster: Map<TileId, List<RasterResource>>,
     val vector: Map<TileId, List<VectorResource>>,
+    /**
+     * Diagnostics produced while resolving resources that have no surviving resource to hang
+     * themselves on - today, a best-effort vector source that was skipped. Carried on the
+     * resources so `retryExact` can rebuild batch state without losing them.
+     */
+    val acquisitionDiagnostics: List<RenderDiagnostic> = emptyList(),
 ) {
     companion object {
         val Empty: PreparedResources = PreparedResources(emptyMap(), emptyMap())

@@ -11,6 +11,7 @@ final enum class com.rohittp.rentile/DiagnosticCode : kotlin/Enum<com.rohittp.re
     enum entry EXTRUSION_FLATTENED // com.rohittp.rentile/DiagnosticCode.EXTRUSION_FLATTENED|null[0]
     enum entry HIDDEN_LAYER_NO_DRAW // com.rohittp.rentile/DiagnosticCode.HIDDEN_LAYER_NO_DRAW|null[0]
     enum entry ICON_FEATURE_SKIPPED_INVALID_PROPERTY // com.rohittp.rentile/DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY|null[0]
+    enum entry ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE // com.rohittp.rentile/DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE|null[0]
     enum entry RASTER_PASSTHROUGH_USED // com.rohittp.rentile/DiagnosticCode.RASTER_PASSTHROUGH_USED|null[0]
     enum entry RESOURCE_CACHE_HIT // com.rohittp.rentile/DiagnosticCode.RESOURCE_CACHE_HIT|null[0]
     enum entry RESOURCE_CACHE_MISS // com.rohittp.rentile/DiagnosticCode.RESOURCE_CACHE_MISS|null[0]

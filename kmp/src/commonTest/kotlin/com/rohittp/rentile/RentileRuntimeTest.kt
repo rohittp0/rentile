@@ -1116,6 +1116,151 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun aPoiSourceReachableOnlyThroughRepairedIconLayersIsBestEffortWhenItFails() = runTest {
+        // The shape this branch exists to help: a raster basemap plus a separately-sourced vector
+        // POI tileset whose symbol layers all carry text-field. On main that tileset was fetched
+        // never - no fill, line or author-intended icon layer referenced it - so restoring the
+        // icons put it in the render-time fetch set for the first time. One 404 on an empty POI
+        // tile, the commonest tile-server behaviour there is, then failed the whole batch, because
+        // TileSubstitutionPolicy.Disabled is the default and makes any acquisition failure fatal
+        // at planning time. The tile must render without its icons instead.
+        val spritePng = renderSyntheticPng(8)
+        val basemapPng = renderSyntheticPng(256)
+        val recordedDiagnostics = mutableListOf<RenderDiagnostic>()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.RASTER_TILE -> TransportResponse(200, basemapPng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(404, ByteArray(0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+            diagnosticSink = DiagnosticSink { recordedDiagnostics += it },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"base":{"type":"raster","tiles":["https://tiles.example.test/{z}/{x}/{y}.png"],"tileSize":256},"pois":{"type":"vector","tiles":["https://pois.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"raster","source":"base"},{"id":"poi","type":"symbol","source":"pois","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED })
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+
+            assertTrue(output.pngBytes.startsWithPngSignature())
+            val skipped = output.diagnostics.single { it.code == DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE }
+            assertEquals(DiagnosticSeverity.WARNING, skipped.severity)
+            assertEquals(PipelineStage.RESOURCE_ACQUISITION, skipped.stage)
+            assertEquals("404", skipped.details["statusCode"])
+            assertEquals("RESOURCE_ACQUISITION_FAILED", skipped.details["causeCode"])
+            // Also reaches a configured sink, and never burns the substitution budget on the way.
+            assertTrue(recordedDiagnostics.any { it.code == DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE })
+            assertTrue(output.diagnostics.none { it.code == DiagnosticCode.TILE_RESOURCE_SUBSTITUTED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aPoiSourceReachableOnlyThroughRepairedIconLayersIsBestEffortInCacheOnlyMode() = runTest {
+        // The offline-export case, and the worse one: under CACHE_ONLY every tile failed, because
+        // nothing ever warmed a tileset the renderer never used before this branch. The acquirer
+        // throws "Vector resource is unavailable in cache-only mode" rather than a transport
+        // error, so the fix has to key on which source failed, not on how it failed. The raster
+        // basemap is pre-warmed by a NORMAL render first, exactly as an offline export would.
+        val spritePng = renderSyntheticPng(8)
+        val basemapPng = renderSyntheticPng(256)
+        val store = InMemoryRawResourceStore()
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { request ->
+                    when (request.resourceClass) {
+                        ResourceClass.SPRITE_JSON -> TransportResponse(
+                            200,
+                            """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                        )
+                        ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                        ResourceClass.RASTER_TILE -> TransportResponse(200, basemapPng)
+                        // Warming never stores the POI tileset, which is the whole point.
+                        ResourceClass.VECTOR_TILE -> TransportResponse(404, ByteArray(0))
+                        else -> error("Unexpected resource class ${request.resourceClass}")
+                    }
+                },
+                rawResourceStore = store,
+            ),
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"base":{"type":"raster","tiles":["https://tiles.example.test/{z}/{x}/{y}.png"],"tileSize":256},"pois":{"type":"vector","tiles":["https://pois.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"raster","source":"base"},{"id":"poi","type":"symbol","source":"pois","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            // An offline export warms what it can first; the POI tileset 404s and is skipped, so
+            // nothing about it ever reaches the store.
+            rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256))
+
+            val output = rasterizer.render(
+                style,
+                listOf(TileId(0, 0, 0)),
+                RenderOptions(256),
+                ResourceAccessMode.CACHE_ONLY,
+            ).tiles.single()
+
+            assertTrue(output.pngBytes.startsWithPngSignature())
+            val skipped = output.diagnostics.single { it.code == DiagnosticCode.ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE }
+            assertEquals("RESOURCE_ACQUISITION_FAILED", skipped.details["causeCode"])
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aVectorSourceSharedWithAFillLayerStillFailsTheBatchOnTheSame404() = runTest {
+        // The over-reach guard. The same 404, but the POI tileset also backs a fill layer, so it
+        // is not reachable only through repaired icon layers and keeps today's strict behaviour
+        // exactly: the batch fails rather than quietly dropping a fill nobody asked to be
+        // best-effort.
+        val spritePng = renderSyntheticPng(8)
+        val basemapPng = renderSyntheticPng(256)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.RASTER_TILE -> TransportResponse(200, basemapPng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(404, ByteArray(0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"base":{"type":"raster","tiles":["https://tiles.example.test/{z}/{x}/{y}.png"],"tileSize":256},"pois":{"type":"vector","tiles":["https://pois.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"raster","source":"base"},{"id":"land","type":"fill","source":"pois","source-layer":"land","paint":{"fill-color":"#00ff00"}},{"id":"poi","type":"symbol","source":"pois","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertFailsWith<ResourceAcquisitionException> {
+                rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256))
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun hiddenLayerDoesNotMakeItsSourceSyntaxReachable() = runTest {
         val rasterizer = testRasterizer()
         try {
