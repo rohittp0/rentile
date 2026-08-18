@@ -343,6 +343,38 @@ pre { margin: 0; padding: 26px; overflow-x: auto; font-size: 0.82rem; line-heigh
 .feature-card h3 { margin: 44px 0 12px; font-size: 1.35rem; letter-spacing: -0.035em; }
 .feature-card p { margin: 0; color: var(--ink-soft); }
 
+.output-section { border-top: 1px solid var(--line); }
+.render-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+.render-card {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.render-card img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
+  background: var(--code);
+}
+.render-card figcaption { padding: 26px; }
+.render-card h3 {
+  margin: 0 0 9px;
+  color: var(--forest-deep);
+  font-size: 1.35rem;
+  letter-spacing: -0.035em;
+}
+.render-card p { margin: 0; color: var(--ink-soft); font-size: 0.92rem; }
+.render-actions { margin-top: 28px; }
+
 .steps-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -499,6 +531,53 @@ tbody tr:last-child td { border-bottom: 0; }
 .exception-grid { margin: 26px 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .exception-grid code { padding: 12px 14px; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 10px; color: var(--forest); background: var(--surface); }
 
+.process-summary { margin-top: 34px; }
+.process-summary strong { display: block; margin-bottom: 7px; color: var(--forest-deep); }
+.tile-coordinate-grid {
+  margin: 28px 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.tile-coordinate-grid code {
+  padding: 15px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--forest);
+  background: var(--surface);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+}
+.process-output-grid { margin-top: 28px; gap: 12px; }
+.process-output-grid .render-card { border-radius: 16px; box-shadow: none; }
+.process-output-grid .render-card figcaption { padding: 16px; }
+.process-output-grid .render-card h3 { font-size: 1rem; }
+.mosaic-figure { margin: 30px 0; }
+.mosaic-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--code);
+  box-shadow: var(--shadow);
+}
+.mosaic-frame img { display: block; width: 100%; height: auto; }
+.mosaic-grid-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  pointer-events: none;
+}
+.mosaic-grid-overlay i { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.78); }
+.mosaic-figure figcaption {
+  margin-top: 12px;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+
 .companion-note {
   margin-top: 50px;
   padding: 38px;
@@ -539,7 +618,7 @@ tbody tr:last-child td { border-bottom: 0; }
   .pipeline-content { padding: 30px; }
   .platform-row { min-height: 70px; }
   .section { padding-block: 78px; }
-  .feature-grid, .ownership-grid, .two-column-list, .exception-grid, .steps-grid, .project-grid { grid-template-columns: 1fr; }
+  .feature-grid, .ownership-grid, .two-column-list, .exception-grid, .steps-grid, .project-grid, .render-grid { grid-template-columns: 1fr; }
   .feature-card { min-height: 220px; }
   .project-card { min-height: 250px; }
   .contract-section { padding-block: 88px; }
@@ -549,6 +628,7 @@ tbody tr:last-child td { border-bottom: 0; }
   .docs-header h1 { font-size: 3.2rem; }
   .doc-section { padding: 58px 0; }
   .companion-note { padding: 30px; }
+  .tile-coordinate-grid code { padding-inline: 3px; font-size: 0.62rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
