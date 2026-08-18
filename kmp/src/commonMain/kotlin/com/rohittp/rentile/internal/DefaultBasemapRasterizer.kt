@@ -1763,12 +1763,22 @@ private class DefaultBasemapRasterizer(
             // those features. Only the count can tell the two apart. See the escalation below.
             var candidateFeatures = 0
             var skippedFeatures = 0
+            var skippedMissingSprite = 0
             for ((featureIndex, feature) in sourceLayer.features.withIndex()) {
                 val baseContext = featureContext(tile, feature).copy(imageAvailable = atlas.entries::containsKey)
                 if (!layer.filter.matches(baseContext)) continue
                 val imageName = evaluateIconImageName(layer.image.evaluate(baseContext), feature) ?: continue
-                val sprite = sprites.image(imageName) ?: continue
+                // A feature that named an icon is a candidate from here on. Counting it only after
+                // the atlas lookup made a repaired layer whose every feature names a sprite the
+                // atlas lacks report zero candidates, zero skips, and no diagnostic at all - a
+                // whole-layer loss reported as nothing, in exactly the area this counting closes.
                 candidateFeatures++
+                val sprite = sprites.image(imageName)
+                if (sprite == null) {
+                    skippedFeatures++
+                    skippedMissingSprite++
+                    continue
+                }
                 // A repaired layer (retained only because its text was removed and its icon does
                 // not depend on it) was never validated as a retained construct before this
                 // compatibility profile grew that feature: one feature's data-driven property
@@ -1842,7 +1852,10 @@ private class DefaultBasemapRasterizer(
                     skippedFeatures++
                 }
             }
-            if (skippedFeatures > 0) {
+            // An author-intended icon layer keeps its long-standing silence about a sprite name
+            // the atlas lacks; only a repaired layer reports, and only it can reach the catch that
+            // increments skippedFeatures for an invalid property.
+            if (layer.retainedIndependentOfText && skippedFeatures > 0) {
                 // A constant invalid value - icon-halo-width: -1, symbol-spacing: 0,
                 // icon-size: "big" - throws identically for every feature, and nothing validates
                 // it at prepare time, so the layer draws nothing at all while preparation reports
@@ -1864,16 +1877,19 @@ private class DefaultBasemapRasterizer(
                     severity = DiagnosticSeverity.WARNING,
                     stage = PipelineStage.RASTERIZATION,
                     message = if (everyCandidateSkipped) {
-                        "A repaired icon layer drew none of its candidate features because every one of " +
-                            "them failed to evaluate an icon property, which is a whole-layer authoring error"
+                        "A repaired icon layer drew none of its candidate features, which is a " +
+                            "whole-layer authoring error rather than bad data on one feature"
                     } else {
-                        "A repaired icon layer skipped one or more features whose properties " +
-                            "failed to evaluate rather than failing the tile"
+                        "A repaired icon layer skipped one or more features it could not draw " +
+                            "rather than failing the tile"
                     },
                     details = mapOf(
                         "layerIndex" to layer.layerOrder.toString(),
                         "candidateFeatures" to candidateFeatures.toString(),
                         "skippedFeatures" to skippedFeatures.toString(),
+                        // How many of those skips were a sprite name the atlas lacks rather than a
+                        // property that would not evaluate, so the code's name stays readable.
+                        "skippedMissingSprite" to skippedMissingSprite.toString(),
                     ),
                     affectedTiles = listOf(tile),
                 )

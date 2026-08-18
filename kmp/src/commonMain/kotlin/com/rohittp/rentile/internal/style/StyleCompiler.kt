@@ -1660,8 +1660,11 @@ internal class StyleCompiler(
      *
      * The same applies once the reference *does* resolve. Fetching it is new work that no style
      * paid for before such a layer could be retained, so every way that fetch can fail - a 401,
-     * 403 or 404, a transport timeout, sprite JSON that will not decode, a sprite image over its
-     * byte limit - must leave the atlas unresolved too, not fail preparation. That is why the
+     * 403 or 404, a transport error the acquirer wraps, sprite JSON that will not decode, a sprite
+     * image over its byte limit - must leave the atlas unresolved too, not fail preparation. A
+     * caller-imposed deadline is not one of these: `withTimeout` raises
+     * `TimeoutCancellationException`, which is a `CancellationException` and is rethrown below, so
+     * it still fails preparation. That is why the
      * catch is the whole [RentileException] hierarchy rather than [StylePreparationException]
      * alone: [resolveSprite] throws `ResourceAcquisitionException`, `ResourceDecodeException` or
      * `SafetyLimitException`, none of which are `StylePreparationException`. A sprite a layer

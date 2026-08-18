@@ -542,11 +542,14 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun aTextOptionalLayerIsStillRetainedAndStillRequiresItsSprite() = runTest {
-        // The other half of the same rule. Withholding leniency must not withhold retention: this
-        // layer still reports TEXT_COMPONENT_REMOVED_ICON_RETAINED and still fetches its atlas.
-        // And because it was already on the strict path, an atlas it cannot resolve must still
-        // fail preparation loudly rather than quietly dropping the icon the author asked for.
+    fun aTextOptionalLayerIsRetainedAndKeepsTheStrictRenderPath() = runTest {
+        // Withholding leniency must not withhold retention: the layer still reports
+        // TEXT_COMPONENT_REMOVED_ICON_RETAINED and still fetches its atlas. Those two assertions
+        // alone hold whether the layer is treated as repaired or strict, so the load-bearing one
+        // is the last: icon-halo-width: -1 is a constant every feature trips on, and a repaired
+        // layer would skip those features and return a tile. This layer was already on the strict
+        // path before this profile grew the icon-text-fit rule, so it must still fail the tile.
+        val mvt = iconOffsetVectorTile()
         val spritePng = renderSyntheticPng(8)
         val requestedClasses = mutableListOf<ResourceClass>()
         val requestedClassesMutex = Mutex()
@@ -559,6 +562,7 @@ class RentileRuntimeTest {
                         """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
                     )
                     ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(200, mvt)
                     else -> error("Unexpected resource class ${request.resourceClass}")
                 }
             },
@@ -566,16 +570,17 @@ class RentileRuntimeTest {
         try {
             val style = rasterizer.prepare(
                 StyleInput.InlineJson(
-                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"],"text-optional":true}}]}""",
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"],"text-optional":true},"paint":{"icon-halo-width":-1}}]}""",
                 ),
             )
+            val classesAfterPrepare = requestedClassesMutex.withLock { requestedClasses.toSet() }
 
             assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED })
             assertTrue(style.diagnostics.none { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
-            assertEquals(
-                setOf(ResourceClass.SPRITE_JSON, ResourceClass.SPRITE_IMAGE),
-                requestedClassesMutex.withLock { requestedClasses.toSet() },
-            )
+            assertEquals(setOf(ResourceClass.SPRITE_JSON, ResourceClass.SPRITE_IMAGE), classesAfterPrepare)
+            assertFailsWith<RasterizationException> {
+                rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256))
+            }
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -1016,6 +1021,12 @@ class RentileRuntimeTest {
             assertEquals(DiagnosticSeverity.WARNING, skipped.severity)
             assertEquals("4", skipped.details["candidateFeatures"])
             assertEquals("3", skipped.details["skippedFeatures"])
+            assertEquals("0", skipped.details["skippedMissingSprite"])
+            // Collapsing the two message branches into one string would otherwise go unnoticed.
+            assertEquals(
+                "A repaired icon layer skipped one or more features it could not draw rather than failing the tile",
+                skipped.message,
+            )
             assertEquals(
                 1,
                 output.diagnostics.count { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY },
@@ -1079,8 +1090,55 @@ class RentileRuntimeTest {
             // is what distinguishes this case now that severity does not.
             assertEquals(skipped.details["candidateFeatures"], skipped.details["skippedFeatures"])
             assertEquals("2", skipped.details["candidateFeatures"])
+            assertEquals("0", skipped.details["skippedMissingSprite"])
+            assertEquals(
+                "A repaired icon layer drew none of its candidate features, which is a whole-layer " +
+                    "authoring error rather than bad data on one feature",
+                skipped.message,
+            )
             // No render-stage diagnostic may claim the operation failed when it did not.
             assertTrue(output.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aRepairedIconLayerWhoseSpriteNameIsMissingFromTheAtlasReportsTheWholeLayerLoss() = runTest {
+        // Every feature names an icon the atlas does not contain, so nothing draws. Counting
+        // candidates only after the atlas lookup used to report zero candidates, zero skips and no
+        // diagnostic at all - a whole-layer loss that showed up as nothing. skippedMissingSprite
+        // keeps this distinguishable from a property that would not evaluate.
+        val mvt = iconOffsetVectorTile()
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(200, mvt)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"not-in-atlas","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+
+            assertTrue(output.pngBytes.startsWithPngSignature())
+            val skipped = output.diagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY }
+            assertEquals("2", skipped.details["candidateFeatures"])
+            assertEquals("2", skipped.details["skippedFeatures"])
+            assertEquals("2", skipped.details["skippedMissingSprite"])
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
