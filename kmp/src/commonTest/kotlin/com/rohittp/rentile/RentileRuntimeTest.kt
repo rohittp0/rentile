@@ -1586,6 +1586,98 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun oneBatchSpanningTwoZoomsClassifiesEachTileAtItsOwnZoom() = runTest {
+        // Every other multi-tile batch in this suite is single-zoom, and the zoom tests above use
+        // single-tile batches, so nothing caught a lookup hoisted out of the per-tile loop -
+        // flattening every zoom, or keying on the batch's first zoom, passed the whole suite.
+        //
+        // Source "v" backs a minzoom:14 fill and a repaired POI symbol layer, and 404s for both
+        // tiles in one batch. At z=14 the fill is active, so "v" is required and that failure must
+        // surface; at z=10 nothing else wants it, so that failure must degrade. Exactly one
+        // failure therefore survives filtering, which is why this throws a plain
+        // ResourceAcquisitionException naming only the z=14 tile: flattening the zooms would leave
+        // two failures and raise BatchRenderException instead, and keying on the first zoom would
+        // leave none and not throw at all.
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(404, ByteArray(0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://v.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"buildings","type":"fill","source":"v","source-layer":"buildings","minzoom":14,"paint":{"fill-color":"#cccccc"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            val error = assertFailsWith<ResourceAcquisitionException> {
+                rasterizer.prepareBatch(
+                    style = style,
+                    tiles = listOf(TileId(10, 0, 0), TileId(14, 0, 0)),
+                    options = RenderOptions(256),
+                )
+            }
+
+            // Only the zoom whose fill is active failed; the z=10 tile's identical 404 degraded.
+            assertEquals(listOf(TileId(14, 0, 0)), error.affectedTiles)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aFailingResourceStoreSurfacesRatherThanDegradingABestEffortSource() = runTest {
+        // The narrowed degradable set excludes ResourceStoreException, and nothing pinned that
+        // because the only store in this suite never throws - reverting the predicate to the whole
+        // RentileException hierarchy passed everything. A cache read that fails is the caller's own
+        // store misbehaving, not a tile that is missing, so it must surface rather than hide behind
+        // absent icons. Only VECTOR_TILE reads fail here, so the sprite still resolves and the icon
+        // layer really is retained and really is best-effort.
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { request ->
+                    when (request.resourceClass) {
+                        ResourceClass.SPRITE_JSON -> TransportResponse(
+                            200,
+                            """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                        )
+                        ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                        ResourceClass.VECTOR_TILE -> TransportResponse(200, ByteArray(0))
+                        else -> error("Unexpected resource class ${request.resourceClass}")
+                    }
+                },
+                rawResourceStore = FailingReadRawResourceStore(ResourceClass.VECTOR_TILE),
+            ),
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"pois":{"type":"vector","tiles":["https://pois.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"pois","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED })
+
+            assertFailsWith<ResourceStoreException> {
+                rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256))
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun hiddenLayerDoesNotMakeItsSourceSyntaxReachable() = runTest {
         val rasterizer = testRasterizer()
         try {
@@ -2823,6 +2915,20 @@ class RentileRuntimeTest {
             surface.close()
         }
     }
+}
+
+/** Fails every read for one resource class, so the acquirer raises ResourceStoreException. */
+private class FailingReadRawResourceStore(private val failingClass: ResourceClass) : RawResourceStore {
+    private val delegate = InMemoryRawResourceStore()
+
+    override suspend fun read(key: RawResourceKey): StoredRawResource? {
+        if (key.resourceClass == failingClass) error("Simulated raw cache read failure")
+        return delegate.read(key)
+    }
+
+    override suspend fun write(key: RawResourceKey, resource: StoredRawResource) = delegate.write(key, resource)
+
+    override suspend fun remove(key: RawResourceKey) = delegate.remove(key)
 }
 
 private class InMemoryRawResourceStore : RawResourceStore {

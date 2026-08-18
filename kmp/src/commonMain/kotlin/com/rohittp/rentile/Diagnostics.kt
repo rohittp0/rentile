@@ -46,10 +46,15 @@ public enum class DiagnosticCode {
      * atlas does not contain. `details` carries the discriminator: `candidateFeatures` is how many
      * features wanted an icon, `skippedFeatures` how many of those drew nothing, and
      * `skippedMissingSprite` how many of *those* were a missing sprite name - so the
-     * invalid-property count is `skippedFeatures` minus `skippedMissingSprite`, and
-     * `skippedFeatures == candidateFeatures` means the layer lost everything, which is a
-     * whole-layer authoring error rather than bad data on one feature. `layerIndex` locates the
-     * layer in the compiled style.
+     * invalid-property count is `skippedFeatures` minus `skippedMissingSprite`. `layerIndex`
+     * locates the layer in the compiled style.
+     *
+     * All of these counts describe **this tile only**. `skippedFeatures == candidateFeatures`
+     * means the layer drew none of the features that wanted an icon on this tile; it does not
+     * mean the style is broken. The cause is frequently tile-dependent - a data-driven
+     * `icon-image` resolving to a sprite name the atlas lacks for the features on this tile is the
+     * common case - so the same layer can lose everything here and draw normally on the next tile.
+     * Alerting on equal counts alone will fire on healthy tiles; compare across tiles first.
      *
      * Always a WARNING. Nothing failed: preparation succeeded and the tile rendered.
      */
@@ -63,7 +68,10 @@ public enum class DiagnosticCode {
      * a feature in it being undrawable. Such a source was never fetched before this compatibility
      * profile retained those layers, so a failure on it must not fail the batch - it also never
      * consumes tile substitution. `details` carries `resourceClass`, the `causeCode` naming the
-     * typed failure, and `statusCode` when the failure was an HTTP response.
+     * typed failure, `statusCode` when the failure was an HTTP response, and two redacted digests
+     * identifying what was lost: `sourceIdDigest`, which is stable across tiles and says which
+     * source it was, and `resourceId`, which is per-sample and therefore distinguishes two sources
+     * failing identically on the same tile. Neither is a URL.
      */
     ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE,
 }
