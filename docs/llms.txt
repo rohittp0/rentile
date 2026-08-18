@@ -6,6 +6,7 @@ Rentile is a headless Kotlin Multiplatform dependency that prepares supported ma
 
 - Home: https://rohittp.com/rentile/
 - KMP reference: https://rohittp.com/rentile/kmp.html
+- Rendering process: https://rohittp.com/rentile/rendering.html
 - Source: https://github.com/rohittp0/rentile
 - Architecture decisions: https://github.com/rohittp0/rentile/tree/main/docs/adr
 

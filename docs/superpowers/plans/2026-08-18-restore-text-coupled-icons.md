@@ -10,13 +10,15 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-18-label-candidates-design.md` (section "Release sequence", item 1)
 
+> **Outcome — shipped as `0.2.0` on 2026-08-19.** The plan's two tasks became seven implementer rounds and five reviews. The premise that a retained icon is "fully computable without the text" held geometrically but not in practice: these layers had never been compiled, and making them reachable exposed unsupported constructs, an unfetched sprite, an unfetched source, and an unfetched render-time tileset, each of which had to degrade rather than fail. Measured benefit across the rolling corpus is one style gaining its markers, with zero regressions; the larger value is a duplicated classification rule deleted and a cache-invalidation defect caught before publication. See [ADR 0026](../../adr/0026-repaired-layers-degrade-and-author-intended-layers-fail.md).
+
 ## Global Constraints
 
 - This is release 1 of 2 and ships **alone**. Do not begin any Label Candidate work in this plan.
 - `DiagnosticCode` is public ABI. Do not remove or reorder any enum entry. `TEXT_COUPLED_ICON_LAYER_EXCLUDED` keeps its entry and keeps firing, only for a narrower case.
 - No new public API symbol. `./gradlew :kmp:checkKotlinAbi` must pass with the committed dump unchanged.
 - This changes rendered output for 21 of 34 rolling-corpus styles (419 affected layers, measured 2026-08-18). That is the point of the release, and it is why nothing else may ride along.
-- Release is a patch. Do not touch `VERSION_NAME`; the R2 version line advances the patch component automatically (ADR 0023).
+- ~~Release is a patch. Do not touch `VERSION_NAME`.~~ **Superseded during execution:** the work required two new public `DiagnosticCode` entries, and appending to a public Kotlin enum is source-incompatible for a consumer with an exhaustive `when`, so this shipped as the minor `0.2.0` with `VERSION_NAME` set deliberately (ADR 0023).
 
 ---
 
@@ -223,10 +225,10 @@ Open `build/reports/rentile-corpus-iconfix/index.html` and compare the contact s
 - [ ] **Step 4: Push and let the release gates run**
 
 ```bash
-git push -u origin HEAD
+git checkout main && git merge --ff-only fix/text-coupled-icons && git push origin main
 ```
 
-The publish workflow runs the same corpus gate plus the platform gates and advances the patch component of the R2 version line. Watch it:
+Pushing the feature branch publishes nothing: `publish.yml` triggers only on `push: branches: [main]`, with `paths-ignore` for `docs/**`, `**/*.md` and `LICENSE`. Merging to `main` is what releases. Watch it:
 
 ```bash
 gh run list --repo rohittp0/rentile --workflow publish.yml --limit 1

@@ -233,13 +233,14 @@ Unit coverage: determinism over repeated runs, buffer-duplicate rejection, the s
 
 Two releases, in order.
 
-1. **Icon restoration.** `TEXT_COUPLED_ICON_LAYER_EXCLUDED` currently drops the icon along with the text and has no test. Restore the icon, pin it with a test, re-run the corpus gate, release alone.
-2. **Label Candidates.** Purely additive. `VERSION_NAME` in the root `gradle.properties` must be set above every published version to cut a minor; the default patch-advance will not do it (ADR 0023).
+1. **Icon restoration — shipped as `0.2.0` on 2026-08-19.** Retaining the icon turned out to require far more than restoring it: these layers had never been compiled, so making them reachable exposed unsupported constructs, an unfetched sprite, an unfetched vector source, and an unfetched render-time tileset, each of which had to degrade rather than fail a style that previously worked. It became a minor rather than a patch because the degraded paths need two new public `DiagnosticCode` entries. See [ADR 0026](../../adr/0026-repaired-layers-degrade-and-author-intended-layers-fail.md).
+2. **Label Candidates.** Purely additive. `VERSION_NAME` in the root `gradle.properties` must be set above every published version to cut a minor; the default patch-advance will not do it (ADR 0023). With `0.2.0` published, that is **`0.3.0`** — not the `0.1.6` the originating RenG handoff assumed.
 
 ## Documentation
 
 - ADR 0024 — label placement belongs to the consumer.
 - ADR 0025 — lay out labels from glyph metrics.
+- ADR 0026 — repaired layers degrade and author-intended layers fail (written during release 1).
 - `CONTEXT.md` — `Label`, `Label Candidate`, `Label Candidate Batch`, `Glyph Range`; `Raw Resource` extended to admit glyph bytes; `Profile-Complete Rendering` extended to preparation; three flagged ambiguities.
 - `Api.kt:306` — the `labelLayerDescriptors` KDoc claims "visible text-symbol layers" but returns only place-name layers. Correct it.
 - `instructions.md` — the "do not route labels through Rentile" guidance predates the shipped place-name seam. Reconcile it.

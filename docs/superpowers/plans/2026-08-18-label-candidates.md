@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **Additive only.** No change to `prepare`, `prepareBatch`, `render`, `RenderedTile`, or existing tile output. A consumer that never calls the new API must see no behaviour change, no new required configuration, and no new network traffic.
-- **Release 1 must be published first.** `docs/superpowers/plans/2026-08-18-restore-text-coupled-icons.md` ships alone before this plan starts.
+- **Release 1 must be published first.** Satisfied: it shipped as `0.2.0` on 2026-08-19. Read [ADR 0026](../../adr/0026-repaired-layers-degrade-and-author-intended-layers-fail.md) before starting — it governs how a layer retained by repair fails, and label work touches the same symbol-layer classification.
 - **Scope is place names only.** `PLACE_NAME_SOURCE_LAYERS` in `CompiledStyle.kt:134` remains the gate. Road, POI, water, terrain and protected-area naming stays out.
 - **No platform text shaping.** Do not import `org.jetbrains.skia.Font`, `Typeface`, `TextLine`, `TextBlob`, `shaper.*` or `paragraph.*`. ADR 0025 explains why they are deliberately unused.
 - **Every byte through the injected adapters.** `ResourceTransport` and `RawResourceStore` only. No new dependency, no direct HTTP.
@@ -21,7 +21,7 @@
 - **Cancellation.** `CancellationException` is caught and rethrown unwrapped before any generic `Throwable` handler, as `SpriteResourceAcquirer.kt:110-112` does.
 - **Determinism.** Two runs over the same style and tiles must produce identical candidates in identical order. Content keys derive from the glyph set and content digests, never from encoded PNG bytes — ADR 0010 measures determinism on decoded pixels, not compressed bytes.
 - **ABI.** `./gradlew :kmp:checkKotlinAbi` gates every release. Regenerate the dump with `./gradlew :kmp:updateKotlinAbi` only in the tasks that add public API, and review the diff.
-- **Release is a minor.** Set `VERSION_NAME` in the root `gradle.properties` above every published version. The default patch advance will not cut a minor (ADR 0023).
+- **Release is a minor.** Set `VERSION_NAME` in the root `gradle.properties` above every published version. With `0.2.0` published that is `0.3.0`; the default patch advance will not cut a minor (ADR 0023).
 
 ---
 

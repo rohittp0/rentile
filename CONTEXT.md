@@ -56,6 +56,10 @@ _Avoid_: Font file, glyph page, character set
 The immutable result of one Label acquisition: its Label Candidates, the glyph atlas they reference, and the content key identifying the acquired glyph and vector bytes.
 _Avoid_: Prepared Batch, render result, label tile
 
+**Repaired Layer**:
+A symbol layer retained only because the compatibility profile removed its text and its icon's geometry does not depend on that text, as opposed to one the style author declared as an icon layer.
+_Avoid_: Retained layer, text-coupled layer, degraded layer
+
 **Profile-Complete Rendering**:
 Successful rendering of every current rolling-corpus style at every supported output zoom, plus successful Label preparation for the corpus geographies chosen to exercise script coverage, after applying the compatibility profile's deliberate transformations and exclusions.
 _Avoid_: Unmodified style parity, zoom-zero smoke success
@@ -94,5 +98,6 @@ Public documentation and the Maven POM project URL use `https://rohittp.com/rent
 - Widening **Label** past place names is a deliberate future option, not an oversight. It would mean admitting source layers a v3 host never drew, and line-placed text needs layout that point-placed place names do not, so it is a scope decision to take explicitly rather than a gap to close incidentally.
 - A **Label Candidate Batch** is not a **Prepared Batch**. Which Glyph Ranges a tile set needs depends on decoded feature properties, so its closure cannot be frozen before acquisition and it does not satisfy **Resource Closure** as defined above. Labels therefore cannot be folded into `prepareBatch`, and the inconsistency is deliberate rather than an omission to repair.
 - Three keys serve three distinct questions and none substitutes for another: a request key answers "must I fetch?" before any network, a **Label Candidate Batch** content key answers "are my cached candidates still valid?" after acquisition, and the glyph atlas content key answers "must I re-upload the texture?".
+- A **Repaired Layer** and an author-declared icon layer look alike in a style document but do not fail alike: the first degrades with a diagnostic, the second fails loudly. `text-optional: true` marks the author's intent and therefore selects the strict path. See [ADR 0026](docs/adr/0026-repaired-layers-degrade-and-author-intended-layers-fail.md).
 - `instructions.md` tells Travel Animator not to route labels through Rentile. That predates the place-name seam Rentile now ships and is narrower than current behaviour; the guidance means Rentile does not *draw* labels, not that it prepares nothing.
 
