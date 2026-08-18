@@ -1496,7 +1496,17 @@ internal class StyleCompiler(
                 message = "Text is removed and the icon is retained independently",
                 details = identity,
             )
-            return SymbolClassification(true, diagnostic, retainedIndependentOfText = true)
+            // `text-optional: true` is the style author explicitly declaring that this icon
+            // stands alone, so this profile already retained the layer and already compiled it
+            // through the strict path before it grew the icon-text-fit rule: an unsupported
+            // construct in it failed preparation loudly, and an unresolvable sprite did too.
+            // Such a layer is author-intended, not newly reachable, so it keeps the strict path.
+            // Only the leniency is withheld - the layer is still retained either way.
+            return SymbolClassification(
+                retained = true,
+                diagnostic = diagnostic,
+                retainedIndependentOfText = !authorDeclaredTextOptional(layout),
+            )
         }
         return SymbolClassification(false, diagnostic(
             code = DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED,
@@ -1534,9 +1544,10 @@ internal class StyleCompiler(
 
     /**
      * True for a layer that cannot draw anything at all without a sprite atlas: a
-     * background/fill/line pattern, or a symbol layer whose icon has no text to fall back on. An
-     * unresolvable sprite reference must still fail preparation loudly for these, exactly as
-     * before this compatibility profile retained any text-coupled icon.
+     * background/fill/line pattern, or a symbol layer whose icon this profile was already
+     * drawing - one with no meaningful text, or one whose author declared the text optional. An
+     * unresolvable sprite reference must still fail preparation loudly for all of these, exactly
+     * as it did before this profile retained any icon coupled to required text.
      */
     private fun layerRequiresSpriteUnconditionally(element: JsonElement): Boolean {
         val layer = element as? JsonObject ?: return false
@@ -1547,10 +1558,22 @@ internal class StyleCompiler(
             "background" -> "background-pattern" in paint
             "fill" -> "fill-pattern" in paint
             "line" -> "line-pattern" in paint
-            "symbol" -> meaningfulLayoutValue(layout, "icon-image") && !meaningfulLayoutValue(layout, "text-field")
+            "symbol" -> meaningfulLayoutValue(layout, "icon-image") &&
+                (!meaningfulLayoutValue(layout, "text-field") || authorDeclaredTextOptional(layout))
             else -> false
         }
     }
+
+    /**
+     * True when the style author wrote `text-optional: true`, explicitly declaring that this
+     * layer's icon stands alone. Such a layer was already retained, already compiled through the
+     * strict path, and already required its sprite atlas before this profile grew the
+     * `icon-text-fit` rule, so it must keep every one of those behaviours - it is author-intended
+     * rather than newly reachable, and the leniency this profile grants a newly reachable layer
+     * would silently drop its icon instead of reporting the authoring error.
+     */
+    private fun authorDeclaredTextOptional(layout: JsonObject): Boolean =
+        layout["text-optional"]?.asPrimitive()?.booleanOrNull == true
 
     /**
      * True for a symbol layer that would like a sprite atlas only to draw an icon that is also
@@ -1558,12 +1581,17 @@ internal class StyleCompiler(
      * construct before this compatibility profile grew this feature, so it must not turn an
      * unresolvable sprite reference into a preparation failure for a style that used to prepare
      * fine - it simply falls back to a text-coupled exclusion instead.
+     *
+     * An author-declared `text-optional: true` layer is deliberately not one of these: it was
+     * already retained and already required its atlas, so it stays in
+     * [layerRequiresSpriteUnconditionally] instead of losing its icon quietly here.
      */
     private fun layerDesiresSpriteIndependentOfText(element: JsonElement): Boolean {
         val layer = element as? JsonObject ?: return false
         if (layer["type"]?.asPrimitive()?.content != "symbol") return false
         val layout = layer["layout"] as? JsonObject ?: JsonObject(emptyMap())
         if (layout["visibility"]?.asPrimitive()?.content == "none") return false
+        if (authorDeclaredTextOptional(layout)) return false
         return meaningfulLayoutValue(layout, "text-field") && retainsIconIndependentOfText(layout)
     }
 

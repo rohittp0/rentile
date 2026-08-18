@@ -501,6 +501,106 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun aTextOptionalLayerWithAnUnsupportedConstructStillFailsPreparation() = runTest {
+        // text-optional: true is the author declaring that the icon stands alone, so this profile
+        // was already retaining this layer and already compiling it through the strict path before
+        // it grew the icon-text-fit rule. Folding it into the lenient repaired bucket would
+        // silently exclude it with an INFO and make its icon disappear, so the same viewport-
+        // aligned line placement that the repaired branch degrades must still fail loudly here.
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val error = assertFailsWith<StylePreparationException> {
+                rasterizer.prepare(
+                    StyleInput.InlineJson(
+                        """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"],"text-optional":true,"symbol-placement":"line","icon-rotation-alignment":"viewport"}}]}""",
+                    ),
+                )
+            }
+
+            assertTrue(error.diagnostics.any { it.code == DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT })
+            assertTrue(error.diagnostics.any { it.severity == DiagnosticSeverity.ERROR })
+            assertTrue(error.diagnostics.none { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aTextOptionalLayerIsStillRetainedAndStillRequiresItsSprite() = runTest {
+        // The other half of the same rule. Withholding leniency must not withhold retention: this
+        // layer still reports TEXT_COMPONENT_REMOVED_ICON_RETAINED and still fetches its atlas.
+        // And because it was already on the strict path, an atlas it cannot resolve must still
+        // fail preparation loudly rather than quietly dropping the icon the author asked for.
+        val spritePng = renderSyntheticPng(8)
+        val requestedClasses = mutableListOf<ResourceClass>()
+        val requestedClassesMutex = Mutex()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                requestedClassesMutex.withLock { requestedClasses += request.resourceClass }
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"],"text-optional":true}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED })
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            assertEquals(
+                setOf(ResourceClass.SPRITE_JSON, ResourceClass.SPRITE_IMAGE),
+                requestedClassesMutex.withLock { requestedClasses.toSet() },
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aTextOptionalLayerWithNoResolvableSpriteStillFailsPreparation() = runTest {
+        // Same rule at the sprite gate. A text-optional layer already required its atlas, so it
+        // belongs in layerRequiresSpriteUnconditionally rather than the lenient desiring bucket:
+        // an absent sprite key must still fail preparation loudly, not leave the author's icon
+        // quietly undrawn. The throwing default transport also proves nothing is fetched.
+        val rasterizer = testRasterizer()
+        try {
+            assertFailsWith<StylePreparationException> {
+                rasterizer.prepare(
+                    StyleInput.InlineJson(
+                        """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"],"text-optional":true}}]}""",
+                    ),
+                )
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun aNonConstructFailureInARepairedLayerIsRethrownRatherThanExcluded() = runTest {
         // The catch guarding the repair-compile attempt must only swallow an
         // UNSUPPORTED_RETAINED_CONSTRUCT failure. A malformed vector tile template ("tiles":[123],
