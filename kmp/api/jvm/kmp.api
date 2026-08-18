@@ -66,7 +66,7 @@ public final class com/rohittp/rentile/DiagnosticCode : java/lang/Enum {
 	public static final field EMPTY_ICON_IMAGE_NO_DRAW Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field EXTRUSION_FLATTENED Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field HIDDEN_LAYER_NO_DRAW Lcom/rohittp/rentile/DiagnosticCode;
-	public static final field ICON_FEATURE_SKIPPED_INVALID_PROPERTY Lcom/rohittp/rentile/DiagnosticCode;
+	public static final field ICON_FEATURE_SKIPPED Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field RASTER_PASSTHROUGH_USED Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field RESOURCE_CACHE_HIT Lcom/rohittp/rentile/DiagnosticCode;

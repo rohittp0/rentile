@@ -969,7 +969,7 @@ class RentileRuntimeTest {
 
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
 
-            assertTrue(recordedDiagnostics.any { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY })
+            assertTrue(recordedDiagnostics.any { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED })
             // The good feature sits at the vector tile's exact center, which output pixel (128,
             // 128) of a 256px tile maps to - the same pixel centerPixelColor() reads. A red,
             // fully-opaque icon-color there proves the icon actually drew, not just that
@@ -1017,10 +1017,12 @@ class RentileRuntimeTest {
             )
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
 
-            val skipped = recordedDiagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY }
+            val skipped = recordedDiagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED }
             assertEquals(DiagnosticSeverity.WARNING, skipped.severity)
             assertEquals("4", skipped.details["candidateFeatures"])
             assertEquals("3", skipped.details["skippedFeatures"])
+            // The code is cause-neutral, so details must say which cause this was: no missing
+            // sprites means all three skips were properties that would not evaluate.
             assertEquals("0", skipped.details["skippedMissingSprite"])
             // Collapsing the two message branches into one string would otherwise go unnoticed.
             assertEquals(
@@ -1029,7 +1031,7 @@ class RentileRuntimeTest {
             )
             assertEquals(
                 1,
-                output.diagnostics.count { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY },
+                output.diagnostics.count { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED },
             )
             // The one good feature still drew, so the escalation below is genuinely about layers
             // that lost everything rather than layers that lost most of it.
@@ -1083,7 +1085,7 @@ class RentileRuntimeTest {
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
 
             assertTrue(output.pngBytes.startsWithPngSignature())
-            val skipped = output.diagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY }
+            val skipped = output.diagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED }
             assertEquals(DiagnosticSeverity.WARNING, skipped.severity)
             assertEquals(PipelineStage.RASTERIZATION, skipped.stage)
             // Equal counts are the machine-readable signal that the layer lost everything, which
@@ -1135,7 +1137,7 @@ class RentileRuntimeTest {
             val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
 
             assertTrue(output.pngBytes.startsWithPngSignature())
-            val skipped = output.diagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY }
+            val skipped = output.diagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED }
             assertEquals("2", skipped.details["candidateFeatures"])
             assertEquals("2", skipped.details["skippedFeatures"])
             assertEquals("2", skipped.details["skippedMissingSprite"])

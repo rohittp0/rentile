@@ -33,7 +33,38 @@ public enum class DiagnosticCode {
     RASTER_PASSTHROUGH_USED,
     ROOT_BEHAVIOR_EXCLUDED,
     UNSUPPORTED_RETAINED_CONSTRUCT,
-    ICON_FEATURE_SKIPPED_INVALID_PROPERTY,
+
+    /**
+     * A repaired icon layer - one retained because its text was removed and its icon is
+     * independent of that text - could not draw one or more of its features, and the tile was
+     * returned without them rather than failing.
+     *
+     * Reported once per layer per tile, whatever the cause, deliberately: the name stays neutral
+     * because two different things reach it. A feature is skipped either because an icon property
+     * would not evaluate to a usable value (`icon-size: "big"`, a negative `icon-halo-width`, a
+     * data-driven `icon-offset` that is not a numeric pair) or because it named an icon the sprite
+     * atlas does not contain. `details` carries the discriminator: `candidateFeatures` is how many
+     * features wanted an icon, `skippedFeatures` how many of those drew nothing, and
+     * `skippedMissingSprite` how many of *those* were a missing sprite name - so the
+     * invalid-property count is `skippedFeatures` minus `skippedMissingSprite`, and
+     * `skippedFeatures == candidateFeatures` means the layer lost everything, which is a
+     * whole-layer authoring error rather than bad data on one feature. `layerIndex` locates the
+     * layer in the compiled style.
+     *
+     * Always a WARNING. Nothing failed: preparation succeeded and the tile rendered.
+     */
+    ICON_FEATURE_SKIPPED,
+
+    /**
+     * A vector source reachable only through repaired icon layers could not be acquired, so those
+     * layers drew nothing for this tile and the tile was returned anyway.
+     *
+     * Distinct from [ICON_FEATURE_SKIPPED] because the resource never arrived at all, rather than
+     * a feature in it being undrawable. Such a source was never fetched before this compatibility
+     * profile retained those layers, so a failure on it must not fail the batch - it also never
+     * consumes tile substitution. `details` carries `resourceClass`, the `causeCode` naming the
+     * typed failure, and `statusCode` when the failure was an HTTP response.
+     */
     ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE,
 }
 

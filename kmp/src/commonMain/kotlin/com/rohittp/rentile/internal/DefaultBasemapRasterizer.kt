@@ -1873,7 +1873,7 @@ private class DefaultBasemapRasterizer(
                 // rendering. The distinction lives in the message and the counts, not in severity.
                 val everyCandidateSkipped = skippedFeatures == candidateFeatures
                 val diagnostic = RenderDiagnostic(
-                    code = DiagnosticCode.ICON_FEATURE_SKIPPED_INVALID_PROPERTY,
+                    code = DiagnosticCode.ICON_FEATURE_SKIPPED,
                     severity = DiagnosticSeverity.WARNING,
                     stage = PipelineStage.RASTERIZATION,
                     message = if (everyCandidateSkipped) {
