@@ -285,6 +285,65 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun requiredTextIsRemovedAndAnIndependentIconIsRetained() = runTest {
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED })
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun anIconSizedFromTextExtentsStaysExcluded() = runTest {
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-text-fit":"width","text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun hiddenLayerDoesNotMakeItsSourceSyntaxReachable() = runTest {
         val rasterizer = testRasterizer()
         try {

@@ -1393,13 +1393,12 @@ internal class StyleCompiler(
             return SymbolClassification(true, null)
         }
 
-        val textOptional = layout["text-optional"]?.asPrimitive()?.booleanOrNull == true
         val iconTextFit = layout["icon-text-fit"]?.asPrimitive()?.content
-        if (textOptional && (iconTextFit == null || iconTextFit == "none")) {
+        if (iconTextFit == null || iconTextFit == "none") {
             val diagnostic = diagnostic(
                 code = DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED,
                 severity = DiagnosticSeverity.WARNING,
-                message = "Optional text is removed and the icon is retained independently",
+                message = "Text is removed and the icon is retained independently",
                 details = identity,
             )
             return SymbolClassification(true, diagnostic)
@@ -1407,7 +1406,7 @@ internal class StyleCompiler(
         return SymbolClassification(false, diagnostic(
             code = DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED,
             severity = DiagnosticSeverity.INFO,
-            message = "A text-coupled icon layer is excluded by the compatibility profile",
+            message = "An icon sized from text extents is excluded by the compatibility profile",
             details = identity,
         ))
     }
