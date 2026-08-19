@@ -157,12 +157,16 @@ public data class ValidatedMvtTile(
  *   top-left corner, measured from the texture's top-left, x rightwards and y downwards.
  * - [left] and [top] are the provider's bearings for the glyph **body**, not the cell, forwarded
  *   verbatim from the glyph range. [left] is the horizontal distance from the pen position to the
- *   body's left edge, positive rightwards. [top] is negative, and `-top` is the distance from the
- *   **line's ascender** down to the body's top edge — measured from the top of the line, not from
- *   its baseline. A line's baseline therefore sits `-top` below the line top for a glyph whose
- *   `height` is zero, which is how the ascender can be recovered from a range's own space glyph;
- *   every other glyph's body bottom is `-top + height` below the line top, so a cap-height letter
- *   lands exactly on the baseline and a descender passes below it.
+ *   body's left edge, positive rightwards. `-top` is the distance from the **line's ascender** down
+ *   to the body's top edge — measured from the top of the line, not from its baseline. [top] is
+ *   negative for the overwhelming majority of glyphs, but it is **positive** for any glyph whose ink
+ *   rises above the font's own ascender — an accented capital, a tight-ascender CJK face — so a
+ *   consumer must not validate on the sign.
+ *
+ *   A line's baseline sits `-top` below the line top for a glyph whose `height` is zero, which is
+ *   how the ascender can be recovered from a range's own space glyph; every other glyph's body
+ *   bottom is `-top + height` below the line top, so a cap-height letter lands exactly on the
+ *   baseline and a descender passes below it.
  *
  * A consumer drawing this itself therefore places the cell's corner 3 pixels up and left of the
  * bearing, which is what [LabelGlyphQuad.x] and [LabelGlyphQuad.y] already have applied — they
@@ -242,8 +246,12 @@ public data class LabelGlyphQuad(
  *
  * In the same coordinates and the same units as [LabelGlyphQuad]: the origin is the label's anchor
  * point, x runs rightwards and y downwards, and the values are at the label's own `text-size`
- * rather than at the atlas em. So [top] is above [bottom] numerically — [top] is the smaller value
- * — and both are typically negative for a single-line label centred on its anchor.
+ * rather than at the atlas em. [top] is always the smaller value, since y runs downwards.
+ *
+ * The signs are not both negative. For a single-line label centred on its anchor, [top] is negative
+ * and **[bottom] is positive**: the anchor sits at the centre of the line's row, while the glyph
+ * bodies hang from the ascender down through the baseline, so the box extends further below the
+ * anchor than above it.
  *
  * The box is the union of every quad's cell extent, expanded on all sides by the layer's
  * `text-padding`. It therefore includes each glyph's 3-pixel signed-distance-field buffer, which

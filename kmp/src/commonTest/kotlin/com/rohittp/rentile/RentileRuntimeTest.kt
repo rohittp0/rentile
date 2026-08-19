@@ -3410,6 +3410,41 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun theLegacyTextAllowOverlapSpellingIsHonouredOnItsOwn() = runTest {
+        // 27 of the 34 corpus styles use the legacy spelling, and nothing asserted it positively:
+        // the only other test touching the key exercises it in the case where text-overlap overrides
+        // it, so deleting the legacy branch outright killed no test at all.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val allowed = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(extraTextLayout = """"text-allow-overlap":true""")),
+            )
+            // The default, so the true case above cannot pass by accident.
+            val absent = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val tiles = listOf(TileId(2, 1, 1))
+            assertEquals(
+                true,
+                rasterizer.acquireLabelCandidates(allowed, tiles).candidates.single().allowOverlap,
+            )
+            assertEquals(
+                false,
+                rasterizer.acquireLabelCandidates(absent, tiles).candidates.single().allowOverlap,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun textKeepUprightIsAllowedAndIgnoredBecauseLinePlacementIsExcluded() = runTest {
         // 20 corpus layers across 4 styles carry it. It decides whether text may flip to avoid
         // reading upside-down along a line, and this profile excludes line placement outright, so
