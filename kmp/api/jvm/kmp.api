@@ -320,7 +320,7 @@ public final class com/rohittp/rentile/LabelGlyphQuad {
 }
 
 public final class com/rohittp/rentile/LabelIconRef {
-	public fun <init> (Ljava/lang/String;DDDDDD)V
+	public fun <init> (Ljava/lang/String;DDDDDDDD)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()D
 	public final fun component3 ()D
@@ -328,8 +328,10 @@ public final class com/rohittp/rentile/LabelIconRef {
 	public final fun component5 ()D
 	public final fun component6 ()D
 	public final fun component7 ()D
-	public final fun copy (Ljava/lang/String;DDDDDD)Lcom/rohittp/rentile/LabelIconRef;
-	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelIconRef;Ljava/lang/String;DDDDDDILjava/lang/Object;)Lcom/rohittp/rentile/LabelIconRef;
+	public final fun component8 ()D
+	public final fun component9 ()D
+	public final fun copy (Ljava/lang/String;DDDDDDDD)Lcom/rohittp/rentile/LabelIconRef;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelIconRef;Ljava/lang/String;DDDDDDDDILjava/lang/Object;)Lcom/rohittp/rentile/LabelIconRef;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAnchorOffsetX ()D
 	public final fun getAnchorOffsetY ()D
@@ -337,6 +339,8 @@ public final class com/rohittp/rentile/LabelIconRef {
 	public final fun getImageName ()Ljava/lang/String;
 	public final fun getOffsetX ()D
 	public final fun getOffsetY ()D
+	public final fun getTranslateX ()D
+	public final fun getTranslateY ()D
 	public final fun getWidth ()D
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;

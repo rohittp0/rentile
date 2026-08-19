@@ -9,6 +9,7 @@ import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.internal.ProtectedResourceUrl
 import com.rohittp.rentile.internal.SecretContext
 import com.rohittp.rentile.internal.sprite.CompiledSpriteAtlas
+import com.rohittp.rentile.internal.sprite.SpriteAtlasEntry
 import kotlin.math.PI
 import kotlin.math.atan
 import kotlin.math.sinh
@@ -287,6 +288,65 @@ internal fun IconAnchor.shift(width: Double, height: Double): Pair<Double, Doubl
     IconAnchor.TOP_RIGHT -> -width / 2.0 to height / 2.0
     IconAnchor.BOTTOM_LEFT -> width / 2.0 to -height / 2.0
     IconAnchor.BOTTOM_RIGHT -> -width / 2.0 to -height / 2.0
+}
+
+/**
+ * Where one sprite sits relative to the symbol anchor it belongs to, decomposed into the three
+ * style properties that place it, plus the logical extent it is drawn at.
+ *
+ * Both paths that place a sprite go through [spriteAnchoring]: the icon pass, which draws the
+ * marker itself, and label-candidate assembly, which hands the same numbers to a consumer drawing
+ * it. Neither may compute this independently. The composition is easy to get subtly wrong -
+ * `icon-offset` scales with `icon-size` and `icon-translate` does not - and a second copy that
+ * drifted would put a consumer's marker somewhere Rentile's own icon pass does not, which is
+ * invisible in Rentile's output and only shows up in the consumer's.
+ */
+internal data class SpriteAnchoring(
+    val width: Double,
+    val height: Double,
+    val anchorShiftX: Double,
+    val anchorShiftY: Double,
+    val offsetX: Double,
+    val offsetY: Double,
+    val translateX: Double,
+    val translateY: Double,
+) {
+    /** Total displacement from the symbol's anchor to the sprite's centre. */
+    val centerShiftX: Double get() = anchorShiftX + offsetX + translateX
+
+    /** Total displacement from the symbol's anchor to the sprite's centre. */
+    val centerShiftY: Double get() = anchorShiftY + offsetY + translateY
+}
+
+/**
+ * Resolves a sprite's logical extent and its placement relative to the symbol anchor.
+ *
+ * [offsetX]/[offsetY] are the raw `icon-offset` pair and are scaled by [size] here;
+ * [translateX]/[translateY] are the raw `icon-translate` pair and are deliberately not, matching
+ * the Mapbox style specification.
+ */
+internal fun spriteAnchoring(
+    entry: SpriteAtlasEntry,
+    anchor: IconAnchor,
+    size: Double,
+    offsetX: Double,
+    offsetY: Double,
+    translateX: Double,
+    translateY: Double,
+): SpriteAnchoring {
+    val width = entry.width / entry.pixelRatio * size
+    val height = entry.height / entry.pixelRatio * size
+    val (anchorShiftX, anchorShiftY) = anchor.shift(width, height)
+    return SpriteAnchoring(
+        width = width,
+        height = height,
+        anchorShiftX = anchorShiftX,
+        anchorShiftY = anchorShiftY,
+        offsetX = offsetX * size,
+        offsetY = offsetY * size,
+        translateX = translateX,
+        translateY = translateY,
+    )
 }
 
 internal enum class TextTransform {

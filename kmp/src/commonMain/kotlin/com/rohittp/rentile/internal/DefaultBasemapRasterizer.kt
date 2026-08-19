@@ -90,7 +90,7 @@ import com.rohittp.rentile.internal.style.SymbolPlacement
 import com.rohittp.rentile.internal.style.StyleCompiler
 import com.rohittp.rentile.internal.style.StyleValue
 import com.rohittp.rentile.internal.style.parseCssColor
-import com.rohittp.rentile.internal.style.shift
+import com.rohittp.rentile.internal.style.spriteAnchoring
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -1931,9 +1931,17 @@ private class DefaultBasemapRasterizer(
                     }
                     val offset = evaluatedNumberArray(layer.offset.evaluate(baseContext), "icon-offset", tile, 2)
                     val translate = evaluatedNumberArray(layer.translate.evaluate(baseContext), "icon-translate", tile, 2)
-                    val logicalWidth = sprite.entry.width / sprite.entry.pixelRatio * size
-                    val logicalHeight = sprite.entry.height / sprite.entry.pixelRatio * size
-                    val anchorShift = layer.anchor.shift(logicalWidth, logicalHeight)
+                    val anchoring = spriteAnchoring(
+                        entry = sprite.entry,
+                        anchor = layer.anchor,
+                        size = size,
+                        offsetX = offset[0],
+                        offsetY = offset[1],
+                        translateX = translate[0],
+                        translateY = translate[1],
+                    )
+                    val logicalWidth = anchoring.width
+                    val logicalHeight = anchoring.height
                     val anchors = iconAnchors(
                         geometry = feature.geometry,
                         placement = layer.placement,
@@ -1947,8 +1955,8 @@ private class DefaultBasemapRasterizer(
                         else -> evaluatedNumber(value, "symbol-sort-key", tile)
                     }
                     anchors.forEachIndexed { anchorIndex, anchor ->
-                        val centerX = anchor.x + anchorShift.first + offset[0] * size + translate[0]
-                        val centerY = anchor.y + anchorShift.second + offset[1] * size + translate[1]
+                        val centerX = anchor.x + anchoring.centerShiftX
+                        val centerY = anchor.y + anchoring.centerShiftY
                         if (centerX !in 0.0..<sizePx.toDouble() || centerY !in 0.0..<sizePx.toDouble()) return@forEachIndexed
                         val padding = layer.padding + haloWidth
                         val box = CollisionBox(
