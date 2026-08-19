@@ -8,6 +8,7 @@ import com.rohittp.rentile.DiagnosticSeverity
 import com.rohittp.rentile.ForeignPreparedBatchException
 import com.rohittp.rentile.ForeignPreparedStyleException
 import com.rohittp.rentile.InvalidTileIdException
+import com.rohittp.rentile.LabelCandidateBatch
 import com.rohittp.rentile.LabelLayerDescriptor
 import com.rohittp.rentile.MetricName
 import com.rohittp.rentile.PipelineStage
@@ -46,6 +47,9 @@ import com.rohittp.rentile.ValidatedDemTile
 import com.rohittp.rentile.ValidatedMvtTile
 import com.rohittp.rentile.internal.metadata.TileJsonResourceAcquirer
 import com.rohittp.rentile.internal.geojson.GeoJsonResourceAcquirer
+import com.rohittp.rentile.internal.glyph.AcquiredGlyphRange
+import com.rohittp.rentile.internal.glyph.GlyphResourceAcquirer
+import com.rohittp.rentile.internal.glyph.LabelCandidateAssembler
 import com.rohittp.rentile.internal.mvt.DecodedVectorFeature
 import com.rohittp.rentile.internal.mvt.DecodedVectorGeometry
 import com.rohittp.rentile.internal.mvt.VectorResource
@@ -76,7 +80,6 @@ import com.rohittp.rentile.internal.style.CompiledLineCap
 import com.rohittp.rentile.internal.style.CompiledLineJoin
 import com.rohittp.rentile.internal.style.DemEncoding
 import com.rohittp.rentile.internal.style.FillDrawLayer
-import com.rohittp.rentile.internal.style.IconAnchor
 import com.rohittp.rentile.internal.style.IconDrawLayer
 import com.rohittp.rentile.internal.style.HillshadeDrawLayer
 import com.rohittp.rentile.internal.style.LineDrawLayer
@@ -87,6 +90,7 @@ import com.rohittp.rentile.internal.style.SymbolPlacement
 import com.rohittp.rentile.internal.style.StyleCompiler
 import com.rohittp.rentile.internal.style.StyleValue
 import com.rohittp.rentile.internal.style.parseCssColor
+import com.rohittp.rentile.internal.style.shift
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -181,6 +185,12 @@ private class DefaultBasemapRasterizer(
     )
     private val rasterAcquirer = RasterResourceAcquirer(configuration, scope, resourceWorkCoordinator)
     private val vectorAcquirer = VectorResourceAcquirer(configuration, scope, resourceWorkCoordinator)
+    // Same three collaborators the sprite acquirer takes, including the rasterizer's own
+    // supervisor scope: SingleFlight launches each range as a direct child of it, so one range
+    // failing must not cancel its siblings and turn a single missing block into a whole-batch
+    // failure. Like the sprite acquirer it owns nothing beyond that scope, so cancelling
+    // rootJob in close() is all the teardown it needs.
+    private val glyphAcquirer = GlyphResourceAcquirer(configuration, scope, resourceWorkCoordinator)
     private val renderPermits = Semaphore(configuration.executionPolicy.maxConcurrentMetatileWorkers)
 
     init {
@@ -345,6 +355,79 @@ private class DefaultBasemapRasterizer(
                 contentDigest = resource.contentDigest,
             )
         }
+    }
+
+    override fun labelCandidateRequestKey(style: PreparedStyle, tiles: List<TileId>): String {
+        val compiled = requireOwnedStyle(style)
+        val stableTiles = tiles.toList()
+        stableTiles.forEach { validateTile(it, compiled.policy) }
+        return buildString {
+            append("rentile-label-request-1\n")
+            append(compiled.digest)
+            append('\n')
+            // Sorted and de-duplicated: acquireLabelCandidates sorts its own output, so two
+            // callers naming the same tiles in different orders get identical candidates and must
+            // therefore get identical keys. Task 11 replaces this body with the full definition.
+            append(
+                stableTiles
+                    .map { Triple(it.z, canonicalX(it), it.y) }
+                    .distinct()
+                    .sortedWith(compareBy({ it.first }, { it.second }, { it.third }))
+                    .joinToString(",") { (z, x, y) -> "$z/$x/$y" },
+            )
+        }.sha256Hex()
+    }
+
+    override suspend fun acquireLabelCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode,
+    ): LabelCandidateBatch = operation {
+        val compiledStyle = requireOwnedStyle(style)
+        val stableTiles = tiles.toList()
+        stableTiles.forEach { validateTile(it, compiledStyle.policy) }
+        // A style with no glyphs template has no text to lay out. That is a legitimate style, and
+        // this API is opt-in, so it reports and returns empty rather than failing (ADR 0026).
+        val glyphsTemplate = compiledStyle.glyphsTemplate ?: run {
+            recordDiagnosticSafely(LabelCandidateAssembler.glyphRangeUnavailable(stableTiles))
+            return@operation LabelCandidateAssembler.emptyBatch(compiledStyle, stableTiles)
+        }
+
+        val samples = compiledStyle.labelLayers
+            .map { it.source }
+            .distinctBy { it.idDigest }
+            .flatMap { source -> stableTiles.mapNotNull { tile -> source.sampleFor(tile) } }
+            .distinctBy { it.identity to it.outputTile }
+        val tileOutcomes = supervisorScope {
+            samples.map { sample ->
+                async { sample to acquireOutcome { vectorAcquirer.acquire(sample, resourceAccess) } }
+            }.awaitAll()
+        }
+        throwAcquisitionFailures(tileOutcomes.map { it.second })
+        val resources = tileOutcomes.associate { (sample, outcome) ->
+            (sample.source.idDigest to sample.outputTile) to (outcome as AcquisitionOutcome.Success).value
+        }
+
+        val plan = LabelCandidateAssembler.plan(
+            style = compiledStyle,
+            tiles = stableTiles.distinct(),
+            resources = resources,
+            limits = configuration.resourceLimits,
+            iconImageNameOf = ::evaluateIconImageName,
+        )
+        currentCoroutineContext().ensureActive()
+        val rangeOutcomes = supervisorScope {
+            plan.requiredRanges.map { request ->
+                async {
+                    acquireOutcome { glyphAcquirer.acquire(glyphsTemplate, request.fontStack, request.rangeStart) }
+                }
+            }.awaitAll()
+        }
+        throwAcquisitionFailures(rangeOutcomes)
+        val ranges = rangeOutcomes.map { (it as AcquisitionOutcome.Success<AcquiredGlyphRange>).value }
+
+        plan.diagnostics.forEach(::recordDiagnosticSafely)
+        plan.assemble(ranges)
     }
 
     override fun terrainSourceDescriptor(style: PreparedStyle): TerrainSourceDescriptor? =
@@ -1834,7 +1917,7 @@ private class DefaultBasemapRasterizer(
                     val translate = evaluatedNumberArray(layer.translate.evaluate(baseContext), "icon-translate", tile, 2)
                     val logicalWidth = sprite.entry.width / sprite.entry.pixelRatio * size
                     val logicalHeight = sprite.entry.height / sprite.entry.pixelRatio * size
-                    val anchorShift = iconAnchorShift(layer.anchor, logicalWidth, logicalHeight)
+                    val anchorShift = layer.anchor.shift(logicalWidth, logicalHeight)
                     val anchors = iconAnchors(
                         geometry = feature.geometry,
                         placement = layer.placement,
@@ -2058,27 +2141,7 @@ private class DefaultBasemapRasterizer(
             is StyleValue.StringValue -> value.value
             else -> return null
         }
-        if ('{' !in raw) return raw.takeIf(String::isNotEmpty)
-        return ICON_TOKEN.replace(raw) { match ->
-            when (val property = feature.properties[match.groupValues[1]]) {
-                is StyleValue.StringValue -> property.value
-                is StyleValue.NumberValue -> property.value.toString().removeSuffix(".0")
-                is StyleValue.BooleanValue -> property.value.toString()
-                else -> ""
-            }
-        }.takeIf(String::isNotEmpty)
-    }
-
-    private fun iconAnchorShift(anchor: IconAnchor, width: Double, height: Double): Pair<Double, Double> = when (anchor) {
-        IconAnchor.CENTER -> 0.0 to 0.0
-        IconAnchor.LEFT -> width / 2.0 to 0.0
-        IconAnchor.RIGHT -> -width / 2.0 to 0.0
-        IconAnchor.TOP -> 0.0 to height / 2.0
-        IconAnchor.BOTTOM -> 0.0 to -height / 2.0
-        IconAnchor.TOP_LEFT -> width / 2.0 to height / 2.0
-        IconAnchor.TOP_RIGHT -> -width / 2.0 to height / 2.0
-        IconAnchor.BOTTOM_LEFT -> width / 2.0 to -height / 2.0
-        IconAnchor.BOTTOM_RIGHT -> -width / 2.0 to -height / 2.0
+        return raw.withExpandedFeatureTokens(feature.properties).takeIf(String::isNotEmpty)
     }
 
     private fun featureContext(tile: TileId, feature: DecodedVectorFeature): StyleEvaluationContext =
@@ -2335,7 +2398,29 @@ private fun repeatedLineAnchors(points: List<RenderPoint>, spacing: Double): Lis
     return anchors
 }
 
-private val ICON_TOKEN = Regex("\\{([^{}]+)\\}")
+private val FEATURE_TOKEN = Regex("\\{([^{}]+)\\}")
+
+/**
+ * Expands legacy Mapbox `{property}` tokens against a decoded feature's properties.
+ *
+ * Both `icon-image` and `text-field` accept this pre-expression shorthand, and 82 rolling-corpus
+ * label layers still use it for text. One expansion rule serving both is deliberate: the two
+ * previously shared nothing, and a second hand-written copy of the same regex and the same
+ * property-to-string coercion is precisely the duplication that let 0.2.0 ship a fix applied to
+ * one copy and not the other. A token naming a property the feature does not carry expands to the
+ * empty string, matching Mapbox GL's behaviour.
+ */
+internal fun String.withExpandedFeatureTokens(properties: Map<String, StyleValue>): String {
+    if ('{' !in this) return this
+    return FEATURE_TOKEN.replace(this) { match ->
+        when (val property = properties[match.groupValues[1]]) {
+            is StyleValue.StringValue -> property.value
+            is StyleValue.NumberValue -> property.value.toString().removeSuffix(".0")
+            is StyleValue.BooleanValue -> property.value.toString()
+            else -> ""
+        }
+    }
+}
 
 private data class SpriteRenderImage(
     val entry: SpriteAtlasEntry,

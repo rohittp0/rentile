@@ -9,11 +9,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import com.rohittp.rentile.internal.renderSyntheticPng
+import com.rohittp.rentile.internal.glyph.Glyph
+import com.rohittp.rentile.internal.glyph.Glyphs
 import com.rohittp.rentile.internal.mvt.Tile
 import com.rohittp.rentile.internal.style.CompiledPreparedStyle
 import com.rohittp.rentile.internal.style.RasterDrawLayer
 import com.rohittp.rentile.internal.style.StyleEvaluationContext
 import com.rohittp.rentile.internal.style.StyleValue
+import okio.ByteString.Companion.toByteString
 import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.Color
 import org.jetbrains.skia.EncodedImageFormat
@@ -2679,6 +2682,279 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun labelCandidatesAreDeterministicAndCarryNoScreenGeometry() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when {
+                    request.resourceClass == ResourceClass.GLYPH_RANGE -> TransportResponse(200, glyphs)
+                    else -> TransportResponse(200, vectorTile)
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+            val tiles = listOf(TileId(2, 1, 1))
+
+            val first = rasterizer.acquireLabelCandidates(style, tiles)
+            val second = rasterizer.acquireLabelCandidates(style, tiles)
+
+            assertTrue(first.candidates.isNotEmpty())
+            assertEquals(first.candidates, second.candidates)
+            assertEquals(first.contentKey, second.contentKey)
+            assertEquals(first.atlas.contentKey, second.atlas.contentKey)
+            // The fixture carries one in-tile feature and one buffer duplicate outside
+            // [0, extent). Exactly one candidate is the dedup rule holding.
+            assertEquals(1, first.candidates.size)
+            val candidate = first.candidates.single()
+            assertEquals(TileId(2, 1, 1), candidate.requestedTile)
+            assertEquals(TileId(2, 1, 1), candidate.sourceTile)
+            // Geography, never screen space: the tile centre of z2/1/1 is 45W, ~40.98N.
+            assertEquals(-45.0, candidate.longitude, 1e-9)
+            assertTrue(candidate.latitude in 40.9..41.0, "latitude was ${candidate.latitude}")
+            first.candidates.forEach { entry ->
+                assertTrue(entry.layerStyleIndex in first.layerStyles.indices)
+                assertTrue(entry.glyphs.all { it.entryIndex in first.atlas.entries.indices })
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aStyleWithoutGlyphsYieldsAnEmptyBatchNotAFailure() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val rasterizer = testRasterizer(transport = ResourceTransport { TransportResponse(200, vectorTile) })
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson(glyphs = null)))
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            assertTrue(batch.candidates.isEmpty())
+            assertTrue(batch.diagnostics.any { it.code == DiagnosticCode.GLYPH_RANGE_UNAVAILABLE })
+            assertTrue(
+                batch.diagnostics.single { it.code == DiagnosticCode.GLYPH_RANGE_UNAVAILABLE }
+                    .severity == DiagnosticSeverity.INFO,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun complexScriptTextIsExcludedWithADiagnostic() = runTest {
+        val vectorTile = placeNameVectorTile("\u0627\u0644\u0642\u0627\u0647\u0631\u0629")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            assertTrue(batch.candidates.isEmpty())
+            assertEquals(1, batch.diagnostics.count { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED })
+            val diagnostic = batch.diagnostics.single { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED }
+            assertEquals(DiagnosticSeverity.INFO, diagnostic.severity)
+            assertEquals("0", diagnostic.details["layerIndex"])
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun theComplexScriptDiagnosticIsReportedOncePerLayerNotPerFeature() = runTest {
+        // Three in-tile features across two requested tiles is six excluded labels. A dense tile
+        // carries thousands; one diagnostic per feature would be a stream of identical entries,
+        // so the bound is per layer and this test is what pins it.
+        val vectorTile = placeNameVectorTile("\u0627\u0644\u0642\u0627\u0647\u0631\u0629", copies = 3)
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val recording = RecordingDiagnosticSink()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+            diagnosticSink = recording,
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1), TileId(2, 2, 1)))
+
+            assertTrue(batch.candidates.isEmpty())
+            assertEquals(1, batch.diagnostics.count { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED })
+            assertEquals(1, recording.snapshot().count { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED })
+            val diagnostic = batch.diagnostics.single { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED }
+            // One diagnostic still has to say how much was lost, and where.
+            assertEquals("6", diagnostic.details["excludedFeatures"])
+            assertEquals(listOf(TileId(2, 1, 1), TileId(2, 2, 1)), diagnostic.affectedTiles)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aStyleAuthoredLatinFallbackKeepsTheLabelAndReportsNothing() = runTest {
+        // Eleven corpus layers wrap text-field in is-supported-script and select their own Latin
+        // fallback. Evaluation must therefore run before the script gate: gating on the raw
+        // property would exclude a label the style already healed.
+        val vectorTile = placeNameVectorTile("\u0627\u0644\u0642\u0627\u0647\u0631\u0629", latinName = "Cairo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        textField = """["case",["is-supported-script",["get","name"]],""" +
+                            """["get","name"],["get","name:latin"]]""",
+                    ),
+                ),
+            )
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            assertEquals(1, batch.candidates.size)
+            assertTrue(batch.diagnostics.none { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aLabelCandidateCarriesTheSpriteItsOwnLayerDeclares() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(transport = spriteAndGlyphTransport(vectorTile, glyphs))
+        try {
+            val withIcon = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson(iconImage = "marker")))
+            val withoutIcon = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val iconBatch = rasterizer.acquireLabelCandidates(withIcon, listOf(TileId(2, 1, 1)))
+            val plainBatch = rasterizer.acquireLabelCandidates(withoutIcon, listOf(TileId(2, 1, 1)))
+
+            val icon = iconBatch.candidates.single().icon
+            assertEquals("marker", icon?.imageName)
+            // Logical extent, exactly as placeIcons computes it: width / pixelRatio * icon-size.
+            assertEquals(8.0, icon?.width)
+            assertEquals(8.0, icon?.height)
+            // A layer with no icon-image leaves it null rather than inventing a placeholder.
+            assertEquals(null, plainBatch.candidates.single().icon)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun tooManyGlyphRangesExceedsItsLimit() = runTest {
+        // 70 codepoints, each from a different 256-block of CJK Unified Ideographs, so the
+        // name needs 70 glyph ranges. CJK is chosen because it is supported by layout, so
+        // the script gate cannot drop the label before ranges are ever collected.
+        val name = buildString { repeat(70) { block -> append((0x4E00 + block * 256).toChar()) } }
+        val vectorTile = placeNameVectorTile(name)
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val failure = assertFailsWith<SafetyLimitException> {
+                rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+            }
+
+            assertEquals("maxGlyphRangesPerBatch", failure.limitName)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun oneUnavailableGlyphRangeFailsAsItselfNotAsACancelledSibling() = runTest {
+        // "Tokyo\u0100" spans two 256-blocks, so the batch needs range 0-255 and range 256-511.
+        // The acquirer single-flights each one as a direct child of the rasterizer's scope. That
+        // scope's job is a SupervisorJob, so the 404 on one range must surface as its own typed
+        // failure rather than cancelling its sibling and arriving as a CancellationException.
+        val vectorTile = placeNameVectorTile("Tokyo\u0100")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val requestedRanges = mutableListOf<String>()
+        val requestedRangesMutex = Mutex()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when {
+                    request.resourceClass != ResourceClass.GLYPH_RANGE -> TransportResponse(200, vectorTile)
+                    else -> {
+                        requestedRangesMutex.withLock { requestedRanges += request.url.substringAfterLast('/') }
+                        if (request.url.contains("256-511")) TransportResponse(404, ByteArray(0))
+                        else TransportResponse(200, glyphs)
+                    }
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val failure = assertFailsWith<ResourceAcquisitionException> {
+                rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+            }
+
+            assertEquals(ResourceClass.GLYPH_RANGE, failure.resourceClass)
+            assertEquals(404, failure.statusCode)
+            // Both ranges were actually attempted: the failing one did not take its sibling down.
+            assertEquals(
+                setOf("0-255.pbf", "256-511.pbf"),
+                requestedRangesMutex.withLock { requestedRanges.toSet() },
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun theLabelCandidateRequestKeyIsCredentialFreeAndTileSpecific() = runTest {
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(glyphs = "https://glyphs.example.test/{fontstack}/{range}.pbf?key=top-secret"),
+                ),
+            )
+
+            val one = rasterizer.labelCandidateRequestKey(style, listOf(TileId(2, 1, 1)))
+            val same = rasterizer.labelCandidateRequestKey(style, listOf(TileId(2, 1, 1)))
+            val other = rasterizer.labelCandidateRequestKey(style, listOf(TileId(2, 2, 1)))
+
+            assertEquals(one, same)
+            assertNotEquals(one, other)
+            assertFalse(one.contains("top-secret"))
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun auxiliaryLabelAcquisitionIsAllOrError() = runTest {
         val rasterizer = testRasterizer(
             transport = ResourceTransport { TransportResponse(404, ByteArray(0)) },
@@ -3035,6 +3311,114 @@ class RentileRuntimeTest {
                 ),
             ),
         )
+    }
+
+    /**
+     * A "place" source-layer of POINT features carrying a "name" tag (and optionally a
+     * "name:latin" one), in 4096-extent tile coordinates.
+     *
+     * [copies] features sit inside the tile. One further feature always sits at x = -100: inside
+     * the tile's buffer but outside [0, extent), which is exactly the copy a neighbouring tile
+     * also carries. The buffer clip must drop it, so a test that counts candidates is counting
+     * the dedup rule too.
+     */
+    private fun placeNameVectorTile(
+        name: String,
+        latinName: String? = null,
+        copies: Int = 1,
+    ): ByteArray {
+        val keys = listOfNotNull("name", latinName?.let { "name:latin" })
+        val values = listOfNotNull(
+            Tile.Value(string_value = name),
+            latinName?.let { Tile.Value(string_value = it) },
+        )
+        val tags = keys.indices.flatMap { listOf(it, it) }
+        val inside = listOf(2048 to 2048, 1024 to 1024, 3072 to 3072)
+        fun feature(x: Int, y: Int) = Tile.Feature(
+            tags = tags,
+            type = Tile.GeomType.POINT,
+            geometry = listOf(command(1, 1), zigZag(x), zigZag(y)),
+        )
+        return Tile.ADAPTER.encode(
+            Tile(
+                layers = listOf(
+                    Tile.Layer(
+                        version = 2,
+                        name = "place",
+                        features = inside.take(copies).map { (x, y) -> feature(x, y) } + feature(-100, 2048),
+                        keys = keys,
+                        values = values,
+                        extent = 4096,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    /**
+     * One Glyph Range payload: the 95 printable ASCII slots of [rangeStart]'s block, so a Latin
+     * name lays out and a space still carries the provider's own advance. The space is encoded
+     * with no bitmap, exactly as a real endpoint encodes it, which is what makes
+     * GlyphAtlasPacker drop it from the atlas while LabelLayout still finds its advance.
+     */
+    private fun testGlyphRange(fontStack: String, rangeStart: Int): ByteArray {
+        val glyphs = (32..126).map { offset ->
+            val codepoint = rangeStart + offset
+            if (offset == ' '.code) {
+                Glyph(id = codepoint, width = 0, height = 0, left = 0, top = 0, advance = 6)
+            } else {
+                Glyph(
+                    id = codepoint,
+                    width = 8,
+                    height = 10,
+                    left = 0,
+                    top = -10,
+                    advance = 10,
+                    bitmap = ByteArray((8 + 6) * (10 + 6)) { 1 }.toByteString(),
+                )
+            }
+        }
+        return Glyphs(
+            stacks = listOf(
+                Glyphs.Fontstack(
+                    name = fontStack,
+                    range = "$rangeStart-${rangeStart + 255}",
+                    glyphs = glyphs,
+                ),
+            ),
+        ).encode()
+    }
+
+    /** One vector source and one `place` symbol layer, with the glyphs key present by default. */
+    private fun placeNameStyleJson(
+        glyphs: String? = "https://glyphs.example.test/{fontstack}/{range}.pbf",
+        iconImage: String? = null,
+        textField: String = """["get","name"]""",
+    ): String = buildString {
+        append("""{"version":8""")
+        if (glyphs != null) append(""","glyphs":"$glyphs"""")
+        if (iconImage != null) append(""","sprite":"https://sprite.example.test/icons"""")
+        append(""","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}}""")
+        append(""","layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place",""")
+        append(""""layout":{"text-field":$textField,"text-font":["Open Sans Regular"],"text-size":14""")
+        if (iconImage != null) append(""","icon-image":"$iconImage"""")
+        append("""}}]}""")
+    }
+
+    /** Serves sprite JSON, sprite PNG, glyph ranges and vector tiles by resource class. */
+    private fun spriteAndGlyphTransport(vectorTile: ByteArray, glyphs: ByteArray): ResourceTransport {
+        val spritePng = renderSyntheticPng(8)
+        return ResourceTransport { request ->
+            when (request.resourceClass) {
+                ResourceClass.SPRITE_JSON -> TransportResponse(
+                    200,
+                    """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                )
+                ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                ResourceClass.GLYPH_RANGE -> TransportResponse(200, glyphs)
+                else -> TransportResponse(200, vectorTile)
+            }
+        }
     }
 
     private fun command(id: Int, count: Int): Int = (count shl 3) or id

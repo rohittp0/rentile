@@ -4,6 +4,7 @@ import com.rohittp.rentile.LabelBox
 import com.rohittp.rentile.LabelGlyphQuad
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.style.IconAnchor
+import com.rohittp.rentile.internal.style.shift
 import com.rohittp.rentile.internal.style.TextJustify
 
 /**
@@ -79,7 +80,10 @@ internal object LabelLayout {
         for (range in ranges) {
             val digest = range.fontStack.sha256Hex()
             for (glyph in range.glyphs) {
-                if (glyph.bitmap.isEmpty()) result.putIfAbsent(digest to glyph.codepoint, glyph.advance)
+                // getOrPut, not putIfAbsent: the latter is a java.util.Map default method with no
+                // common-source equivalent, so it compiles on JVM and Android and fails every
+                // native target. Same first-writer-wins semantics.
+                if (glyph.bitmap.isEmpty()) result.getOrPut(digest to glyph.codepoint) { glyph.advance }
             }
         }
         return result
@@ -211,7 +215,7 @@ internal object LabelLayout {
             glyphs.map { it.copy(x = it.x + offset) }
         }
 
-        val (anchorDx, anchorDy) = anchorShift(style.anchor, blockWidth, blockHeight)
+        val (anchorDx, anchorDy) = style.anchor.shift(blockWidth, blockHeight)
         val offsetDx = style.offsetEm.first * GlyphRangeDecoder.EM_PX
         val offsetDy = style.offsetEm.second * GlyphRangeDecoder.EM_PX
 
@@ -230,24 +234,6 @@ internal object LabelLayout {
             }
         }
         return quads
-    }
-
-    /**
-     * The shift that moves a box centered at the origin so [anchor] sits at the origin
-     * instead, mirroring the convention `DefaultBasemapRasterizer.iconAnchorShift` uses for
-     * sprite icons: positive x is right, positive y is down, matching this codebase's Skia
-     * canvas coordinates throughout.
-     */
-    private fun anchorShift(anchor: IconAnchor, width: Double, height: Double): Pair<Double, Double> = when (anchor) {
-        IconAnchor.CENTER -> 0.0 to 0.0
-        IconAnchor.LEFT -> width / 2.0 to 0.0
-        IconAnchor.RIGHT -> -width / 2.0 to 0.0
-        IconAnchor.TOP -> 0.0 to height / 2.0
-        IconAnchor.BOTTOM -> 0.0 to -height / 2.0
-        IconAnchor.TOP_LEFT -> width / 2.0 to height / 2.0
-        IconAnchor.TOP_RIGHT -> -width / 2.0 to height / 2.0
-        IconAnchor.BOTTOM_LEFT -> width / 2.0 to -height / 2.0
-        IconAnchor.BOTTOM_RIGHT -> -width / 2.0 to -height / 2.0
     }
 
     /** The union of every quad's own extent (not just its origin), expanded by [LabelTextStyle.paddingPx]. */

@@ -80,28 +80,38 @@ public enum class DiagnosticCode {
      * contextual joining, which this renderer's glyph-metrics-only layout cannot perform. The
      * feature was excluded from its layer's label candidates rather than laid out incorrectly.
      *
-     * Reported once per layer, not per feature: many features sharing the same script would
-     * otherwise repeat the identical diagnostic without adding information.
+     * Reported once per layer per acquisition, never per feature: a dense tile carries thousands
+     * of features in one script, and repeating an identical diagnostic for each adds no
+     * information while burying everything else a caller's sink receives.
+     *
+     * `details` carries `layerIndex` and `layerIdDigest`, the same identity pair used by the other
+     * layer-level label diagnostics, plus `excludedFeatures`: how many labels this one entry
+     * stands for across every requested tile in the batch. `affectedTiles` names those tiles.
      *
      * A style that branches on `is-supported-script` to select a fallback text field (typically
-     * `name:latin`) usually keeps its labels without ever reaching this code - it fires only when
-     * the text actually laid out for a feature still resolves to an unsupported script.
+     * `name:latin`) usually keeps its labels without ever reaching this code - the text field is
+     * evaluated first, and this fires only when the string that evaluation produced still resolves
+     * to an unsupported script.
      *
-     * Nothing failed: label-candidate preparation continues, and this feature is simply absent
-     * from the result.
+     * Always INFO. Nothing failed: label-candidate acquisition continues, and these features are
+     * simply absent from the result.
      */
     COMPLEX_SCRIPT_LABEL_EXCLUDED,
 
     /**
      * A place-name label layer carried a construct this compatibility profile cannot compile -
      * its `filter`, a text layout property, a text paint property, or an expression inside any of
-     * those - and the whole layer was excluded from label candidates rather than failing style
+     * those - and that layer contributes no label candidates, rather than failing style
      * preparation.
+     *
+     * Only the label candidates are lost. The layer keeps its [LabelLayerDescriptor] and its raw
+     * MVT still acquires, so a consumer using `labelLayerDescriptors`/`acquireLabelTiles` - an API
+     * that predates label candidates - sees no change at all.
      *
      * `details` carries `layerIndex` and `layerIdDigest`, the same identity pair used by other
      * layer-exclusion diagnostics, locating which layer was excluded in the compiled style.
      *
-     * Always INFO. Nothing failed: preparation continues without that layer's labels.
+     * Always INFO. Nothing failed: preparation continues without that layer's label candidates.
      */
     UNSUPPORTED_TEXT_CONSTRUCT,
 
@@ -116,13 +126,17 @@ public enum class DiagnosticCode {
 
     /**
      * A label layer declared `symbol-placement: line`, which this profile's label-candidate
-     * layout does not implement, and the layer was excluded entirely rather than laid out as
-     * point-anchored text.
+     * layout does not implement, so that layer contributes no label candidates rather than being
+     * laid out as point-anchored text.
+     *
+     * Only the label candidates are lost. As with [UNSUPPORTED_TEXT_CONSTRUCT], the layer keeps
+     * its [LabelLayerDescriptor] and its raw MVT still acquires, so a consumer using
+     * `labelLayerDescriptors`/`acquireLabelTiles` sees no change.
      *
      * `details` carries `layerIndex` and `layerIdDigest`, the same identity pair used by other
      * layer-exclusion diagnostics, locating which layer was excluded in the compiled style.
      *
-     * Always INFO. Nothing failed: preparation continues without that layer's labels.
+     * Always INFO. Nothing failed: preparation continues without that layer's label candidates.
      */
     LINE_PLACEMENT_LABEL_EXCLUDED,
 }

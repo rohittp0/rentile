@@ -67,7 +67,13 @@ internal fun SourceBounds.intersects(tile: com.rohittp.rentile.TileId): Boolean 
     return latitudeOverlaps && longitudeOverlaps
 }
 
-private fun mercatorLatitude(y: Double, dimension: Double): Double {
+/**
+ * The inverse Web Mercator projection, in tile units: [y] is a fractional tile row and
+ * [dimension] the tile count across the world at that zoom. Internal rather than private so
+ * label-candidate assembly projects a feature's anchor to geography through this one
+ * implementation instead of writing a second inverse beside it.
+ */
+internal fun mercatorLatitude(y: Double, dimension: Double): Double {
     val mercator = PI * (1.0 - 2.0 * y / dimension)
     return atan(sinh(mercator)) * 180.0 / PI
 }
@@ -236,6 +242,51 @@ internal enum class IconAnchor {
     TOP_RIGHT,
     BOTTOM_LEFT,
     BOTTOM_RIGHT,
+}
+
+/**
+ * Maps a Mapbox anchor keyword to its [IconAnchor], or null when the keyword is not one this
+ * compatibility profile understands.
+ *
+ * `icon-anchor` and `text-anchor` share the same nine keywords, and both layer compilers used to
+ * inline the same nine-way `when` over them. One rule written out twice, with nothing keeping the
+ * copies in step, is exactly the duplication that let 0.2.0 ship a condition corrected in one copy
+ * and not the other. The caller keeps ownership of the failure it raises, so each still names its
+ * own property in the rejection it reports.
+ */
+internal fun iconAnchorOrNull(keyword: String): IconAnchor? = when (keyword) {
+    "center" -> IconAnchor.CENTER
+    "left" -> IconAnchor.LEFT
+    "right" -> IconAnchor.RIGHT
+    "top" -> IconAnchor.TOP
+    "bottom" -> IconAnchor.BOTTOM
+    "top-left" -> IconAnchor.TOP_LEFT
+    "top-right" -> IconAnchor.TOP_RIGHT
+    "bottom-left" -> IconAnchor.BOTTOM_LEFT
+    "bottom-right" -> IconAnchor.BOTTOM_RIGHT
+    else -> null
+}
+
+/**
+ * The shift that moves a box centered at the origin so this anchor sits at the origin instead:
+ * positive x is right, positive y is down, matching this codebase's Skia canvas coordinates
+ * throughout.
+ *
+ * Sprite icons (`DefaultBasemapRasterizer.placeIcons`) and label text
+ * ([com.rohittp.rentile.internal.glyph.LabelLayout]) anchor by this one rule and must keep
+ * agreeing about it: a label and the icon it sits beside anchor against the same point, so a
+ * drift between two copies would surface as text sliding off its marker.
+ */
+internal fun IconAnchor.shift(width: Double, height: Double): Pair<Double, Double> = when (this) {
+    IconAnchor.CENTER -> 0.0 to 0.0
+    IconAnchor.LEFT -> width / 2.0 to 0.0
+    IconAnchor.RIGHT -> -width / 2.0 to 0.0
+    IconAnchor.TOP -> 0.0 to height / 2.0
+    IconAnchor.BOTTOM -> 0.0 to -height / 2.0
+    IconAnchor.TOP_LEFT -> width / 2.0 to height / 2.0
+    IconAnchor.TOP_RIGHT -> -width / 2.0 to height / 2.0
+    IconAnchor.BOTTOM_LEFT -> width / 2.0 to -height / 2.0
+    IconAnchor.BOTTOM_RIGHT -> -width / 2.0 to -height / 2.0
 }
 
 internal enum class TextTransform {
