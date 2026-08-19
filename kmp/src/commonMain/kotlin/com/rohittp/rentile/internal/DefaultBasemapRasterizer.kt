@@ -157,6 +157,19 @@ internal fun createBasemapRasterizer(configuration: RentileConfiguration): Basem
 
 private const val EARTH_CIRCUMFERENCE_METERS = 40_075_016.68557849
 private const val MAX_ANCESTOR_DISTANCE = 2
+
+/**
+ * Bump this whenever a change to label evaluation, text layout or glyph-atlas packing would
+ * alter observable [LabelCandidateBatch] output for a style/tile set whose
+ * [DefaultBasemapRasterizer.labelCandidateRequestKey] would otherwise stay the same.
+ *
+ * This is the *only* signal [labelCandidateRequestKey] gives a consumer that its previously
+ * cached candidates are stale: the key is deliberately computed before any acquisition, from
+ * style and tile identity alone, so it cannot detect a semantics change on its own. Ship a
+ * layout or packing change without bumping this and a consumer's cache looks valid forever — it
+ * will keep serving stale label geometry and never learn otherwise.
+ */
+private const val LABEL_SEMANTICS_VERSION = "label-candidates-1"
 private val SUBSTITUTABLE_RESOURCE_CLASSES = setOf(
     ResourceClass.VECTOR_TILE,
     ResourceClass.RASTER_TILE,
@@ -361,21 +374,23 @@ private class DefaultBasemapRasterizer(
         val compiled = requireOwnedStyle(style)
         val stableTiles = tiles.toList()
         stableTiles.forEach { validateTile(it, compiled.policy) }
-        return buildString {
-            append("rentile-label-request-1\n")
-            append(compiled.digest)
-            append('\n')
-            // Sorted and de-duplicated: acquireLabelCandidates sorts its own output, so two
-            // callers naming the same tiles in different orders get identical candidates and must
-            // therefore get identical keys. Task 11 replaces this body with the full definition.
-            append(
-                stableTiles
-                    .map { Triple(it.z, canonicalX(it), it.y) }
-                    .distinct()
-                    .sortedWith(compareBy({ it.first }, { it.second }, { it.third }))
-                    .joinToString(",") { (z, x, y) -> "$z/$x/$y" },
-            )
-        }.sha256Hex()
+        // Sorted, de-duplicated and canonicalized on x exactly as acquireLabelCandidates treats
+        // its own tile set: a caller that reorders its viewport tiles between frames (or repeats
+        // one, or names a wrapped antimeridian x) must land on the same candidates and therefore
+        // the same key, or it refetches everything for nothing.
+        val stableTileList = stableTiles
+            .map { Triple(it.z, canonicalX(it), it.y) }
+            .distinct()
+            .sortedWith(compareBy({ it.first }, { it.second }, { it.third }))
+            .joinToString(",") { (z, x, y) -> "$z/$x/$y" }
+        // compiled.digest is already credential-free (it excludes the raw style URL and any
+        // glyphs template) and already folds in compiled.policy.id, so nothing else from the
+        // style needs to be added here to keep this key from ever leaking a credential.
+        return listOf(
+            LABEL_SEMANTICS_VERSION,
+            compiled.digest,
+            stableTileList,
+        ).joinToString("|").sha256Hex()
     }
 
     override suspend fun acquireLabelCandidates(
