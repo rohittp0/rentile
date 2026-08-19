@@ -96,6 +96,7 @@ internal object StyleExpressionCompiler {
             "boolean" -> BooleanAssertionExpression(requireAtLeast(operator, arguments, 1).map(::compileNode))
             "to-number" -> ToNumberExpression(requireAtLeast(operator, arguments, 1).map(::compileNode))
             "coalesce" -> compileCoalesce(arguments)
+            "concat" -> compileConcat(arguments)
             "case" -> compileCase(arguments)
             "match" -> compileMatch(arguments)
             "step" -> compileStep(arguments)
@@ -145,6 +146,11 @@ internal object StyleExpressionCompiler {
     private fun compileCoalesce(arguments: List<JsonElement>): StyleExpression {
         val expressions = requireAtLeast("coalesce", arguments, 1).map(::compileNode)
         return CoalesceExpression(expressions, commonType(expressions.map(StyleExpression::resultType)))
+    }
+
+    private fun compileConcat(arguments: List<JsonElement>): StyleExpression {
+        val expressions = requireAtLeast("concat", arguments, 1).map(::compileNode)
+        return ConcatExpression(expressions)
     }
 
     private fun compileCase(arguments: List<JsonElement>): StyleExpression {
@@ -460,6 +466,24 @@ private data class CoalesceExpression(
         expressions.firstNotNullOfOrNull { expression -> expression.evaluate(context).takeUnless { it == StyleValue.Null } } ?: StyleValue.Null
 }
 
+private data class ConcatExpression(
+    val expressions: List<StyleExpression>,
+) : StyleExpression {
+    override val resultType: StyleType = StyleType.STRING
+
+    override fun evaluate(context: StyleEvaluationContext): StyleValue =
+        StyleValue.StringValue(
+            expressions.joinToString("") { expression ->
+                when (val value = expression.evaluate(context)) {
+                    is StyleValue.StringValue -> value.value
+                    is StyleValue.NumberValue -> value.value.stringifyForText()
+                    is StyleValue.BooleanValue -> value.value.toString()
+                    else -> ""
+                }
+            },
+        )
+}
+
 private data class CaseExpression(
     val branches: List<Pair<StyleExpression, StyleExpression>>,
     val fallback: StyleExpression,
@@ -554,6 +578,9 @@ private fun StyleValue.asColor(): CompiledColor? = when (this) {
     is StyleValue.StringValue -> parseCssColor(value)
     else -> null
 }
+
+private fun Double.stringifyForText(): String =
+    if (this == toLong().toDouble()) toLong().toString() else toString()
 
 internal fun JsonElement.toStyleValue(): StyleValue = when (this) {
     JsonNull -> StyleValue.Null

@@ -117,9 +117,33 @@ class StyleExpressionTest {
     }
 
     @Test
+    fun concatJoinsStringsAndStringifiesScalars() {
+        assertEquals(
+            StyleValue.StringValue("A1true"),
+            evaluate("""["concat","A",1,true]""", StyleEvaluationContext(zoom = 0.0)),
+        )
+    }
+
+    @Test
+    fun concatTreatsNullAsEmpty() {
+        assertEquals(
+            StyleValue.StringValue("AB"),
+            evaluate("""["concat","A",["get","missing"],"B"]""", StyleEvaluationContext(zoom = 0.0)),
+        )
+    }
+
+    @Test
+    fun concatDropsTheDecimalOfAWholeNumber() {
+        assertEquals(
+            StyleValue.StringValue("7"),
+            evaluate("""["concat",7]""", StyleEvaluationContext(zoom = 0.0)),
+        )
+    }
+
+    @Test
     fun rejectsUnsupportedOperatorsAndInvalidTypesAtCompilation() {
         assertFailsWith<StyleExpressionCompilationException> {
-            compile("""["concat","a","b"]""")
+            compile("""["not-a-real-operator","a","b"]""")
         }
         assertFailsWith<StyleExpressionCompilationException> {
             StyleExpressionCompiler.compile(
