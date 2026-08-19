@@ -183,9 +183,22 @@ internal object LabelLayout {
     /**
      * Places each line's glyphs left to right, then aligns lines per [LabelTextStyle.justify],
      * centers the resulting block, shifts it so [LabelTextStyle.anchor] sits at the origin, and
-     * displaces it by `offsetEm * EM_PX`. Each line occupies one `lineHeightEm * EM_PX` row,
-     * with its baseline at the row's vertical center - the atlas carries no ascent/descent
-     * metric to place it any more precisely than that.
+     * displaces it by `offsetEm * EM_PX`. Each line occupies one `lineHeightEm * EM_PX` row and is
+     * positioned from that row's **top edge**, never from a baseline.
+     *
+     * That is what the provider's `top` bearing is measured against. Glyph ranges encode `-top` as
+     * the distance from the line's ascender down to the bitmap's top edge, so `-top` is directly
+     * this row's downward offset, and no ascent or descent metric is needed to use it. Verified
+     * against two live providers on 2026-08-19: a range's degenerate space glyph has `height == 0`
+     * and pins the ascender, at `top == -23` for Stadia Maps' `Stadia Regular` and `top == -25` for
+     * MapTiler's `Open Sans Regular`; a cap-height `A` then reports `top == -5` and `-7`
+     * respectively with `height == 18`, putting its body's bottom edge exactly on the baseline in
+     * both. Overshooting and descending glyphs fall out of the same rule.
+     *
+     * Reading `top` as an offset from a baseline - which this did until it was measured - is wrong
+     * in both sign and reference, by `ascender - 2 * -top`, an amount that differs per font. It
+     * happened to be nearly right for Open Sans and badly wrong for Stadia, which is why nothing
+     * noticed: every fixture in the suite encoded the assumption under test.
      */
     private fun place(lines: List<List<Token>>, atlas: PackedGlyphAtlas, style: LabelTextStyle): List<LabelGlyphQuad> {
         if (lines.isEmpty()) return emptyList()
@@ -194,15 +207,18 @@ internal object LabelLayout {
         val lineHeightPx = style.lineHeightEm * GlyphRangeDecoder.EM_PX
         val scale = style.sizePx / GlyphRangeDecoder.EM_PX
 
-        data class PlacedGlyph(val entryIndex: Int, val x: Double, val y: Double)
+        data class PlacedGlyph(val entryIndex: Int, val x: Double, val lineTopY: Double)
 
         val lineWidths = DoubleArray(lines.size)
         val perLine = lines.mapIndexed { lineIndex, line ->
             var penX = 0.0
-            val baselineY = (lineIndex + 0.5) * lineHeightPx
+            // The row's top edge, not its center and not a baseline: `-entry.top` is measured down
+            // from exactly here, so the block spans [0, blockHeight) and vertical anchoring needs
+            // only the block height, never a per-glyph bearing.
+            val lineTopY = lineIndex * lineHeightPx
             val glyphs = mutableListOf<PlacedGlyph>()
             for (token in line) {
-                if (token.entryIndex != null) glyphs += PlacedGlyph(token.entryIndex, penX, baselineY)
+                if (token.entryIndex != null) glyphs += PlacedGlyph(token.entryIndex, penX, lineTopY)
                 penX += token.advance + letterSpacingPx
             }
             // The line's own width excludes the trailing letter-spacing added after its
@@ -232,19 +248,24 @@ internal object LabelLayout {
             for (glyph in glyphs) {
                 val entry = atlas.entries[glyph.entryIndex]
                 val penX = glyph.x - blockWidth / 2.0 + anchorDx + offsetDx
-                val baselineY = glyph.y - blockHeight / 2.0 + anchorDy + offsetDy
-                // BUFFER_PX comes off both axes because the quad is the *cell*, not the glyph
-                // body. GlyphAtlasPacker sizes an entry as the buffered cell
+                val lineTopY = glyph.lineTopY - blockHeight / 2.0 + anchorDy + offsetDy
+                // Two corrections, both taking the cell's corner off the body's position.
+                //
+                // `- entry.top` rather than `+`: the provider measures `-top` downward from the
+                // line's top edge, which lineTopY is, so subtracting a negative bearing moves the
+                // body down into the row. Adding it to a baseline instead - the reading this
+                // carried before the wire format was measured - was wrong in sign and in
+                // reference, and by a per-font amount.
+                //
+                // `- BUFFER_PX` on both axes because the quad is the *cell*, not the glyph body.
+                // GlyphAtlasPacker sizes an entry as the buffered cell
                 // (glyph.width + BUFFER_PX * 2) while carrying the provider's unbuffered bearings,
                 // so placing the cell's corner at the bearing would put the body - which starts
                 // BUFFER_PX inside the cell - that far down and right of where the bearing says.
-                // Moving the corner up-left by BUFFER_PX lands the body exactly on the bearing.
-                // At the 24-pixel em that error was 0.125 em on every glyph, at every zoom, on
-                // every platform, and the bounding box inherited it.
                 quads += LabelGlyphQuad(
                     entryIndex = glyph.entryIndex,
                     x = (penX + entry.left - GlyphRangeDecoder.BUFFER_PX) * scale,
-                    y = (baselineY + entry.top - GlyphRangeDecoder.BUFFER_PX) * scale,
+                    y = (lineTopY - entry.top - GlyphRangeDecoder.BUFFER_PX) * scale,
                     scale = scale,
                 )
             }

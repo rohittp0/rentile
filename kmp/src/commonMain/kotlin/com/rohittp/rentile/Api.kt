@@ -156,10 +156,13 @@ public data class ValidatedMvtTile(
  *   6 pixels wider and 6 taller than the glyph body it contains. [x] and [y] are the cell's
  *   top-left corner, measured from the texture's top-left, x rightwards and y downwards.
  * - [left] and [top] are the provider's bearings for the glyph **body**, not the cell, forwarded
- *   verbatim from the glyph range: [left] is the horizontal distance from the pen position to the
- *   body's left edge, positive rightwards, and [top] is the vertical distance from the baseline to
- *   the body's top edge. Rentile's own layout reads [top] in the same y-downwards sense as [y],
- *   adding it to the baseline, which is the interpretation [LabelGlyphQuad] positions are built on.
+ *   verbatim from the glyph range. [left] is the horizontal distance from the pen position to the
+ *   body's left edge, positive rightwards. [top] is negative, and `-top` is the distance from the
+ *   **line's ascender** down to the body's top edge — measured from the top of the line, not from
+ *   its baseline. A line's baseline therefore sits `-top` below the line top for a glyph whose
+ *   `height` is zero, which is how the ascender can be recovered from a range's own space glyph;
+ *   every other glyph's body bottom is `-top + height` below the line top, so a cap-height letter
+ *   lands exactly on the baseline and a descender passes below it.
  *
  * A consumer drawing this itself therefore places the cell's corner 3 pixels up and left of the
  * bearing, which is what [LabelGlyphQuad.x] and [LabelGlyphQuad.y] already have applied — they
@@ -215,6 +218,10 @@ public data class LabelGlyphAtlas(
  * rightwards, y downwards, and the origin is the label's own anchor point — the position
  * [LabelCandidate.longitude] and [LabelCandidate.latitude] name — after `text-anchor` and
  * `text-offset` have been applied. Nothing here is in screen coordinates and nothing is projected.
+ *
+ * Each line of a multi-line label occupies one `text-line-height` row and is positioned from that
+ * row's top edge, which is what [LabelGlyphEntry.top] is measured against; no baseline is involved
+ * and none needs to be reconstructed to draw these.
  *
  * The buffer is already compensated for: these are cell corners, not bearings, so the glyph body
  * lands on the provider's bearing without further adjustment.

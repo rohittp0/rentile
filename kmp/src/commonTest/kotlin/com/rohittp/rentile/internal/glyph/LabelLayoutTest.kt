@@ -8,6 +8,10 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LabelLayoutTest {
+    private companion object {
+        const val TOLERANCE = 1e-9
+    }
+
     // layOut takes a whitespace-advance map alongside the packed atlas, not atlas alone as
     // originally sketched: PackedGlyphAtlas has no entry - and so no advance - for a glyph with
     // an empty bitmap (a space, most often), since GlyphAtlasPacker deliberately drops those.
@@ -135,41 +139,39 @@ class LabelLayoutTest {
         // future change to it is caught here rather than only failing at some consumer far
         // downstream. For "AB" centered both ways: the line (and the block) is exactly 24
         // em-units wide, so justification contributes no offset and the anchor shift alone
-        // centers the block, and the single line's baseline sits exactly at the vertical
-        // center, at y = 0.
+        // centers the block. One line of 1.2 em means the block is 28.8 tall, so the line's top
+        // edge sits 14.4 above the origin.
         //
-        // A quad is the buffered *cell*, so its corner sits BUFFER_PX up and left of the
-        // bearing the provider gave for the glyph body: x = -12 + left(1) - 3 = -14, and
-        // y = 0 + top(-14) - 3 = -17.
+        // x = -12 + left(1) - BUFFER(3) = -14. y is the cell corner: the body sits -top = 14
+        // below the line top, and the cell starts BUFFER above the body, so
+        // y = -14.4 + 14 - 3 = -3.4.
         val (whitespace, atlas) = setUp('A'.code, 'B'.code)
         val laid = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas))!!
 
-        assertEquals(-14.0, laid.quads[0].x)
-        assertEquals(-17.0, laid.quads[0].y)
+        assertEquals(-14.0, laid.quads[0].x, TOLERANCE)
+        assertEquals(-3.4, laid.quads[0].y, TOLERANCE)
     }
 
     @Test
-    fun theGlyphBodyRestsExactlyOnTheBaseline() {
-        // The invariant behind the absolute numbers above, stated so it cannot be satisfied by
-        // whatever the code happens to produce. The fixture's top = -height is the canonical
-        // rests-on-baseline encoding, and the single line's baseline is at y = 0, so the body's
-        // top edge must sit exactly `height` above it and its bottom edge exactly on it.
+    fun theGlyphBodySitsItsTopBearingBelowTheLinesTopEdge() {
+        // The invariant behind the absolute numbers above. `-top` is the provider's distance from
+        // the line's top edge down to the body's top edge, so that is exactly where the body must
+        // land - and the cell the quad describes starts BUFFER_PX above it.
         //
-        // The body begins BUFFER_PX inside the cell the quad describes. Placing the cell's corner
-        // at the bearing instead - as this did before the buffer was compensated for - put the
-        // body BUFFER_PX below the baseline, a 0.125 em error at the 24-pixel em on every glyph.
+        // This fixture is hand-built, so it can only pin the rule's *shape*, never the rule
+        // itself; a fixture written from our own reading of the format cannot contradict that
+        // reading. GlyphBearingContractTest carries the same invariant against metrics measured
+        // off two live providers, which is what makes it falsifiable.
         val (whitespace, atlas) = setUp('A'.code, 'B'.code)
         val laid = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas))!!
         val quad = laid.quads[0]
         val entry = atlas.entries[quad.entryIndex]
-        val buffer = GlyphRangeDecoder.BUFFER_PX * quad.scale
+        val lineTopY = -(1.2 * 24.0) / 2.0
 
-        val bodyTop = quad.y + buffer
-        val bodyBottom = bodyTop + (entry.height - GlyphRangeDecoder.BUFFER_PX * 2) * quad.scale
+        val bodyTop = quad.y + GlyphRangeDecoder.BUFFER_PX * quad.scale
 
-        assertEquals(-14.0, bodyTop)
-        assertEquals(0.0, bodyBottom)
-        // The horizontal bearing lands the body's left edge on left(1), likewise.
-        assertEquals(-11.0, quad.x + buffer)
+        assertEquals(lineTopY - entry.top, bodyTop, TOLERANCE)
+        // The horizontal bearing lands the body's left edge on left(1) past the pen.
+        assertEquals(-11.0, quad.x + GlyphRangeDecoder.BUFFER_PX * quad.scale, TOLERANCE)
     }
 }
