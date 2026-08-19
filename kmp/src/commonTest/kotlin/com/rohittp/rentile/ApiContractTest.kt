@@ -100,4 +100,37 @@ class ApiContractTest {
     fun glyphRangeIsAResourceClass() {
         assertTrue(ResourceClass.entries.contains(ResourceClass.GLYPH_RANGE))
     }
+
+    @Test
+    fun labelCandidateGeometryCarriesNoScreenCoordinates() {
+        // A compile-time contract check: a candidate exposes geography and label-local
+        // geometry only. If someone later adds a screen-space field, this stops compiling
+        // against the property list and the reviewer has to justify it.
+        val candidate = LabelCandidate(
+            layerStyleIndex = 0,
+            requestedTile = TileId(14, 14547, 6451),
+            sourceTile = TileId(14, 14547, 6451),
+            longitude = 139.6503, latitude = 35.6762,
+            glyphs = listOf(LabelGlyphQuad(entryIndex = 0, x = 0.0, y = 0.0, scale = 1.0)),
+            boundingBox = LabelBox(left = -1.0, top = -1.0, right = 1.0, bottom = 1.0),
+            icon = null,
+            allowOverlap = false, ignorePlacement = false,
+            padding = 2.0, sortKey = 0.0, opacity = 1.0,
+            haloWidth = 0.0, haloBlur = 0.0,
+        )
+
+        assertEquals(0, candidate.layerStyleIndex)
+        assertEquals(139.6503, candidate.longitude)
+        assertEquals(14, candidate.sourceTile.z)
+    }
+
+    @Test
+    fun theGlyphAtlasComparesAndPrintsByValueNotByReference() {
+        val one = LabelGlyphAtlas(byteArrayOf(1, 2, 3), 4, 4, "key", emptyList())
+        val two = LabelGlyphAtlas(byteArrayOf(1, 2, 3), 4, 4, "key", emptyList())
+
+        assertEquals(one, two)
+        assertEquals(one.hashCode(), two.hashCode())
+        assertFalse(one.toString().contains("1, 2, 3"))
+    }
 }
