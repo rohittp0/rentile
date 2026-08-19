@@ -124,9 +124,13 @@ class MapCatalogCorpusSmokeTest {
 
     /**
      * Acquires label candidates for the three cases whose geography and script exercise the
-     * label pipeline against live styles: [LABEL_SMOKE_CASE_IDS]. Only the highest-zoom tile of
-     * each case is used - label correctness varies by geography and script, not by zoom, and the
-     * publish gate is already a long-running job. See `compatibility/README.md`.
+     * label pipeline against live styles: [LABEL_SMOKE_CASE_IDS]. Only the lowest-zoom tile of
+     * each case is used - place-name labels (continent, country, state, city, town) live at low
+     * zoom and are sparse or entirely absent by deep overzoom, so the lowest zoom is the one that
+     * actually exercises label volume and glyph-range fan-out; a highest-zoom tile would prove
+     * nothing here. Label correctness itself varies by geography and script, not by zoom, so
+     * acquiring every case at every zoom would add runtime without adding signal - the publish
+     * gate is already a long-running job. See `compatibility/README.md`.
      */
     private suspend fun acquireLabelSmoke(
         rasterizer: BasemapRasterizer,
@@ -135,7 +139,7 @@ class MapCatalogCorpusSmokeTest {
     ): List<LabelCaseSmokeResult> =
         LABEL_SMOKE_CASE_IDS.map { caseId ->
             val case = coverage.cases.first { it.id == caseId }
-            val tile = case.tiles.maxBy(CoverageTile::z).asTileId()
+            val tile = case.tiles.minBy(CoverageTile::z).asTileId()
             acquireLabelCaseSmoke(rasterizer, prepared, caseId, tile)
         }
 
@@ -194,9 +198,16 @@ class MapCatalogCorpusSmokeTest {
                 "is supposed to enforce"
         }
         if (caseId == CAIRO_CASE_ID) {
-            cairoOutcomeFailure(batch)?.let { failureDetail ->
-                errorCode = errorCode ?: "CAIRO_SCRIPT_OUTCOME_INVALID"
-                diagnostics += "CAIRO_SCRIPT_OUTCOME_INVALID: $failureDetail"
+            when (val outcome = classifyCairoOutcome(batch)) {
+                is CairoOutcome.Invalid -> {
+                    errorCode = errorCode ?: "CAIRO_SCRIPT_OUTCOME_INVALID"
+                    diagnostics += "CAIRO_SCRIPT_OUTCOME_INVALID: ${outcome.detail}"
+                }
+                CairoOutcome.NoPlaceFeatures -> diagnostics += "CAIRO_NO_PLACE_FEATURES: tile " +
+                    "carried zero label candidates and zero diagnostics; acceptable only when the " +
+                    "tile genuinely has no place-name features. Surfaced here rather than silently " +
+                    "accepted in case this turns out to be the common outcome instead of the rare one"
+                CairoOutcome.SupportedScriptCandidates, CairoOutcome.ExcludedByComplexScript -> Unit
             }
         }
 
@@ -213,22 +224,47 @@ class MapCatalogCorpusSmokeTest {
     }
 
     /**
-     * Cairo is right-to-left, so exactly two outcomes are acceptable: either the style branched
-     * on `is-supported-script` and every candidate's resolved text is a script this renderer's
-     * glyph-metrics-only layout can lay out (typically a `name:latin` fallback), or no candidates
-     * exist because [DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED] reported the exclusion.
-     * Candidates whose text still requires complex shaping would render as garbled output and
-     * must fail the gate - that is the one outcome this check exists to catch. Returns a
-     * redaction-safe description of the violation, or null when the outcome is acceptable.
+     * Cairo is right-to-left, so exactly three outcomes are acceptable and nothing else:
+     *
+     * - [CairoOutcome.SupportedScriptCandidates]: the style branched on `is-supported-script` and
+     *   every candidate's resolved text is a script this renderer's glyph-metrics-only layout can
+     *   lay out (typically a `name:latin` fallback).
+     * - [CairoOutcome.ExcludedByComplexScript]: no candidates exist because
+     *   [DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED] reported the exclusion.
+     * - [CairoOutcome.NoPlaceFeatures]: no candidates and no diagnostics at all - the tile
+     *   genuinely carries no place-name features, which is correct behaviour and not a script
+     *   outcome at all.
+     *
+     * [CairoOutcome.NoPlaceFeatures] is deliberately narrow so it cannot hide a broken pipeline: it
+     * is accepted only when the batch reports *nothing whatsoever*, never merely when
+     * `COMPLEX_SCRIPT_LABEL_EXCLUDED` is absent. A lone `GLYPH_RANGE_UNAVAILABLE`, for instance,
+     * still falls through to [CairoOutcome.Invalid] - every corpus style has a resolvable glyphs
+     * template, so that diagnostic without an empty diagnostic list alongside it means broken
+     * template resolution, not an empty tile.
+     *
+     * Candidates whose text still requires complex shaping - garbled output - are the one outcome
+     * this check exists to catch, and always resolve to [CairoOutcome.Invalid].
      */
-    private fun cairoOutcomeFailure(batch: LabelCandidateBatch): String? {
+    private sealed interface CairoOutcome {
+        data object SupportedScriptCandidates : CairoOutcome
+        data object ExcludedByComplexScript : CairoOutcome
+        data object NoPlaceFeatures : CairoOutcome
+        data class Invalid(val detail: String) : CairoOutcome
+    }
+
+    private fun classifyCairoOutcome(batch: LabelCandidateBatch): CairoOutcome {
         if (batch.candidates.isEmpty()) {
-            return if (batch.diagnostics.any { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED }) {
-                null
-            } else {
-                "no label candidates were acquired without COMPLEX_SCRIPT_LABEL_EXCLUDED being " +
-                    "reported - every corpus style has a resolvable glyphs template, so an empty " +
-                    "batch here is otherwise unexplained"
+            return when {
+                batch.diagnostics.any { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED } ->
+                    CairoOutcome.ExcludedByComplexScript
+                batch.diagnostics.isEmpty() -> CairoOutcome.NoPlaceFeatures
+                else -> CairoOutcome.Invalid(
+                    "no label candidates were acquired without COMPLEX_SCRIPT_LABEL_EXCLUDED being " +
+                        "reported, and the batch was not free of diagnostics either (" +
+                        batch.diagnostics.joinToString(", ") { it.code.name } +
+                        "); every corpus style has a resolvable glyphs template, so this is " +
+                        "otherwise unexplained",
+                )
             }
         }
         val garbledCandidateCount = batch.candidates.count { candidate ->
@@ -238,11 +274,13 @@ class MapCatalogCorpusSmokeTest {
             ScriptSupport.requiresComplexShaping(text)
         }
         return if (garbledCandidateCount == 0) {
-            null
+            CairoOutcome.SupportedScriptCandidates
         } else {
-            "$garbledCandidateCount/${batch.candidates.size} label candidates still require a " +
-                "script this renderer cannot lay out; the style must fall back to a supported " +
-                "script via is-supported-script or the label must be excluded entirely"
+            CairoOutcome.Invalid(
+                "$garbledCandidateCount/${batch.candidates.size} label candidates still require a " +
+                    "script this renderer cannot lay out; the style must fall back to a supported " +
+                    "script via is-supported-script or the label must be excluded entirely",
+            )
         }
     }
 
@@ -806,9 +844,10 @@ class MapCatalogCorpusSmokeTest {
         const val MAX_CATALOG_STYLES = 1_000
 
         /**
-         * Cases the corpus gate acquires label candidates for, one highest-zoom tile each: a
-         * Latin baseline, and the two non-Latin cases exercising CJK glyph-range fan-out and the
-         * complex-script exclusion path. See `compatibility/README.md`.
+         * Cases the corpus gate acquires label candidates for, one lowest-zoom tile each: a Latin
+         * baseline, and the two non-Latin cases exercising CJK glyph-range fan-out and the
+         * complex-script exclusion path. Lowest zoom, not highest: place-name labels live at low
+         * zoom and are sparse or absent by deep overzoom. See `compatibility/README.md`.
          */
         val LABEL_SMOKE_CASE_IDS: List<String> = listOf("new-york-zoom-ladder", "tokyo-cjk-dense", "cairo-rtl")
         const val CAIRO_CASE_ID = "cairo-rtl"
