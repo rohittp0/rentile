@@ -74,6 +74,56 @@ public enum class DiagnosticCode {
      * failing identically on the same tile. Neither is a URL.
      */
     ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE,
+
+    /**
+     * A label candidate's text resolved to a script that requires bidirectional reordering or
+     * contextual joining, which this renderer's glyph-metrics-only layout cannot perform. The
+     * feature was excluded from its layer's label candidates rather than laid out incorrectly.
+     *
+     * Reported once per layer, not per feature: many features sharing the same script would
+     * otherwise repeat the identical diagnostic without adding information.
+     *
+     * A style that branches on `is-supported-script` to select a fallback text field (typically
+     * `name:latin`) usually keeps its labels without ever reaching this code - it fires only when
+     * the text actually laid out for a feature still resolves to an unsupported script.
+     *
+     * Nothing failed: label-candidate preparation continues, and this feature is simply absent
+     * from the result.
+     */
+    COMPLEX_SCRIPT_LABEL_EXCLUDED,
+
+    /**
+     * A label layer used a text layout or paint property - or an expression inside one - that
+     * this compiler could not compile, and the whole layer was excluded from label candidates
+     * rather than failing style preparation.
+     *
+     * `details` carries `layerIndex` and `layerIdDigest`, the same identity pair used by other
+     * layer-exclusion diagnostics, locating which layer was excluded in the compiled style.
+     *
+     * Always INFO. Nothing failed: preparation continues without that layer's labels.
+     */
+    UNSUPPORTED_TEXT_CONSTRUCT,
+
+    /**
+     * Label candidates were requested for a prepared style whose `glyphs` URL template could not
+     * be resolved, so an empty label-candidate batch was returned instead of failing. A style
+     * that declares no `glyphs` key has no text to lay out - a legitimate style, not an error.
+     *
+     * Always INFO. Nothing failed: an empty batch is returned rather than the operation throwing.
+     */
+    GLYPH_RANGE_UNAVAILABLE,
+
+    /**
+     * A label layer declared `symbol-placement: line`, which this profile's label-candidate
+     * layout does not implement, and the layer was excluded entirely rather than laid out as
+     * point-anchored text.
+     *
+     * `details` carries `layerIndex` and `layerIdDigest`, the same identity pair used by other
+     * layer-exclusion diagnostics, locating which layer was excluded in the compiled style.
+     *
+     * Always INFO. Nothing failed: preparation continues without that layer's labels.
+     */
+    LINE_PLACEMENT_LABEL_EXCLUDED,
 }
 
 /** Sanitized diagnostic. [details] must never contain secrets or signed URLs. */

@@ -10,6 +10,7 @@ public enum class ResourceClass {
     SPRITE_JSON,
     SPRITE_IMAGE,
     GEO_JSON,
+    GLYPH_RANGE,
 }
 
 /** Typed request metadata; arbitrary headers do not cross the public transport boundary. */

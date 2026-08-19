@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 
 class ApiContractTest {
@@ -83,5 +84,20 @@ class ApiContractTest {
             rasterizer.close()
             rasterizer.awaitClosed()
         }
+    }
+
+    @Test
+    fun glyphLimitsAreValidatedAndDefaulted() {
+        val limits = ResourceLimits()
+
+        assertEquals(1L * 1024L * 1024L, limits.maxGlyphRangeBytes)
+        assertEquals(64, limits.maxGlyphRangesPerBatch)
+        assertFailsWith<IllegalArgumentException> { ResourceLimits(maxGlyphRangeBytes = 0) }
+        assertFailsWith<IllegalArgumentException> { ResourceLimits(maxGlyphRangesPerBatch = 0) }
+    }
+
+    @Test
+    fun glyphRangeIsAResourceClass() {
+        assertTrue(ResourceClass.entries.contains(ResourceClass.GLYPH_RANGE))
     }
 }

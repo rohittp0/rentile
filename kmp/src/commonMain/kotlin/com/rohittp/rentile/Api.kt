@@ -194,6 +194,8 @@ public data class ResourceLimits(
     public val maxTileBytes: Long = 32L * 1024L * 1024L,
     public val maxSpriteImageBytes: Long = 32L * 1024L * 1024L,
     public val maxGeoJsonBytes: Long = 64L * 1024L * 1024L,
+    public val maxGlyphRangeBytes: Long = 1L * 1024L * 1024L,
+    public val maxGlyphRangesPerBatch: Int = 64,
     public val maxRasterDimensionPx: Int = 8192,
     public val maxDecodedRasterBytes: Long = 256L * 1024L * 1024L,
     public val maxMvtLayers: Int = 512,
@@ -210,6 +212,8 @@ public data class ResourceLimits(
         require(maxTileBytes > 0)
         require(maxSpriteImageBytes > 0)
         require(maxGeoJsonBytes > 0)
+        require(maxGlyphRangeBytes > 0)
+        require(maxGlyphRangesPerBatch > 0)
         require(maxRasterDimensionPx > 0)
         require(maxDecodedRasterBytes > 0)
         require(maxMvtLayers > 0)
