@@ -28,6 +28,67 @@ import com.rohittp.rentile.internal.style.mercatorLatitude
 import com.rohittp.rentile.internal.style.parseCssColor
 import com.rohittp.rentile.internal.withExpandedFeatureTokens
 
+/**
+ * Per-layer tally behind `LABEL_FEATURE_SKIPPED`.
+ *
+ * Three losses, counted apart rather than summed, because a consumer seeing no labels needs to
+ * know which one happened: an unusable text property ([skipped]), geometry this profile cannot
+ * anchor ([nonPointGeometry]), and text the acquired atlas has no glyphs for ([noGlyphs]). Folding
+ * them into one number would make it mean three different things at once. Counted rather than
+ * flagged for the reason `ICON_FEATURE_SKIPPED` counts: losing one label and losing every one are
+ * different situations, and only counts against a denominator can tell them apart.
+ *
+ * Every count is in the same unit - one label, meaning one anchor of one feature on one requested
+ * tile - so the three are strict subsets of [candidates] and comparable to each other.
+ */
+internal class LabelFeatureSkips(val layerId: String) {
+    var candidates: Int = 0
+    var skipped: Int = 0
+    var noGlyphs: Int = 0
+    var nonPointGeometry: Int = 0
+    val tiles: MutableSet<TileId> = mutableSetOf()
+
+    /** Nothing to report when the layer lost nothing, however many labels it produced. */
+    val reportable: Boolean get() = skipped > 0 || noGlyphs > 0 || nonPointGeometry > 0
+
+    fun toDiagnostic(layerOrder: Int): RenderDiagnostic = RenderDiagnostic(
+        code = DiagnosticCode.LABEL_FEATURE_SKIPPED,
+        severity = DiagnosticSeverity.INFO,
+        stage = PipelineStage.RESOURCE_DECODING,
+        message = "A place-name label layer produced no candidate for one or more of its features",
+        details = mapOf(
+            "layerIndex" to layerOrder.toString(),
+            "layerIdDigest" to layerId.sha256Hex(),
+            "candidateFeatures" to candidates.toString(),
+            "skippedFeatures" to skipped.toString(),
+            "skippedNoGlyphs" to noGlyphs.toString(),
+            "skippedNonPointGeometry" to nonPointGeometry.toString(),
+        ),
+        affectedTiles = tiles.sortedWith(LABEL_TILE_ORDER),
+    )
+}
+
+/** Per-layer tally behind `COMPLEX_SCRIPT_LABEL_EXCLUDED`, in the same unit as [LabelFeatureSkips]. */
+internal class ComplexScriptExclusion(val layerId: String) {
+    var features: Int = 0
+    val tiles: MutableSet<TileId> = mutableSetOf()
+
+    fun toDiagnostic(layerOrder: Int): RenderDiagnostic = RenderDiagnostic(
+        code = DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED,
+        severity = DiagnosticSeverity.INFO,
+        stage = PipelineStage.RESOURCE_DECODING,
+        message = "A place-name label layer's text resolves to a script this profile cannot lay out",
+        details = mapOf(
+            "layerIndex" to layerOrder.toString(),
+            "layerIdDigest" to layerId.sha256Hex(),
+            "excludedFeatures" to features.toString(),
+        ),
+        affectedTiles = tiles.sortedWith(LABEL_TILE_ORDER),
+    )
+}
+
+internal val LABEL_TILE_ORDER: Comparator<TileId> = compareBy(TileId::z, TileId::x, TileId::y)
+
 /** One Glyph Range a batch needs: a resolved font stack and the 256-codepoint block within it. */
 internal data class GlyphRangeRequest(val fontStack: String, val rangeStart: Int)
 
@@ -66,7 +127,8 @@ internal data class PendingLabel(
 internal class LabelCandidatePlan internal constructor(
     private val pending: List<PendingLabel>,
     val requiredRanges: List<GlyphRangeRequest>,
-    val diagnostics: List<RenderDiagnostic>,
+    private val complexScript: Map<Int, ComplexScriptExclusion>,
+    private val featureSkips: Map<Int, LabelFeatureSkips>,
     private val style: CompiledPreparedStyle,
     private val contentDigests: List<String>,
 ) {
@@ -74,8 +136,15 @@ internal class LabelCandidatePlan internal constructor(
      * Packs [ranges] into one atlas, lays every surviving label out against it, and assembles the
      * batch. [ranges] must be exactly what [requiredRanges] asked for; ordering does not matter,
      * because [GlyphAtlasPacker] canonicalizes it.
+     *
+     * [record] receives each label diagnostic for the caller's [com.rohittp.rentile.DiagnosticSink].
+     * They are emitted here rather than by `plan` because one of the losses they count - a label
+     * whose codepoints the acquired atlas does not cover - is not knowable until layout runs.
      */
-    fun assemble(ranges: List<AcquiredGlyphRange>): LabelCandidateBatch {
+    fun assemble(
+        ranges: List<AcquiredGlyphRange>,
+        record: (RenderDiagnostic) -> Unit,
+    ): LabelCandidateBatch {
         val atlas = GlyphAtlasPacker.pack(ranges)
         // Once per batch, never per label: the map depends only on the acquired ranges, and
         // rebuilding it inside layOut cost up to 64 x 256 map operations for every label.
@@ -85,7 +154,18 @@ internal class LabelCandidatePlan internal constructor(
         val candidates = mutableListOf<LabelCandidate>()
 
         for (label in pending) {
-            val laidOut = LabelLayout.layOut(label.text, atlas, whitespace, label.textStyle) ?: continue
+            val laidOut = LabelLayout.layOut(label.text, atlas, whitespace, label.textStyle)
+            if (laidOut == null) {
+                // The label wanted glyphs the acquired atlas does not cover, so it lays out to
+                // nothing. Counted rather than dropped in silence: 0.2.0 shipped an icon layer
+                // that emitted nothing at all when every feature named a sprite the atlas lacked,
+                // and a whole-layer loss reported as no signal whatsoever was a real defect.
+                featureSkips[label.program.layerOrder]?.let {
+                    it.noGlyphs += 1
+                    it.tiles += label.requestedTile
+                }
+                continue
+            }
             // Appended only when a candidate actually survives layout, so the list holds one entry
             // per (layer, zoom) genuinely present in the batch and never an orphan.
             val styleIndex = layerStyleIndex.getOrPut(label.layerId to label.requestedTile.z) {
@@ -127,9 +207,18 @@ internal class LabelCandidatePlan internal constructor(
             // the reasons a layer the caller can see in labelLayerDescriptors contributed no
             // candidates, so a caller reading only this batch would otherwise have no way to
             // tell an excluded layer from an empty one.
-            diagnostics = style.diagnostics + diagnostics,
+            diagnostics = style.diagnostics + labelDiagnostics().onEach(record),
         )
     }
+
+    /** One entry per layer per code, in layer order, so the list is identical between runs. */
+    private fun labelDiagnostics(): List<RenderDiagnostic> =
+        (complexScript.keys + featureSkips.keys).sorted().flatMap { layerOrder ->
+            listOfNotNull(
+                complexScript[layerOrder]?.toDiagnostic(layerOrder),
+                featureSkips[layerOrder]?.takeIf { it.reportable }?.toDiagnostic(layerOrder),
+            )
+        }
 
     /**
      * Identity of everything this batch resolved: the acquired MVT bytes and the acquired glyph
@@ -224,14 +313,35 @@ internal object LabelCandidateAssembler {
                     // gating on the raw property would exclude labels the style already healed.
                     val text = evaluateText(program, context, feature) ?: continue
 
-                    val anchors = (feature.geometry as? DecodedVectorGeometry.Points)?.points ?: continue
+                    val skips = featureSkips.getOrPut(program.layerOrder) {
+                        LabelFeatureSkips(layer.descriptor.id)
+                    }
+
+                    val anchors = (feature.geometry as? DecodedVectorGeometry.Points)?.points
+                    if (anchors == null) {
+                        // Place-name source layers are point geometry, so this profile anchors
+                        // nothing else and does not invent a midpoint or centroid the way icons
+                        // do. Silently producing nothing was the gap: a layer that is entirely
+                        // lines or polygons would have looked identical to a layer with no
+                        // features at all.
+                        skips.candidates += 1
+                        skips.nonPointGeometry += 1
+                        skips.tiles += tile
+                        continue
+                    }
                     // A tile buffer repeats a point feature into its neighbours. Emitting only
                     // when the anchor falls inside [0, extent) of its own source tile removes
-                    // those duplicates exactly, rather than by proximity.
+                    // those duplicates exactly, rather than by proximity. A feature that is
+                    // entirely outside is not a loss - it belongs to the neighbouring tile - so it
+                    // is not counted.
                     val inside = anchors.withIndex().filter { (_, point) ->
                         point.x in 0 until sourceLayer.extent && point.y in 0 until sourceLayer.extent
                     }
                     if (inside.isEmpty()) continue
+
+                    // From here the feature wanted a label on this tile, whatever becomes of it.
+                    // Every later loss is counted against this denominator and in this same unit.
+                    skips.candidates += inside.size
 
                     if (ScriptSupport.requiresComplexShaping(text)) {
                         // Counted per layer, never per feature: a dense tile carries thousands of
@@ -245,16 +355,11 @@ internal object LabelCandidateAssembler {
                         continue
                     }
 
-                    // Past the script gate this feature qualified for a candidate, and
-                    // everything left is property evaluation against its own data. A single
-                    // feature carrying a value no text property can use must not take the batch
-                    // down with it: 0.2.0 spent two rounds removing exactly that failure for
+                    // Everything left is property evaluation against this feature's own data. A
+                    // single feature carrying a value no text property can use must not take the
+                    // batch down with it: 0.2.0 spent two rounds removing exactly that failure for
                     // icons, and ADR 0026's reasoning is unchanged here. The feature is skipped,
                     // counted, and reported once for its layer.
-                    val skips = featureSkips.getOrPut(program.layerOrder) {
-                        LabelFeatureSkips(layer.descriptor.id)
-                    }
-                    skips.candidates += 1
                     val resolved = try {
                         val fontStack = fontStackOf(program, context, tile)
                         val size = program.size.evaluate(context).asNumber("text-size", tile)
@@ -269,7 +374,7 @@ internal object LabelCandidateAssembler {
                             },
                         )
                     } catch (error: RasterizationException) {
-                        skips.skipped += 1
+                        skips.skipped += inside.size
                         skips.tiles += tile
                         continue
                     } ?: continue
@@ -329,18 +434,11 @@ internal object LabelCandidateAssembler {
             )
         }
 
-        // One entry per layer per code, in layer order, so the list is identical between runs.
-        val diagnostics = (complexScript.keys + featureSkips.keys).sorted().flatMap { layerOrder ->
-            listOfNotNull(
-                complexScript[layerOrder]?.toDiagnostic(layerOrder),
-                featureSkips[layerOrder]?.takeIf { it.skipped > 0 }?.toDiagnostic(layerOrder),
-            )
-        }
-
         return LabelCandidatePlan(
             pending = pending.sortedWith(PENDING_ORDER),
             requiredRanges = required,
-            diagnostics = diagnostics,
+            complexScript = complexScript,
+            featureSkips = featureSkips,
             style = style,
             contentDigests = resources.values.map { it.contentDigest }.distinct().sorted(),
         )
@@ -401,49 +499,6 @@ internal object LabelCandidateAssembler {
             priority = program.layerOrder,
             color = program.color.evaluate(context).asColor("text-color").packedArgb(),
             haloColor = program.haloColor.evaluate(context).asColor("text-halo-color").packedArgb(),
-        )
-    }
-
-    /**
-     * Per-layer tally behind `LABEL_FEATURE_SKIPPED`. Counted rather than flagged for the reason
-     * `ICON_FEATURE_SKIPPED` counts: a layer that lost one of its features and a layer that lost
-     * every one are different situations, and only the pair of counts can tell them apart.
-     */
-    private class LabelFeatureSkips(val layerId: String) {
-        var candidates: Int = 0
-        var skipped: Int = 0
-        val tiles: MutableSet<TileId> = mutableSetOf()
-
-        fun toDiagnostic(layerOrder: Int): RenderDiagnostic = RenderDiagnostic(
-            code = DiagnosticCode.LABEL_FEATURE_SKIPPED,
-            severity = DiagnosticSeverity.INFO,
-            stage = PipelineStage.RESOURCE_DECODING,
-            message = "A place-name label layer produced no candidate for one or more of its features",
-            details = mapOf(
-                "layerIndex" to layerOrder.toString(),
-                "layerIdDigest" to layerId.sha256Hex(),
-                "candidateFeatures" to candidates.toString(),
-                "skippedFeatures" to skipped.toString(),
-            ),
-            affectedTiles = tiles.sortedWith(TILE_ORDER),
-        )
-    }
-
-    private class ComplexScriptExclusion(val layerId: String) {
-        var features: Int = 0
-        val tiles: MutableSet<TileId> = mutableSetOf()
-
-        fun toDiagnostic(layerOrder: Int): RenderDiagnostic = RenderDiagnostic(
-            code = DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED,
-            severity = DiagnosticSeverity.INFO,
-            stage = PipelineStage.RESOURCE_DECODING,
-            message = "A place-name label layer's text resolves to a script this profile cannot lay out",
-            details = mapOf(
-                "layerIndex" to layerOrder.toString(),
-                "layerIdDigest" to layerId.sha256Hex(),
-                "excludedFeatures" to features.toString(),
-            ),
-            affectedTiles = tiles.sortedWith(TILE_ORDER),
         )
     }
 
@@ -594,7 +649,7 @@ internal object LabelCandidateAssembler {
         }
     }
 
-    private val TILE_ORDER: Comparator<TileId> = compareBy(TileId::z, TileId::x, TileId::y)
+    private val TILE_ORDER: Comparator<TileId> = LABEL_TILE_ORDER
 
     private val PENDING_ORDER: Comparator<PendingLabel> = compareBy(
         { it.program.layerOrder },

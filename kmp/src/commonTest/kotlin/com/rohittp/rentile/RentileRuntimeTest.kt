@@ -2929,6 +2929,113 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun aLabelWhoseCodepointsTheAtlasDoesNotCoverIsCountedNotDroppedSilently() = runTest {
+        // The served range decodes cleanly and its font stack matches, but it carries codepoints
+        // 20000-20094 while the name is U+4E00. Nothing lays out. 0.2.0 shipped an icon layer that
+        // emitted nothing whatsoever when every feature named a sprite the atlas lacked, and a
+        // whole-layer loss reported as no signal at all was a real defect.
+        val vectorTile = placeNameVectorTile("\u4E00")
+        val glyphs = testGlyphRange("Open Sans Regular", 19968)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            assertTrue(batch.candidates.isEmpty())
+            val diagnostic = batch.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
+            assertEquals("1", diagnostic.details["candidateFeatures"])
+            assertEquals("1", diagnostic.details["skippedNoGlyphs"])
+            // The three losses are separate counters, so this one is not confused with the others.
+            assertEquals("0", diagnostic.details["skippedFeatures"])
+            assertEquals("0", diagnostic.details["skippedNonPointGeometry"])
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aNonPointPlaceFeatureIsCountedRatherThanVanishing() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo", copies = 0, lineCopies = 1)
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            assertTrue(batch.candidates.isEmpty())
+            val diagnostic = batch.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
+            assertEquals("1", diagnostic.details["candidateFeatures"])
+            assertEquals("1", diagnostic.details["skippedNonPointGeometry"])
+            assertEquals("0", diagnostic.details["skippedNoGlyphs"])
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun cacheOnlyLabelAcquisitionNeverReachesTheTransportForAGlyphRange() = runTest {
+        // The store keeps vector tiles but never glyph ranges, so after one NORMAL acquisition the
+        // vector side is warm and the glyph side is permanently cold. A CACHE_ONLY acquisition
+        // must then fail on the glyph range specifically - proving the vector tiles did come from
+        // cache - without the transport seeing another glyph request. A documented resourceAccess
+        // that did not reach glyph acquisition would instead quietly fetch them, which is exactly
+        // how offline export breaks.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val glyphRequests = mutableListOf<String>()
+        val glyphRequestsMutex = Mutex()
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { request ->
+                    if (request.resourceClass == ResourceClass.GLYPH_RANGE) {
+                        glyphRequestsMutex.withLock { glyphRequests += request.url }
+                        TransportResponse(200, glyphs)
+                    } else {
+                        TransportResponse(200, vectorTile)
+                    }
+                },
+                rawResourceStore = WriteBlockingRawResourceStore(ResourceClass.GLYPH_RANGE),
+            ),
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val warm = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+            assertEquals(1, warm.candidates.size)
+            val requestsAfterWarmUp = glyphRequestsMutex.withLock { glyphRequests.size }
+            assertEquals(1, requestsAfterWarmUp)
+
+            val failure = assertFailsWith<ResourceAcquisitionException> {
+                rasterizer.acquireLabelCandidates(
+                    style,
+                    listOf(TileId(2, 1, 1)),
+                    ResourceAccessMode.CACHE_ONLY,
+                )
+            }
+
+            assertEquals(ResourceClass.GLYPH_RANGE, failure.resourceClass)
+            assertEquals(requestsAfterWarmUp, glyphRequestsMutex.withLock { glyphRequests.size })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun requestedTilesSharingASourceTileAtOneZoomYieldOneCandidate() = runTest {
         // Source maxzoom 1, so z2/0/0 and z2/1/0 both overzoom from source tile 1/0/0. The
         // candidates they would produce differ in nothing but which requested tile they name, so
@@ -3449,6 +3556,7 @@ class RentileRuntimeTest {
         latinName: String? = null,
         copies: Int = 1,
         badSizeCopies: Int = 0,
+        lineCopies: Int = 0,
     ): ByteArray {
         val keys = listOfNotNull("name", latinName?.let { "name:latin" }, "size".takeIf { badSizeCopies > 0 })
         val values = listOfNotNull(
@@ -3470,8 +3578,14 @@ class RentileRuntimeTest {
             type = Tile.GeomType.POINT,
             geometry = listOf(command(1, 1), zigZag(position.first), zigZag(position.second)),
         )
+        val line = Tile.Feature(
+            tags = nameTags,
+            type = Tile.GeomType.LINESTRING,
+            geometry = listOf(command(1, 1), zigZag(1024), zigZag(2048), command(2, 1), zigZag(512), zigZag(0)),
+        )
         val features = inside.take(copies).map { feature(it, nameTags) } +
             inside.drop(copies).take(badSizeCopies).map { feature(it, badTags) } +
+            List(lineCopies) { line } +
             feature(-100 to 2048, nameTags)
         return Tile.ADAPTER.encode(
             Tile(
@@ -3616,6 +3730,19 @@ private class RecordingDiagnosticSink : DiagnosticSink {
 }
 
 /** Fails every read for one resource class, so the acquirer raises ResourceStoreException. */
+/** Stores everything except one resource class, so that class is always a cache miss. */
+private class WriteBlockingRawResourceStore(private val blockedClass: ResourceClass) : RawResourceStore {
+    private val delegate = InMemoryRawResourceStore()
+
+    override suspend fun read(key: RawResourceKey): StoredRawResource? = delegate.read(key)
+
+    override suspend fun write(key: RawResourceKey, resource: StoredRawResource) {
+        if (key.resourceClass != blockedClass) delegate.write(key, resource)
+    }
+
+    override suspend fun remove(key: RawResourceKey) = delegate.remove(key)
+}
+
 private class FailingReadRawResourceStore(private val failingClass: ResourceClass) : RawResourceStore {
     private val delegate = InMemoryRawResourceStore()
 

@@ -6,6 +6,7 @@ import com.rohittp.rentile.RawResourceKey
 import com.rohittp.rentile.RawResourceMetadata
 import com.rohittp.rentile.RentileConfiguration
 import com.rohittp.rentile.RentileMetric
+import com.rohittp.rentile.ResourceAccessMode
 import com.rohittp.rentile.ResourceAcquisitionException
 import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.ResourceDecodeException
@@ -46,11 +47,24 @@ internal class GlyphResourceAcquirer(
 ) {
     private val singleFlight = SingleFlight<String, AcquiredGlyphRange>(scope)
 
-    suspend fun acquire(template: String, fontStack: String, rangeStart: Int): AcquiredGlyphRange {
+    /**
+     * [accessMode] is honoured the way [com.rohittp.rentile.internal.mvt.VectorResourceAcquirer]
+     * honours it, not the way the sprite acquirer ignores it. The difference is not inconsistency:
+     * a sprite resolves during `prepare()`, which takes no access mode at all, whereas a Glyph
+     * Range is acquired by `acquireLabelCandidates`, whose public signature accepts one. A
+     * documented parameter that silently did not apply would break offline export - a batch asked
+     * for in `CACHE_ONLY` would still reach the network for its glyphs.
+     */
+    suspend fun acquire(
+        template: String,
+        fontStack: String,
+        rangeStart: Int,
+        accessMode: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): AcquiredGlyphRange {
         val url = resolveUrl(template, fontStack, rangeStart)
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
         return singleFlight.run(sanitizedId) {
-            val bytes = acquireRaw(url, sanitizedId)
+            val bytes = acquireRaw(url, sanitizedId, accessMode)
             AcquiredGlyphRange(
                 fontStack = fontStack,
                 rangeStart = rangeStart,
@@ -80,19 +94,34 @@ internal class GlyphResourceAcquirer(
         )
     }
 
-    private suspend fun acquireRaw(url: String, sanitizedId: String): ByteArray {
+    private suspend fun acquireRaw(
+        url: String,
+        sanitizedId: String,
+        accessMode: ResourceAccessMode,
+    ): ByteArray {
         val limit = configuration.resourceLimits.maxGlyphRangeBytes
         val resourceClass = ResourceClass.GLYPH_RANGE
         val key = RawResourceKey(sanitizedId, resourceClass)
-        val cached = configuration.rawResourceStore.readStore(key, "Raw glyph cache read failed")
-        if (cached != null) {
-            if (cached.bytes.size.toLong() <= limit && cached.bytes.sha256Hex() == cached.contentDigest) {
-                configuration.metricsSink.recordSafely(RentileMetric(MetricName.RAW_CACHE_HIT, resourceClass = resourceClass))
-                return cached.bytes
+        if (accessMode != ResourceAccessMode.RELOAD) {
+            val cached = configuration.rawResourceStore.readStore(key, "Raw glyph cache read failed")
+            if (cached != null) {
+                if (cached.bytes.size.toLong() <= limit && cached.bytes.sha256Hex() == cached.contentDigest) {
+                    configuration.metricsSink.recordSafely(RentileMetric(MetricName.RAW_CACHE_HIT, resourceClass = resourceClass))
+                    return cached.bytes
+                }
+                configuration.rawResourceStore.removeStore(key, "Corrupt glyph cache removal failed")
             }
-            configuration.rawResourceStore.removeStore(key, "Corrupt glyph cache removal failed")
+            configuration.metricsSink.recordSafely(RentileMetric(MetricName.RAW_CACHE_MISS, resourceClass = resourceClass))
+            if (accessMode == ResourceAccessMode.CACHE_ONLY) {
+                // Nothing beyond this point may touch the transport: the whole contract of
+                // cache-only is that it does not.
+                throw ResourceAcquisitionException(
+                    message = "Glyph range is unavailable in cache-only mode",
+                    resourceClass = resourceClass,
+                    sanitizedResourceId = sanitizedId,
+                )
+            }
         }
-        configuration.metricsSink.recordSafely(RentileMetric(MetricName.RAW_CACHE_MISS, resourceClass = resourceClass))
         val response = workCoordinator.exchange(url) {
             configuration.metricsSink.recordSafely(RentileMetric(MetricName.RESOURCE_REQUEST, resourceClass = resourceClass))
             try {

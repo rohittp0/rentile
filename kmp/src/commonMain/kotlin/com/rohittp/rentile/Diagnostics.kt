@@ -141,28 +141,37 @@ public enum class DiagnosticCode {
     LINE_PLACEMENT_LABEL_EXCLUDED,
 
     /**
-     * A place-name label layer produced no candidate for one or more of the features that
-     * qualified for one, because a text property would not evaluate to a usable value, and the
-     * batch was returned without them rather than failing.
+     * A place-name label layer produced no candidate for one or more of the features that wanted
+     * one, and the batch was returned without them rather than failing.
      *
      * Reported once per layer per acquisition, whatever the cause and however many features were
-     * affected. The name is deliberately neutral: this fires for any text layout or paint property
-     * that evaluates to something unusable - a `text-size` that is not a finite number, a
-     * `text-offset` that is not a pair of numbers, a `text-opacity` outside zero to one, a
-     * negative halo value - and the emitting code cannot attribute it to one of those without
-     * asserting a cause it does not know.
+     * affected. The name is deliberately neutral because three unrelated conditions reach it, and
+     * `details` is what tells them apart rather than the code or the message.
      *
      * `details` carries `layerIndex` and `layerIdDigest`, the same identity pair used by the other
-     * layer-level label diagnostics, plus two counts: `candidateFeatures`, how many features
-     * reached property evaluation, and `skippedFeatures`, how many of those produced no candidate.
-     * The counts exist so that losing one feature is distinguishable from losing every one, which
-     * a single boolean flag could not express.
+     * layer-level label diagnostics, and four counts:
      *
-     * Both counts describe **this batch only**, across every requested tile in it.
-     * `skippedFeatures == candidateFeatures` means this layer contributed nothing here; it does
-     * not mean the style is broken, because the condition is frequently data-dependent and the
-     * same layer can lose everything for one tile set and behave normally for the next.
-     * `affectedTiles` names the requested tiles the skipped features came from.
+     * - `candidateFeatures` - how many labels this layer wanted, the denominator for the rest.
+     * - `skippedFeatures` - a text layout or paint property evaluated to something unusable: a
+     *   `text-size` that is not a finite number, a `text-offset` that is not a pair of numbers, a
+     *   `text-opacity` outside zero to one, a negative halo value, a `text-font` that is not a
+     *   list of names. Which one is not reported, because attributing it would assert a cause the
+     *   emitting code does not know.
+     * - `skippedNoGlyphs` - the label's text resolved, but the acquired glyph atlas covers none of
+     *   its codepoints, so it laid out to nothing.
+     * - `skippedNonPointGeometry` - the feature's geometry is not points, which this profile
+     *   cannot anchor a place name to.
+     *
+     * The three are counted apart rather than summed, because a consumer seeing no labels needs to
+     * know which of them happened; they are strict subsets of `candidateFeatures` and share its
+     * unit, one label meaning one anchor of one feature on one requested tile.
+     *
+     * Every count describes **this batch only**, across every requested tile in it. The three
+     * summing to `candidateFeatures` means this layer contributed nothing here; it does not mean
+     * the style is broken, because these conditions are data-dependent and the same layer can lose
+     * everything for one tile set and behave normally for the next. Note that the denominator also
+     * includes labels excluded by [COMPLEX_SCRIPT_LABEL_EXCLUDED], which reports its own count
+     * separately. `affectedTiles` names the requested tiles the losses came from.
      *
      * Always INFO. Nothing failed: acquisition continues and these features are simply absent from
      * the result.

@@ -419,15 +419,16 @@ private class DefaultBasemapRasterizer(
         val rangeOutcomes = supervisorScope {
             plan.requiredRanges.map { request ->
                 async {
-                    acquireOutcome { glyphAcquirer.acquire(glyphsTemplate, request.fontStack, request.rangeStart) }
+                    acquireOutcome {
+                        glyphAcquirer.acquire(glyphsTemplate, request.fontStack, request.rangeStart, resourceAccess)
+                    }
                 }
             }.awaitAll()
         }
         throwAcquisitionFailures(rangeOutcomes)
         val ranges = rangeOutcomes.map { (it as AcquisitionOutcome.Success<AcquiredGlyphRange>).value }
 
-        plan.diagnostics.forEach(::recordDiagnosticSafely)
-        plan.assemble(ranges)
+        plan.assemble(ranges, ::recordDiagnosticSafely)
     }
 
     override fun terrainSourceDescriptor(style: PreparedStyle): TerrainSourceDescriptor? =
