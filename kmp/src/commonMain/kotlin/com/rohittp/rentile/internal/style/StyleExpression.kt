@@ -1,5 +1,6 @@
 package com.rohittp.rentile.internal.style
 
+import com.rohittp.rentile.internal.glyph.ScriptSupport
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -97,6 +98,7 @@ internal object StyleExpressionCompiler {
             "to-number" -> ToNumberExpression(requireAtLeast(operator, arguments, 1).map(::compileNode))
             "coalesce" -> compileCoalesce(arguments)
             "concat" -> compileConcat(arguments)
+            "is-supported-script" -> compileIsSupportedScript(arguments)
             "case" -> compileCase(arguments)
             "match" -> compileMatch(arguments)
             "step" -> compileStep(arguments)
@@ -151,6 +153,11 @@ internal object StyleExpressionCompiler {
     private fun compileConcat(arguments: List<JsonElement>): StyleExpression {
         val expressions = requireAtLeast("concat", arguments, 1).map(::compileNode)
         return ConcatExpression(expressions)
+    }
+
+    private fun compileIsSupportedScript(arguments: List<JsonElement>): StyleExpression {
+        val expressions = requireAtLeast("is-supported-script", arguments, 1).map(::compileNode)
+        return IsSupportedScriptExpression(expressions)
     }
 
     private fun compileCase(arguments: List<JsonElement>): StyleExpression {
@@ -479,6 +486,22 @@ private data class ConcatExpression(
                     is StyleValue.NumberValue -> value.value.stringifyForText()
                     is StyleValue.BooleanValue -> value.value.toString()
                     else -> ""
+                }
+            },
+        )
+}
+
+private data class IsSupportedScriptExpression(
+    val expressions: List<StyleExpression>,
+) : StyleExpression {
+    override val resultType: StyleType = StyleType.BOOLEAN
+
+    override fun evaluate(context: StyleEvaluationContext): StyleValue =
+        StyleValue.BooleanValue(
+            expressions.all { expression ->
+                when (val value = expression.evaluate(context)) {
+                    is StyleValue.StringValue -> ScriptSupport.isSupported(value.value)
+                    else -> true
                 }
             },
         )
