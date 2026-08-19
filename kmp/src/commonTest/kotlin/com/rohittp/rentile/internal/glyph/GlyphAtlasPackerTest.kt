@@ -11,6 +11,11 @@ class GlyphAtlasPackerTest {
         bitmap = ByteArray((w + 6) * (h + 6)) { 1 },
     )
 
+    private fun glyphWithFill(id: Int, w: Int, h: Int, fill: Byte) = DecodedGlyph(
+        codepoint = id, width = w, height = h, left = 0, top = -h, advance = w + 2,
+        bitmap = ByteArray((w + 6) * (h + 6)) { fill },
+    )
+
     private fun range(stack: String, start: Int, vararg glyphs: DecodedGlyph) =
         AcquiredGlyphRange(stack, start, glyphs.toList(), "digest-$stack-$start")
 
@@ -45,6 +50,35 @@ class GlyphAtlasPackerTest {
         val two = GlyphAtlasPacker.pack(listOf(range("Open Sans Regular", 0, glyph(65, 11, 14))))
 
         assertNotEquals(one.contentKey, two.contentKey)
+    }
+
+    @Test
+    fun contentKeyChangesWhenOnlyTheBitmapBytesChange() {
+        // Same font stack, same codepoint, same box metrics/advance - only the SDF pixel
+        // content differs (e.g. an upstream font revision touching distance values but not
+        // the glyph's bounding box). contentKey must still change: a consumer deciding
+        // whether to re-upload must never see a stale key for changed pixels.
+        val one = GlyphAtlasPacker.pack(listOf(range("Open Sans Regular", 0, glyphWithFill(65, 10, 14, 1))))
+        val two = GlyphAtlasPacker.pack(listOf(range("Open Sans Regular", 0, glyphWithFill(65, 10, 14, 2))))
+
+        assertNotEquals(one.contentKey, two.contentKey)
+    }
+
+    @Test
+    fun collidingGlyphsFromDifferentRangesResolveTheSameWayRegardlessOfArrivalOrder() {
+        // Two ranges disagree about the exact same (fontStack, codepoint): identical box
+        // metrics but different bitmap bytes. Whichever one "wins" the dedup must be a
+        // function of glyph content, not of which range was iterated first - otherwise
+        // pack(a, b) and pack(b, a) would silently disagree about a glyph's own pixels.
+        val a = range("Open Sans Regular", 0, glyphWithFill(65, 10, 14, 1))
+        val b = range("Open Sans Regular", 0, glyphWithFill(65, 10, 14, 2))
+
+        val forward = GlyphAtlasPacker.pack(listOf(a, b))
+        val reversed = GlyphAtlasPacker.pack(listOf(b, a))
+
+        assertEquals(1, forward.entries.size)
+        assertEquals(forward.contentKey, reversed.contentKey)
+        assertEquals(forward.entries, reversed.entries)
     }
 
     @Test
