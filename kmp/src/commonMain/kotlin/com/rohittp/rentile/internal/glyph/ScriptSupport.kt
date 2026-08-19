@@ -60,8 +60,12 @@ internal object ScriptSupport {
  * Returns the Unicode code point starting at [index], combining a UTF-16 surrogate
  * pair when present. `String.codePointAt` is JVM-only in Kotlin Multiplatform, so
  * this reimplements the surrogate check by hand.
+ *
+ * Internal (not private) so [LabelLayout] can iterate codepoints the same way this file
+ * does. A second, independently-written surrogate check is exactly the kind of
+ * duplication that let a real bug ship in one copy and not the other in a past release.
  */
-private fun String.codePointAtCompat(index: Int): Int {
+internal fun String.codePointAtCompat(index: Int): Int {
     val high = this[index]
     if (high.isHighSurrogate() && index + 1 < length) {
         val low = this[index + 1]
