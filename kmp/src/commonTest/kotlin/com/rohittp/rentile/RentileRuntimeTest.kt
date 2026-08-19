@@ -152,7 +152,7 @@ class RentileRuntimeTest {
             val error = assertFailsWith<StylePreparationException> {
                 rasterizer.prepare(
                     StyleInput.InlineJson(
-                        """{"version":8,"layers":[{"id":"base","type":"background","paint":{"background-color":["concat","#fff"]}}]}""",
+                        """{"version":8,"layers":[{"id":"base","type":"background","paint":{"background-color":["future-unsupported-op","#fff"]}}]}""",
                     ),
                 )
             }
