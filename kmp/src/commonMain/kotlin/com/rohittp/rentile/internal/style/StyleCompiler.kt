@@ -195,59 +195,66 @@ internal class StyleCompiler(
                         )
                         if (source.geoJson == null) {
                             val sourceLayer = sourceLayerFor(layer, source, index, layerId)
+                            // The descriptor is built and added unconditionally, exactly as it was
+                            // before this compatibility profile compiled any text program at all:
+                            // labelLayerDescriptors/acquireLabelTiles must keep serving every
+                            // auxiliary label layer's raw MVT for a consumer who never calls the
+                            // label-candidate API, whatever happens to textProgram below.
+                            val descriptor = LabelLayerDescriptor(
+                                id = layerId,
+                                sourceId = source.idDigest,
+                                sourceLayer = sourceLayer,
+                                sourceMinimumZoom = source.minZoom,
+                                sourceMaximumZoom = source.maxZoom,
+                                layerJson = sanitizedLabelLayerJson(layer),
+                            )
                             val placement =
                                 layout["symbol-placement"]?.asPrimitive()?.takeIf { it.isString }?.content
                                     ?: "point"
-                            if (placement == "line") {
+                            val textProgram = if (placement == "line") {
                                 // Place-name source layers are point geometry, so line placement
                                 // means the style is doing something this profile's label layout
-                                // does not implement. The layer is excluded entirely rather than
-                                // laid out as point-anchored text.
+                                // does not implement. Only the text program is excluded here - the
+                                // descriptor above still ships, so raw MVT access is unaffected.
                                 diagnostics += diagnostic(
                                     code = DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED,
                                     severity = DiagnosticSeverity.INFO,
                                     message = "A line-placed place-name label layer is excluded by the compatibility profile",
                                     details = identity,
                                 )
+                                null
                             } else {
                                 try {
-                                    labelLayers += compileLabelLayer(
-                                        layer = layer,
-                                        layout = layout,
-                                        descriptor = LabelLayerDescriptor(
-                                            id = layerId,
-                                            sourceId = source.idDigest,
-                                            sourceLayer = sourceLayer,
-                                            sourceMinimumZoom = source.minZoom,
-                                            sourceMaximumZoom = source.maxZoom,
-                                            layerJson = sanitizedLabelLayerJson(layer),
-                                        ),
-                                        source = source,
-                                        index = index,
-                                        layerId = layerId,
-                                    )
+                                    compileLabelTextProgram(layer, layout, index, layerId)
                                 } catch (error: CancellationException) {
                                     // Cancellation is control flow, not a Rentile failure (ADR
                                     // 0011): it propagates unwrapped and must never be degraded
                                     // into an exclusion.
                                     throw error
                                 } catch (error: StylePreparationException) {
-                                    // text-field and every layout/paint property compiled here are
-                                    // newly reachable: this layer never held a compiled text
-                                    // program before this compatibility profile grew this feature.
-                                    // ADR 0026's governing rule applies exactly as it does to a
-                                    // text-coupled icon layer - no style which prepared
-                                    // successfully before may fail to prepare after - so a
-                                    // rejected construct excludes this one layer's labels instead
-                                    // of failing the whole style.
+                                    // The filter and every text-field/layout/paint construct
+                                    // compiled here are newly reachable: this layer never held a
+                                    // compiled text program before this compatibility profile grew
+                                    // this feature. ADR 0026's governing rule applies exactly as it
+                                    // does to a text-coupled icon layer - no style which prepared
+                                    // successfully before may fail to prepare after - so a rejected
+                                    // construct degrades only the new text program to null. It must
+                                    // never remove the descriptor above, which every consumer
+                                    // already relied on for raw MVT before this profile existed.
                                     diagnostics += diagnostic(
                                         code = DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT,
                                         severity = DiagnosticSeverity.INFO,
                                         message = "A place-name label layer uses an unsupported text construct and is excluded",
                                         details = identity,
                                     )
+                                    null
                                 }
                             }
+                            labelLayers += CompiledLabelLayer(
+                                descriptor = descriptor,
+                                source = source,
+                                textProgram = textProgram,
+                            )
                         }
                     }
                     val classification = classifySymbol(layout, hidden, identity)
@@ -1000,21 +1007,22 @@ internal class StyleCompiler(
      * Compiles a place-name symbol layer's text program: its `filter`, `text-field`, and every
      * text layout and paint property, using the same [compileProperty]/[compilePropertyWithDefault]/
      * [compileColorPropertyWithDefault] helpers [compileIconLayer] uses for its own properties.
-     * [source] and [descriptor] are already resolved by the caller, which also gates out
-     * `symbol-placement: line` before calling this. Any rejected construct - an unsupported
-     * filter or text expression, an invalid enum value, an out-of-range constant - throws
-     * [StylePreparationException] via [failRetained], [compileFilter] or [compileProperty]; the
-     * caller catches that and excludes this layer with `UNSUPPORTED_TEXT_CONSTRUCT` rather than
-     * failing the whole style, per ADR 0026.
+     * The caller already resolved this layer's [CompiledVectorSource] and
+     * [LabelLayerDescriptor][com.rohittp.rentile.LabelLayerDescriptor] and gates out
+     * `symbol-placement: line` before calling this - neither is a parameter here, because this
+     * function produces only the nullable [CompiledLabelLayer.textProgram], never the
+     * [CompiledLabelLayer] itself, so a rejected construct can never take the descriptor down with
+     * it. Any rejected construct - an unsupported filter or text expression, an invalid enum
+     * value, an out-of-range constant - throws [StylePreparationException] via [failRetained],
+     * [compileFilter] or [compileProperty]; the caller catches that, keeps the descriptor, and
+     * degrades only this program to `null` with `UNSUPPORTED_TEXT_CONSTRUCT`, per ADR 0026.
      */
-    private fun compileLabelLayer(
+    private fun compileLabelTextProgram(
         layer: JsonObject,
         layout: JsonObject,
-        descriptor: LabelLayerDescriptor,
-        source: CompiledVectorSource,
         index: Int,
         layerId: String,
-    ): CompiledLabelLayer {
+    ): CompiledLabelTextProgram {
         val paint = objectOrEmpty(layer, "paint", index, layerId)
         val anchor = when (layout["text-anchor"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center") {
             "center" -> IconAnchor.CENTER
@@ -1051,9 +1059,7 @@ internal class StyleCompiler(
                 ?: failRetained(index, layerId, "text-ignore-placement must be a boolean constant")
         } ?: false
 
-        return CompiledLabelLayer(
-            descriptor = descriptor,
-            source = source,
+        return CompiledLabelTextProgram(
             layerOrder = index,
             filter = compileFilter(layer["filter"], index, layerId),
             text = compileProperty(layout.getValue("text-field"), StyleType.VALUE, index, layerId, "text-field"),

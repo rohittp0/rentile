@@ -308,9 +308,18 @@ internal data class IconDrawLayer(
     override val maxZoom: Double,
 ) : VectorDrawLayer
 
-internal data class CompiledLabelLayer(
-    val descriptor: LabelLayerDescriptor,
-    val source: CompiledVectorSource,
+/**
+ * A place-name label layer's compiled text program: everything needed to lay out label
+ * candidates for it. Kept as a separate, nullable type from [CompiledLabelLayer] rather than a
+ * set of fields on it, so that a construct this compatibility profile cannot compile - an
+ * unsupported filter, layout property, or paint property - can leave a layer's raw-MVT
+ * [CompiledLabelLayer.descriptor] and [CompiledLabelLayer.source] untouched. Compiling this program
+ * is new work no consumer's preparation ever depended on before this profile grew label
+ * candidates, so per ADR 0026, a rejected construct degrades this - the new capability - to
+ * `null` rather than removing the descriptor a pre-existing, non-opted-in consumer already relies
+ * on for raw MVT via `labelLayerDescriptors`/`acquireLabelTiles`.
+ */
+internal data class CompiledLabelTextProgram(
     val layerOrder: Int,
     val filter: CompiledStyleFilter,
     val text: CompiledStyleProperty,
@@ -334,6 +343,21 @@ internal data class CompiledLabelLayer(
     val opacity: CompiledStyleProperty,
     val minZoom: Double,
     val maxZoom: Double,
+)
+
+internal data class CompiledLabelLayer(
+    val descriptor: LabelLayerDescriptor,
+    val source: CompiledVectorSource,
+    /**
+     * Null when this layer's text program could not be compiled (an unsupported filter, layout,
+     * or paint construct) or was excluded outright (`symbol-placement: line`). [descriptor] and
+     * [source] are unaffected either way - they are populated unconditionally, exactly as they
+     * were before this compatibility profile compiled any text program at all - so a consumer
+     * that never calls the label-candidate API sees no behaviour change. A null program simply
+     * yields no label candidates for this layer; the diagnostic explaining why is already on
+     * `CompiledPreparedStyle.diagnostics`.
+     */
+    val textProgram: CompiledLabelTextProgram?,
 )
 
 internal class CompiledPreparedStyle(
