@@ -26,7 +26,7 @@ import com.rohittp.rentile.internal.style.StyleValue
 import com.rohittp.rentile.internal.style.TextTransform
 import com.rohittp.rentile.internal.style.mercatorLatitude
 import com.rohittp.rentile.internal.style.parseCssColor
-import com.rohittp.rentile.internal.style.shift
+import com.rohittp.rentile.internal.style.spriteAnchoring
 import com.rohittp.rentile.internal.withExpandedFeatureTokens
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -676,19 +676,28 @@ internal object LabelCandidateAssembler {
             val size = iconLayer.size.evaluate(iconContext).asNumber("icon-size", tile)
             if (size <= 0.0) return null
             val offset = iconLayer.offset.evaluate(iconContext).asNumberPair("icon-offset", tile)
-            val width = entry.width / entry.pixelRatio * size
-            val height = entry.height / entry.pixelRatio * size
-            // The same shift placeIcons applies, from the same shared helper, so a label and the
-            // icon Rentile itself would draw for that layer anchor against the same point.
-            val anchorShift = iconLayer.anchor.shift(width, height)
+            val translate = iconLayer.translate.evaluate(iconContext).asNumberPair("icon-translate", tile)
+            // The same decomposition placeIcons places its own markers from, out of the same
+            // helper, so what a consumer draws and what Rentile's icon pass draws cannot drift.
+            val anchoring = spriteAnchoring(
+                entry = entry,
+                anchor = iconLayer.anchor,
+                size = size,
+                offsetX = offset.first,
+                offsetY = offset.second,
+                translateX = translate.first,
+                translateY = translate.second,
+            )
             LabelIconRef(
                 imageName = imageName,
-                width = width,
-                height = height,
-                offsetX = offset.first * size,
-                offsetY = offset.second * size,
-                anchorOffsetX = anchorShift.first,
-                anchorOffsetY = anchorShift.second,
+                width = anchoring.width,
+                height = anchoring.height,
+                offsetX = anchoring.offsetX,
+                offsetY = anchoring.offsetY,
+                anchorOffsetX = anchoring.anchorShiftX,
+                anchorOffsetY = anchoring.anchorShiftY,
+                translateX = anchoring.translateX,
+                translateY = anchoring.translateY,
             )
         } catch (_: RasterizationException) {
             null

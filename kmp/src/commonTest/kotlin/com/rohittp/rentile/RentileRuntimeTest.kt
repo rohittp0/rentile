@@ -3192,6 +3192,53 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun aLabelIconCarriesEveryTermThatPlacesRentilesOwnMarker() = runTest {
+        // icon-size 2 on an 8px sprite at pixelRatio 1, icon-anchor bottom, icon-offset [2,-3],
+        // icon-translate [5,7]. placeIcons puts the sprite centre at
+        // anchor + anchorShift + offset*size + translate, and the asymmetry is the subtle part:
+        // icon-offset scales with icon-size and icon-translate does not. Both paths derive these
+        // from one spriteAnchoring call, so a consumer summing the three fields lands exactly
+        // where Rentile's own icon pass would draw the marker.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(transport = spriteAndGlyphTransport(vectorTile, glyphs))
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        iconImage = "marker",
+                        iconAnchor = "bottom",
+                        iconSize = "2",
+                        iconOffset = "[2,-3]",
+                        iconTranslate = "[5,7]",
+                    ),
+                ),
+            )
+
+            val icon = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+                .candidates.single().icon
+
+            assertEquals(16.0, icon?.width)
+            assertEquals(16.0, icon?.height)
+            // icon-anchor bottom lifts by half the resolved height, which follows icon-size.
+            assertEquals(0.0, icon?.anchorOffsetX)
+            assertEquals(-8.0, icon?.anchorOffsetY)
+            // icon-offset is scaled by icon-size.
+            assertEquals(4.0, icon?.offsetX)
+            assertEquals(-6.0, icon?.offsetY)
+            // icon-translate is not.
+            assertEquals(5.0, icon?.translateX)
+            assertEquals(7.0, icon?.translateY)
+            // The sum is the displacement from the label's anchor to the sprite's centre.
+            assertEquals(9.0, icon!!.anchorOffsetX + icon.offsetX + icon.translateX)
+            assertEquals(-7.0, icon.anchorOffsetY + icon.offsetY + icon.translateY)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun tooManyGlyphRangesExceedsItsLimit() = runTest {
         // 70 codepoints, each from a different 256-block of CJK Unified Ideographs, so the
         // name needs 70 glyph ranges. CJK is chosen because it is supported by layout, so
@@ -3743,6 +3790,9 @@ class RentileRuntimeTest {
         glyphs: String? = "https://glyphs.example.test/{fontstack}/{range}.pbf",
         iconImage: String? = null,
         iconAnchor: String? = null,
+        iconSize: String? = null,
+        iconOffset: String? = null,
+        iconTranslate: String? = null,
         textField: String = """["get","name"]""",
         textSize: String = "14",
         sourceMaxZoom: Int = 14,
@@ -3756,7 +3806,11 @@ class RentileRuntimeTest {
         append(""""layout":{"text-field":$textField,"text-font":["Open Sans Regular"],"text-size":$textSize""")
         if (iconImage != null) append(""","icon-image":"$iconImage"""")
         if (iconAnchor != null) append(""","icon-anchor":"$iconAnchor"""")
-        append("""}}]}""")
+        if (iconSize != null) append(""","icon-size":$iconSize""")
+        if (iconOffset != null) append(""","icon-offset":$iconOffset""")
+        append("""}""")
+        if (iconTranslate != null) append(""","paint":{"icon-translate":$iconTranslate}""")
+        append("""}]}""")
     }
 
     /** Serves sprite JSON, sprite PNG, glyph ranges and vector tiles by resource class. */

@@ -785,7 +785,7 @@ final class com.rohittp.rentile/LabelGlyphQuad { // com.rohittp.rentile/LabelGly
 }
 
 final class com.rohittp.rentile/LabelIconRef { // com.rohittp.rentile/LabelIconRef|null[0]
-    constructor <init>(kotlin/String, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double) // com.rohittp.rentile/LabelIconRef.<init>|<init>(kotlin.String;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
+    constructor <init>(kotlin/String, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double) // com.rohittp.rentile/LabelIconRef.<init>|<init>(kotlin.String;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
 
     final val anchorOffsetX // com.rohittp.rentile/LabelIconRef.anchorOffsetX|{}anchorOffsetX[0]
         final fun <get-anchorOffsetX>(): kotlin/Double // com.rohittp.rentile/LabelIconRef.anchorOffsetX.<get-anchorOffsetX>|<get-anchorOffsetX>(){}[0]
@@ -799,6 +799,10 @@ final class com.rohittp.rentile/LabelIconRef { // com.rohittp.rentile/LabelIconR
         final fun <get-offsetX>(): kotlin/Double // com.rohittp.rentile/LabelIconRef.offsetX.<get-offsetX>|<get-offsetX>(){}[0]
     final val offsetY // com.rohittp.rentile/LabelIconRef.offsetY|{}offsetY[0]
         final fun <get-offsetY>(): kotlin/Double // com.rohittp.rentile/LabelIconRef.offsetY.<get-offsetY>|<get-offsetY>(){}[0]
+    final val translateX // com.rohittp.rentile/LabelIconRef.translateX|{}translateX[0]
+        final fun <get-translateX>(): kotlin/Double // com.rohittp.rentile/LabelIconRef.translateX.<get-translateX>|<get-translateX>(){}[0]
+    final val translateY // com.rohittp.rentile/LabelIconRef.translateY|{}translateY[0]
+        final fun <get-translateY>(): kotlin/Double // com.rohittp.rentile/LabelIconRef.translateY.<get-translateY>|<get-translateY>(){}[0]
     final val width // com.rohittp.rentile/LabelIconRef.width|{}width[0]
         final fun <get-width>(): kotlin/Double // com.rohittp.rentile/LabelIconRef.width.<get-width>|<get-width>(){}[0]
 
@@ -809,7 +813,9 @@ final class com.rohittp.rentile/LabelIconRef { // com.rohittp.rentile/LabelIconR
     final fun component5(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component5|component5(){}[0]
     final fun component6(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component6|component6(){}[0]
     final fun component7(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component7|component7(){}[0]
-    final fun copy(kotlin/String = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ...): com.rohittp.rentile/LabelIconRef // com.rohittp.rentile/LabelIconRef.copy|copy(kotlin.String;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
+    final fun component8(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component8|component8(){}[0]
+    final fun component9(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component9|component9(){}[0]
+    final fun copy(kotlin/String = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ...): com.rohittp.rentile/LabelIconRef // com.rohittp.rentile/LabelIconRef.copy|copy(kotlin.String;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelIconRef.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelIconRef.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/LabelIconRef.toString|toString(){}[0]
