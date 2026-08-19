@@ -421,6 +421,30 @@ public interface BasemapRasterizer : AutoCloseable {
         resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
     ): List<ValidatedMvtTile>
 
+    /**
+     * Stable identity for a caller-owned label-candidate cache lookup, available before any
+     * network.
+     *
+     * Covers style identity, tile identities and a label-semantics version. It deliberately omits
+     * credentials, sessions, validators and the glyph closure: which Glyph Ranges a tile set needs
+     * is not knowable until its features are decoded, so this key cannot depend on them. A caller
+     * must store [LabelCandidateBatch.contentKey] beside whatever it indexes with this value.
+     */
+    public fun labelCandidateRequestKey(style: PreparedStyle, tiles: List<TileId>): String
+
+    /**
+     * All-or-error validated Label acquisition. Tile substitution is deliberately not applied.
+     *
+     * A style declaring no `glyphs` template yields an empty batch carrying
+     * [DiagnosticCode.GLYPH_RANGE_UNAVAILABLE] rather than failing: label preparation is opt-in,
+     * and a style without glyphs is legitimate.
+     */
+    public suspend fun acquireLabelCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): LabelCandidateBatch
+
     /** Returns null when the prepared style does not select a raster-dem terrain source. */
     public fun terrainSourceDescriptor(style: PreparedStyle): TerrainSourceDescriptor?
 

@@ -884,18 +884,8 @@ internal class StyleCompiler(
         if (placement == SymbolPlacement.LINE && alignment == "viewport") {
             failRetained(index, layerId, "viewport-aligned line icons are outside the compatibility profile")
         }
-        val anchor = when (layout["icon-anchor"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center") {
-            "center" -> IconAnchor.CENTER
-            "left" -> IconAnchor.LEFT
-            "right" -> IconAnchor.RIGHT
-            "top" -> IconAnchor.TOP
-            "bottom" -> IconAnchor.BOTTOM
-            "top-left" -> IconAnchor.TOP_LEFT
-            "top-right" -> IconAnchor.TOP_RIGHT
-            "bottom-left" -> IconAnchor.BOTTOM_LEFT
-            "bottom-right" -> IconAnchor.BOTTOM_RIGHT
-            else -> failRetained(index, layerId, "icon-anchor is invalid")
-        }
+        val anchor = iconAnchorOrNull(layout["icon-anchor"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center")
+            ?: failRetained(index, layerId, "icon-anchor is invalid")
         val allowOverlap = layout["icon-allow-overlap"]?.let { value ->
             value.asPrimitive()?.booleanOrNull
                 ?: failRetained(index, layerId, "icon-allow-overlap must be a boolean constant")
@@ -1024,18 +1014,8 @@ internal class StyleCompiler(
         layerId: String,
     ): CompiledLabelTextProgram {
         val paint = objectOrEmpty(layer, "paint", index, layerId)
-        val anchor = when (layout["text-anchor"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center") {
-            "center" -> IconAnchor.CENTER
-            "left" -> IconAnchor.LEFT
-            "right" -> IconAnchor.RIGHT
-            "top" -> IconAnchor.TOP
-            "bottom" -> IconAnchor.BOTTOM
-            "top-left" -> IconAnchor.TOP_LEFT
-            "top-right" -> IconAnchor.TOP_RIGHT
-            "bottom-left" -> IconAnchor.BOTTOM_LEFT
-            "bottom-right" -> IconAnchor.BOTTOM_RIGHT
-            else -> failRetained(index, layerId, "text-anchor is invalid")
-        }
+        val anchor = iconAnchorOrNull(layout["text-anchor"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center")
+            ?: failRetained(index, layerId, "text-anchor is invalid")
         val justify = when (layout["text-justify"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center") {
             "left" -> TextJustify.LEFT
             "center" -> TextJustify.CENTER

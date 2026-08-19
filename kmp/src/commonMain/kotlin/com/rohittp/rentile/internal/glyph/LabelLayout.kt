@@ -4,6 +4,7 @@ import com.rohittp.rentile.LabelBox
 import com.rohittp.rentile.LabelGlyphQuad
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.style.IconAnchor
+import com.rohittp.rentile.internal.style.shift
 import com.rohittp.rentile.internal.style.TextJustify
 
 /**
@@ -41,11 +42,18 @@ internal object LabelLayout {
     private data class Token(val entryIndex: Int?, val advance: Int, val isBreak: Boolean)
 
     /**
-     * Lays [text] out against [atlas] and [style]. [ranges] is the same acquired glyph data
-     * the caller already used to build [atlas]; it is threaded through separately (rather than
-     * added to [PackedGlyphAtlas] itself) because a space's advance has no atlas entry at all -
-     * [GlyphAtlasPacker] deliberately drops glyphs with an empty bitmap - so the only place
-     * that advance still lives is the [AcquiredGlyphRange] data the atlas was packed from.
+     * Lays [text] out against [atlas] and [style]. [whitespace] is [whitespaceAdvances] over the
+     * same acquired glyph data the caller already used to build [atlas]; it is threaded through
+     * separately (rather than added to [PackedGlyphAtlas] itself) because a space's advance has no
+     * atlas entry at all - [GlyphAtlasPacker] deliberately drops glyphs with an empty bitmap - so
+     * the only place that advance still lives is the [AcquiredGlyphRange] data the atlas was
+     * packed from.
+     *
+     * The map is a parameter rather than something this function derives, because it depends only
+     * on the batch's glyph ranges and never on the label: deriving it here rebuilt it once per
+     * label, which at the `maxGlyphRangesPerBatch` ceiling is up to 64 x 256 map operations for
+     * every label on the tile - landing hardest on exactly the dense-CJK case this design set out
+     * to bound. The caller builds it once per batch.
      *
      * Returns null when [text] is empty after trimming, or when no codepoint in it resolves to
      * a drawable glyph or a known whitespace advance - either way there is nothing to lay out.
@@ -53,13 +61,12 @@ internal object LabelLayout {
     fun layOut(
         text: String,
         atlas: PackedGlyphAtlas,
-        ranges: List<AcquiredGlyphRange>,
+        whitespace: Map<Pair<String, Int>, Int>,
         style: LabelTextStyle,
     ): LaidOutLabel? {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return null
 
-        val whitespace = whitespaceAdvances(ranges)
         val lines = wrap(trimmed, atlas, whitespace, style)
         val quads = place(lines, atlas, style)
         if (quads.isEmpty()) return null
@@ -73,13 +80,18 @@ internal object LabelLayout {
      * provider measured, and layout must apply it rather than inventing a fallback constant.
      * Keyed the same way [PackedGlyphAtlas.indexOf] is, so a lookup miss there can fall back
      * to a lookup here before the codepoint is given up on entirely.
+     *
+     * Built once per batch by the caller and handed to every [layOut] call, never per label.
      */
-    private fun whitespaceAdvances(ranges: List<AcquiredGlyphRange>): Map<Pair<String, Int>, Int> {
+    fun whitespaceAdvances(ranges: List<AcquiredGlyphRange>): Map<Pair<String, Int>, Int> {
         val result = LinkedHashMap<Pair<String, Int>, Int>()
         for (range in ranges) {
             val digest = range.fontStack.sha256Hex()
             for (glyph in range.glyphs) {
-                if (glyph.bitmap.isEmpty()) result.putIfAbsent(digest to glyph.codepoint, glyph.advance)
+                // getOrPut, not putIfAbsent: the latter is a java.util.Map default method with no
+                // common-source equivalent, so it compiles on JVM and Android and fails every
+                // native target. Same first-writer-wins semantics.
+                if (glyph.bitmap.isEmpty()) result.getOrPut(digest to glyph.codepoint) { glyph.advance }
             }
         }
         return result
@@ -211,7 +223,7 @@ internal object LabelLayout {
             glyphs.map { it.copy(x = it.x + offset) }
         }
 
-        val (anchorDx, anchorDy) = anchorShift(style.anchor, blockWidth, blockHeight)
+        val (anchorDx, anchorDy) = style.anchor.shift(blockWidth, blockHeight)
         val offsetDx = style.offsetEm.first * GlyphRangeDecoder.EM_PX
         val offsetDy = style.offsetEm.second * GlyphRangeDecoder.EM_PX
 
@@ -230,24 +242,6 @@ internal object LabelLayout {
             }
         }
         return quads
-    }
-
-    /**
-     * The shift that moves a box centered at the origin so [anchor] sits at the origin
-     * instead, mirroring the convention `DefaultBasemapRasterizer.iconAnchorShift` uses for
-     * sprite icons: positive x is right, positive y is down, matching this codebase's Skia
-     * canvas coordinates throughout.
-     */
-    private fun anchorShift(anchor: IconAnchor, width: Double, height: Double): Pair<Double, Double> = when (anchor) {
-        IconAnchor.CENTER -> 0.0 to 0.0
-        IconAnchor.LEFT -> width / 2.0 to 0.0
-        IconAnchor.RIGHT -> -width / 2.0 to 0.0
-        IconAnchor.TOP -> 0.0 to height / 2.0
-        IconAnchor.BOTTOM -> 0.0 to -height / 2.0
-        IconAnchor.TOP_LEFT -> width / 2.0 to height / 2.0
-        IconAnchor.TOP_RIGHT -> -width / 2.0 to height / 2.0
-        IconAnchor.BOTTOM_LEFT -> width / 2.0 to -height / 2.0
-        IconAnchor.BOTTOM_RIGHT -> -width / 2.0 to -height / 2.0
     }
 
     /** The union of every quad's own extent (not just its origin), expanded by [LabelTextStyle.paddingPx]. */

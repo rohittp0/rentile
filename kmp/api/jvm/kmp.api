@@ -1,4 +1,6 @@
 public abstract interface class com/rohittp/rentile/BasemapRasterizer : java/lang/AutoCloseable {
+	public abstract fun acquireLabelCandidates (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun acquireLabelCandidates$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun acquireLabelTiles (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun acquireLabelTiles$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun acquireTerrainTiles (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -6,6 +8,7 @@ public abstract interface class com/rohittp/rentile/BasemapRasterizer : java/lan
 	public abstract fun awaitClosed (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun close ()V
 	public abstract fun groundRadianceDescriptor (Lcom/rohittp/rentile/PreparedStyle;)Lcom/rohittp/rentile/GroundRadianceDescriptor;
+	public abstract fun labelCandidateRequestKey (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;)Ljava/lang/String;
 	public abstract fun labelLayerDescriptors (Lcom/rohittp/rentile/PreparedStyle;)Ljava/util/List;
 	public abstract fun outputRequestKey (Lcom/rohittp/rentile/PreparedStyle;Lcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/RenderOptions;)Ljava/lang/String;
 	public static synthetic fun outputRequestKey$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Lcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/RenderOptions;ILjava/lang/Object;)Ljava/lang/String;
@@ -22,6 +25,7 @@ public abstract interface class com/rohittp/rentile/BasemapRasterizer : java/lan
 }
 
 public final class com/rohittp/rentile/BasemapRasterizer$DefaultImpls {
+	public static synthetic fun acquireLabelCandidates$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun acquireLabelTiles$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun acquireTerrainTiles$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun outputRequestKey$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Lcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/RenderOptions;ILjava/lang/Object;)Ljava/lang/String;
@@ -70,6 +74,7 @@ public final class com/rohittp/rentile/DiagnosticCode : java/lang/Enum {
 	public static final field HIDDEN_LAYER_NO_DRAW Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field ICON_FEATURE_SKIPPED Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE Lcom/rohittp/rentile/DiagnosticCode;
+	public static final field LABEL_FEATURE_SKIPPED Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field LINE_PLACEMENT_LABEL_EXCLUDED Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field RASTER_PASSTHROUGH_USED Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field RESOURCE_CACHE_HIT Lcom/rohittp/rentile/DiagnosticCode;
