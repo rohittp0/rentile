@@ -139,6 +139,110 @@ public data class ValidatedMvtTile(
     public val contentDigest: String,
 )
 
+/** One block of 256 codepoints of one font stack, as SDF bitmaps packed into the batch atlas. */
+public data class LabelGlyphEntry(
+    public val fontStackDigest: String,
+    public val codepoint: Int,
+    public val x: Int, public val y: Int,
+    public val width: Int, public val height: Int,
+    public val left: Int, public val top: Int,
+    public val advance: Int,
+)
+
+/** One texture the consumer uploads once per distinct [contentKey]. */
+public data class LabelGlyphAtlas(
+    public val pngBytes: ByteArray,
+    public val width: Int,
+    public val height: Int,
+    public val contentKey: String,
+    public val entries: List<LabelGlyphEntry>,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is LabelGlyphAtlas &&
+            pngBytes.contentEquals(other.pngBytes) &&
+            width == other.width &&
+            height == other.height &&
+            contentKey == other.contentKey &&
+            entries == other.entries
+
+    override fun hashCode(): Int {
+        var result = pngBytes.contentHashCode()
+        result = 31 * result + width
+        result = 31 * result + height
+        result = 31 * result + contentKey.hashCode()
+        result = 31 * result + entries.hashCode()
+        return result
+    }
+
+    override fun toString(): String =
+        "LabelGlyphAtlas(byteCount=${pngBytes.size}, width=$width, height=$height, " +
+            "contentKey=$contentKey, entryCount=${entries.size})"
+}
+
+/** A glyph quad in label-local coordinates, referencing [LabelGlyphAtlas.entries] by index. */
+public data class LabelGlyphQuad(
+    public val entryIndex: Int,
+    public val x: Double, public val y: Double,
+    public val scale: Double,
+)
+
+/** Label-local bounds, before any projection, for the consumer's screen-space collision. */
+public data class LabelBox(
+    public val left: Double, public val top: Double,
+    public val right: Double, public val bottom: Double,
+)
+
+/**
+ * Paint resolved for one layer at one requested output zoom with no feature context.
+ * One entry per (layer, zoom) pair present in the batch; [LabelCandidate.layerStyleIndex]
+ * selects the entry matching that candidate's own `requestedTile.z`.
+ */
+public data class LabelLayerStyle(
+    public val layerId: String,
+    public val zoom: Int,
+    public val priority: Int,
+    public val color: Int,
+    public val haloColor: Int,
+)
+
+/** The sprite the style pairs with this label, indexing the atlas Rentile already builds. */
+public data class LabelIconRef(
+    public val imageName: String,
+    public val width: Double, public val height: Double,
+    public val offsetX: Double, public val offsetY: Double,
+)
+
+/**
+ * One Label decoded, evaluated and laid out, but not positioned on screen and not
+ * resolved against any other Label. Nothing here is in screen coordinates.
+ */
+public data class LabelCandidate(
+    public val layerStyleIndex: Int,
+    public val requestedTile: TileId,
+    public val sourceTile: TileId,
+    public val longitude: Double,
+    public val latitude: Double,
+    public val glyphs: List<LabelGlyphQuad>,
+    public val boundingBox: LabelBox,
+    public val icon: LabelIconRef?,
+    public val allowOverlap: Boolean,
+    public val ignorePlacement: Boolean,
+    public val padding: Double,
+    public val sortKey: Double,
+    public val opacity: Double,
+    public val haloWidth: Double,
+    public val haloBlur: Double,
+)
+
+/** The immutable result of one Label acquisition. Not a Prepared Batch; see CONTEXT.md. */
+public data class LabelCandidateBatch(
+    public val candidates: List<LabelCandidate>,
+    public val layerStyles: List<LabelLayerStyle>,
+    public val atlas: LabelGlyphAtlas,
+    public val contentKey: String,
+    public val diagnostics: List<RenderDiagnostic>,
+)
+
 public enum class TerrainDemEncoding {
     MAPBOX,
     TERRARIUM,
@@ -307,7 +411,7 @@ public interface BasemapRasterizer : AutoCloseable {
      */
     public suspend fun retryExact(batch: PreparedBatch): ExactRecoveryResult
 
-    /** Resolved visible text-symbol layers in style order. URL templates remain private. */
+    /** Resolved visible place-name symbol layers in style order. URL templates remain private. */
     public fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor>
 
     /** All-or-error validated MVT acquisition. Tile substitution is deliberately not applied. */
