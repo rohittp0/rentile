@@ -198,15 +198,19 @@ class MapCatalogCorpusSmokeTest {
                 "is supposed to enforce"
         }
         if (caseId == CAIRO_CASE_ID) {
-            when (val outcome = classifyCairoOutcome(batch)) {
+            when (val outcome = classifyCairoOutcome(rasterizer, prepared, batch)) {
                 is CairoOutcome.Invalid -> {
                     errorCode = errorCode ?: "CAIRO_SCRIPT_OUTCOME_INVALID"
                     diagnostics += "CAIRO_SCRIPT_OUTCOME_INVALID: ${outcome.detail}"
                 }
-                CairoOutcome.NoPlaceFeatures -> diagnostics += "CAIRO_NO_PLACE_FEATURES: tile " +
-                    "carried zero label candidates and zero diagnostics; acceptable only when the " +
-                    "tile genuinely has no place-name features. Surfaced here rather than silently " +
-                    "accepted in case this turns out to be the common outcome instead of the rare one"
+                CairoOutcome.NoLabelLayers -> diagnostics += "CAIRO_NO_LABEL_LAYERS: style " +
+                    "declares no place-name label layers at all, so it cannot say anything about " +
+                    "complex-script handling one way or the other"
+                CairoOutcome.NoPlaceFeatures -> diagnostics += "CAIRO_NO_PLACE_FEATURES: style " +
+                    "has place-name label layers, but this tile carried zero label candidates and " +
+                    "no label-relevant diagnostic; acceptable only when the tile genuinely has no " +
+                    "place-name features. Surfaced here rather than silently accepted in case this " +
+                    "turns out to be the common outcome instead of the rare one"
                 CairoOutcome.SupportedScriptCandidates, CairoOutcome.ExcludedByComplexScript -> Unit
             }
         }
@@ -224,44 +228,62 @@ class MapCatalogCorpusSmokeTest {
     }
 
     /**
-     * Cairo is right-to-left, so exactly three outcomes are acceptable and nothing else:
+     * Cairo is right-to-left, so exactly four outcomes are acceptable and nothing else:
      *
      * - [CairoOutcome.SupportedScriptCandidates]: the style branched on `is-supported-script` and
      *   every candidate's resolved text is a script this renderer's glyph-metrics-only layout can
      *   lay out (typically a `name:latin` fallback).
      * - [CairoOutcome.ExcludedByComplexScript]: no candidates exist because
      *   [DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED] reported the exclusion.
-     * - [CairoOutcome.NoPlaceFeatures]: no candidates and no diagnostics at all - the tile
-     *   genuinely carries no place-name features, which is correct behaviour and not a script
-     *   outcome at all.
-     *
-     * [CairoOutcome.NoPlaceFeatures] is deliberately narrow so it cannot hide a broken pipeline: it
-     * is accepted only when the batch reports *nothing whatsoever*, never merely when
-     * `COMPLEX_SCRIPT_LABEL_EXCLUDED` is absent. A lone `GLYPH_RANGE_UNAVAILABLE`, for instance,
-     * still falls through to [CairoOutcome.Invalid] - every corpus style has a resolvable glyphs
-     * template, so that diagnostic without an empty diagnostic list alongside it means broken
-     * template resolution, not an empty tile.
+     * - [CairoOutcome.NoLabelLayers]: `labelLayerDescriptors` is empty for this style, so it has no
+     *   place-name label layers at all and cannot say anything about complex-script handling
+     *   either way. Checked and reported ahead of [NoPlaceFeatures] deliberately - "no label
+     *   layers exist" and "label layers exist but none matched this tile" are different situations
+     *   a corpus reader needs to tell apart, not one outcome hiding the other.
+     * - [CairoOutcome.NoPlaceFeatures]: the style does have label layers, but no candidates and no
+     *   *label-relevant* diagnostic came back for this tile - it genuinely carries no place-name
+     *   features. Keyed on label-relevant diagnostics only
+     *   ([LABEL_RELEVANT_DIAGNOSTIC_CODES]: [DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED],
+     *   [DiagnosticCode.GLYPH_RANGE_UNAVAILABLE], [DiagnosticCode.LABEL_FEATURE_SKIPPED],
+     *   [DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT], [DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED])
+     *   so an unrelated style-preparation diagnostic - `ROOT_BEHAVIOR_EXCLUDED`,
+     *   `TEXT_ONLY_LAYER_EXCLUDED` and the like - never disqualifies a tile that is genuinely empty
+     *   of label candidates. Still narrow in the way that matters: any *label-relevant* diagnostic
+     *   present without candidates, other than the complex-script exclusion itself, still falls
+     *   through to [Invalid] - a lone `GLYPH_RANGE_UNAVAILABLE`, for instance, means broken
+     *   template resolution (every corpus style has a resolvable glyphs template), not an empty
+     *   tile.
      *
      * Candidates whose text still requires complex shaping - garbled output - are the one outcome
-     * this check exists to catch, and always resolve to [CairoOutcome.Invalid].
+     * this check exists to catch, and always resolve to [CairoOutcome.Invalid] regardless of the
+     * other three outcomes above.
      */
     private sealed interface CairoOutcome {
         data object SupportedScriptCandidates : CairoOutcome
         data object ExcludedByComplexScript : CairoOutcome
+        data object NoLabelLayers : CairoOutcome
         data object NoPlaceFeatures : CairoOutcome
         data class Invalid(val detail: String) : CairoOutcome
     }
 
-    private fun classifyCairoOutcome(batch: LabelCandidateBatch): CairoOutcome {
+    private fun classifyCairoOutcome(
+        rasterizer: BasemapRasterizer,
+        prepared: PreparedStyle,
+        batch: LabelCandidateBatch,
+    ): CairoOutcome {
+        if (rasterizer.labelLayerDescriptors(prepared).isEmpty()) {
+            return CairoOutcome.NoLabelLayers
+        }
         if (batch.candidates.isEmpty()) {
+            val labelDiagnostics = batch.diagnostics.filter { it.code in LABEL_RELEVANT_DIAGNOSTIC_CODES }
             return when {
-                batch.diagnostics.any { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED } ->
+                labelDiagnostics.any { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED } ->
                     CairoOutcome.ExcludedByComplexScript
-                batch.diagnostics.isEmpty() -> CairoOutcome.NoPlaceFeatures
+                labelDiagnostics.isEmpty() -> CairoOutcome.NoPlaceFeatures
                 else -> CairoOutcome.Invalid(
                     "no label candidates were acquired without COMPLEX_SCRIPT_LABEL_EXCLUDED being " +
-                        "reported, and the batch was not free of diagnostics either (" +
-                        batch.diagnostics.joinToString(", ") { it.code.name } +
+                        "reported, and other label-relevant diagnostics were present instead (" +
+                        labelDiagnostics.joinToString(", ") { it.code.name } +
                         "); every corpus style has a resolvable glyphs template, so this is " +
                         "otherwise unexplained",
                 )
@@ -851,6 +873,22 @@ class MapCatalogCorpusSmokeTest {
          */
         val LABEL_SMOKE_CASE_IDS: List<String> = listOf("new-york-zoom-ladder", "tokyo-cjk-dense", "cairo-rtl")
         const val CAIRO_CASE_ID = "cairo-rtl"
+
+        /**
+         * Diagnostics that speak to whether label acquisition itself found or excluded something,
+         * as distinct from style-preparation diagnostics like `ROOT_BEHAVIOR_EXCLUDED` or
+         * `TEXT_ONLY_LAYER_EXCLUDED`, which describe layers Rentile does not draw at all and say
+         * nothing about label candidates. Used to key [CairoOutcome.NoPlaceFeatures] on the right
+         * evidence: an unrelated style-preparation diagnostic must never disqualify a tile that is
+         * genuinely empty of label candidates.
+         */
+        val LABEL_RELEVANT_DIAGNOSTIC_CODES: Set<DiagnosticCode> = setOf(
+            DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED,
+            DiagnosticCode.GLYPH_RANGE_UNAVAILABLE,
+            DiagnosticCode.LABEL_FEATURE_SKIPPED,
+            DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT,
+            DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED,
+        )
 
         /** Glyph endpoints always serve 256-codepoint blocks; the `{range}` template is `N-(N+255)`. */
         const val GLYPH_RANGE_SIZE = 256
