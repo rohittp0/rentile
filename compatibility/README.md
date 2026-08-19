@@ -12,6 +12,8 @@ The harness follows the catalog's `next` links, requires all pages to remain on 
 
 `rentile-v1-coverage.json` commits only stable map IDs, the supported z0–z22 range, XYZ cases, seam mosaics, overzoom gates, and required capability names. It contains no style JSON, style URL, provider URL, credential, or frozen layer count.
 
+Two cases, `tokyo-cjk-dense` and `cairo-rtl`, exist specifically to keep non-Latin text rendering honest. Tokyo is dense and CJK, so it exercises glyph-range fan-out: CJK labels pull in far more codepoints per tile than Latin scripts do, and that fan-out is exactly what a later bound on glyph-range size has to account for. Cairo is right-to-left, so it exercises the complex-script path, where Rentile must either fall back to a style-authored Latin label or drop the label outright, and must never emit garbled text.
+
 Validate it without network access:
 
 ```shell

@@ -377,6 +377,44 @@
           "z": 22
         }
       ]
+    },
+    {
+      "id": "tokyo-cjk-dense",
+      "tags": [
+        "non-latin",
+        "vector-overzoom"
+      ],
+      "tiles": [
+        {
+          "x": 14547,
+          "y": 6451,
+          "z": 14
+        },
+        {
+          "x": 58190,
+          "y": 25807,
+          "z": 16
+        }
+      ]
+    },
+    {
+      "id": "cairo-rtl",
+      "tags": [
+        "non-latin",
+        "vector-overzoom"
+      ],
+      "tiles": [
+        {
+          "x": 9613,
+          "y": 6757,
+          "z": 14
+        },
+        {
+          "x": 38454,
+          "y": 27029,
+          "z": 16
+        }
+      ]
     }
   ],
   "outputZoomRange": {
@@ -394,6 +432,7 @@
     "hillshade",
     "independent-line-icon",
     "independent-point-icon",
+    "label-candidate",
     "legacy-filter",
     "legacy-function",
     "line",
