@@ -2494,14 +2494,73 @@ class RentileRuntimeTest {
                 StyleInput.InlineJson(
                     """{"version":8,"glyphs":"https://glyphs.example.test/{fontstack}/{range}.pbf?key=secret","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","layout":{"text-field":["get","name"],"text-font":["Open Sans Regular"],"text-size":14}}]}""",
                 ),
-            )
+            ) as CompiledPreparedStyle
 
             val descriptors = rasterizer.labelLayerDescriptors(style)
-
             assertEquals(1, descriptors.size)
             assertEquals("place", descriptors.single().sourceLayer)
-            // The glyphs template is credential-bearing and must not surface anywhere public.
+
+            // Actually observe the resolved template, so this fails if glyphs resolution were
+            // ever removed or short-circuited to null - the descriptor assertions above pass
+            // whether or not this code exists at all, since they only exercise pre-task
+            // behaviour.
+            assertEquals(
+                "https://glyphs.example.test/{fontstack}/{range}.pbf?key=secret",
+                style.glyphsTemplate,
+            )
+
+            // glyphsTemplate deliberately retains the credential - mirroring the sprite path -
+            // because Task 10 needs the real key to fetch glyph ranges later. What must never
+            // happen is that credential leaking into anything this style exposes to a consumer
+            // who never asks for labels. Diagnostics is one such surface:
             assertTrue(style.diagnostics.none { it.details.values.any { value -> value.contains("secret") } })
+
+            // digest is the other, and it is public (PreparedStyle.digest). It is computed from
+            // the whole style JSON, which contains the glyphs URL, so a second style differing
+            // only in the glyphs credential must hash identically - proving redactedForIdentity()
+            // strips the credential before it reaches the digest input, rather than merely
+            // burying it inside a hash that would look the same regardless.
+            val styleWithDifferentGlyphsKey = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"glyphs":"https://glyphs.example.test/{fontstack}/{range}.pbf?key=another-secret","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","layout":{"text-field":["get","name"],"text-font":["Open Sans Regular"],"text-size":14}}]}""",
+                ),
+            )
+            assertEquals(style.digest, styleWithDifferentGlyphsKey.digest)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aPlaceNameLayerWithARejectedFilterKeepsItsDescriptorAndRawMvtAccess() = runTest {
+        val vectorTile = overzoomVectorTile()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { TransportResponse(200, vectorTile) },
+        )
+        try {
+            // ["!=", ["get", "class"], "country"] is not legacy-filter-shaped (its second element
+            // is an array, not a bare property-name string), so it compiles as an expression -
+            // and "!=" is not a supported expression operator (only "==", "<=", ">=" are), so this
+            // filter genuinely fails to compile. compileFilter never ran for a label layer before
+            // this task; this is the exact regression the review caught: a rejected filter must
+            // degrade only the text program, never the raw-MVT descriptor below.
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","filter":["!=",["get","class"],"country"],"layout":{"text-field":["get","name"]}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+
+            val descriptors = rasterizer.labelLayerDescriptors(style)
+            assertEquals(1, descriptors.size)
+            assertEquals("places", descriptors.single().id)
+
+            // Not just the descriptor - acquireLabelTiles, the pre-existing, non-opted-in raw-MVT
+            // escape hatch, must keep serving this layer's source too.
+            val labelTile = rasterizer.acquireLabelTiles(style, listOf(TileId(2, 1, 1))).single()
+            assertTrue(labelTile.bytes.contentEquals(vectorTile))
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -2516,10 +2575,14 @@ class RentileRuntimeTest {
                 StyleInput.InlineJson(
                     """{"version":8,"glyphs":"https://glyphs.example.test/{fontstack}/{range}.pbf","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","layout":{"text-field":["get","name"],"symbol-placement":"line"}}]}""",
                 ),
-            )
+            ) as CompiledPreparedStyle
 
             assertTrue(style.diagnostics.any { it.code == DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED })
-            assertEquals(0, rasterizer.labelLayerDescriptors(style).size)
+            // The text program is excluded (no label candidates), but the descriptor still ships
+            // unconditionally - this layer's raw-MVT access must be exactly as unaffected as any
+            // other construct this compiler declines to compile.
+            assertEquals(1, rasterizer.labelLayerDescriptors(style).size)
+            assertEquals(null, style.labelLayers.single().textProgram)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -2535,7 +2598,7 @@ class RentileRuntimeTest {
                     """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","layout":{"text-field":["get","name"],"text-font":["get","fontProperty"]}}]}""",
                 ),
             ) as CompiledPreparedStyle
-            val font = style.labelLayers.single().font
+            val font = style.labelLayers.single().textProgram!!.font
 
             // If ["get", "fontProperty"] were misread as a literal two-entry font stack (it is
             // exactly as all-strings-shaped as one), this would always evaluate to
