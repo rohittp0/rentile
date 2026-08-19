@@ -997,15 +997,15 @@ internal class StyleCompiler(
     }
 
     /**
-     * Compiles a place-name symbol layer's text program: `text-field` and every text layout and
-     * paint property, using the same [compileProperty]/[compilePropertyWithDefault]/
+     * Compiles a place-name symbol layer's text program: its `filter`, `text-field`, and every
+     * text layout and paint property, using the same [compileProperty]/[compilePropertyWithDefault]/
      * [compileColorPropertyWithDefault] helpers [compileIconLayer] uses for its own properties.
      * [source] and [descriptor] are already resolved by the caller, which also gates out
      * `symbol-placement: line` before calling this. Any rejected construct - an unsupported
-     * expression, an invalid enum value, an out-of-range constant - throws
-     * [StylePreparationException] via [failRetained] or [compileProperty]; the caller catches
-     * that and excludes this layer with `UNSUPPORTED_TEXT_CONSTRUCT` rather than failing the
-     * whole style, per ADR 0026.
+     * filter or text expression, an invalid enum value, an out-of-range constant - throws
+     * [StylePreparationException] via [failRetained], [compileFilter] or [compileProperty]; the
+     * caller catches that and excludes this layer with `UNSUPPORTED_TEXT_CONSTRUCT` rather than
+     * failing the whole style, per ADR 0026.
      */
     private fun compileLabelLayer(
         layer: JsonObject,
@@ -1132,8 +1132,30 @@ internal class StyleCompiler(
         }
     }
 
-    private fun compileFontElement(element: JsonElement, index: Int, layerId: String): CompiledStyleProperty =
-        if (element is JsonArray && element.all { entry -> entry is JsonPrimitive && entry.isString }) {
+    /**
+     * A JSON array is a literal font stack - and goes straight to
+     * [StylePropertyCompiler.compileConstant] - only when every element is a plain string *and*
+     * the first element is not [a known expression operator][StyleExpressionCompiler.isKnownOperator].
+     * "Every element is a string" alone is not enough: `["get", "fontProperty"]` is exactly as
+     * all-strings-shaped as a two-entry font stack named "get" and "fontProperty", and reading it
+     * as the latter would silently fetch glyphs for fonts that do not exist and produce no labels
+     * for the layer, instead of doing the per-feature lookup the style author wrote. Checking
+     * against [StyleExpressionCompiler]'s own operator dispatch - rather than hard-coding a second
+     * list of operator names here - is what keeps this check from drifting out of sync as that
+     * vocabulary grows.
+     */
+    private fun compileFontElement(element: JsonElement, index: Int, layerId: String): CompiledStyleProperty {
+        val firstElementIsOperator = (element as? JsonArray)
+            ?.firstOrNull()
+            ?.let { it as? JsonPrimitive }
+            ?.takeIf { it.isString }
+            ?.let { StyleExpressionCompiler.isKnownOperator(it.content) }
+            ?: false
+        return if (
+            element is JsonArray &&
+            !firstElementIsOperator &&
+            element.all { entry -> entry is JsonPrimitive && entry.isString }
+        ) {
             try {
                 StylePropertyCompiler.compileConstant(element, StyleType.ARRAY)
             } catch (error: StyleExpressionCompilationException) {
@@ -1142,6 +1164,7 @@ internal class StyleCompiler(
         } else {
             compileProperty(element, StyleType.ARRAY, index, layerId, "text-font")
         }
+    }
 
     private fun validateVectorLayerKeys(layer: JsonObject, index: Int, layerId: String) {
         val supported = setOf("id", "type", "source", "source-layer", "minzoom", "maxzoom", "filter", "layout", "paint", "metadata")

@@ -12,6 +12,8 @@ import com.rohittp.rentile.internal.renderSyntheticPng
 import com.rohittp.rentile.internal.mvt.Tile
 import com.rohittp.rentile.internal.style.CompiledPreparedStyle
 import com.rohittp.rentile.internal.style.RasterDrawLayer
+import com.rohittp.rentile.internal.style.StyleEvaluationContext
+import com.rohittp.rentile.internal.style.StyleValue
 import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.Color
 import org.jetbrains.skia.EncodedImageFormat
@@ -2518,6 +2520,37 @@ class RentileRuntimeTest {
 
             assertTrue(style.diagnostics.any { it.code == DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED })
             assertEquals(0, rasterizer.labelLayerDescriptors(style).size)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aTextFontGetExpressionIsCompiledAsAnExpressionNotALiteralFontStack() = runTest {
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","layout":{"text-field":["get","name"],"text-font":["get","fontProperty"]}}]}""",
+                ),
+            ) as CompiledPreparedStyle
+            val font = style.labelLayers.single().font
+
+            // If ["get", "fontProperty"] were misread as a literal two-entry font stack (it is
+            // exactly as all-strings-shaped as one), this would always evaluate to
+            // ["get", "fontProperty"] regardless of feature properties. Evaluating it against a
+            // feature that actually carries "fontProperty" proves it is a real property lookup.
+            val resolvedFont = font.evaluate(
+                StyleEvaluationContext(
+                    zoom = 10.0,
+                    properties = mapOf(
+                        "fontProperty" to StyleValue.ArrayValue(listOf(StyleValue.StringValue("Noto Sans Bold"))),
+                    ),
+                ),
+            )
+
+            assertEquals(StyleValue.ArrayValue(listOf(StyleValue.StringValue("Noto Sans Bold"))), resolvedFont)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
