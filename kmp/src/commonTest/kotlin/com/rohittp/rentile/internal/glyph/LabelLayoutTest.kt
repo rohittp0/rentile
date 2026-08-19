@@ -135,13 +135,41 @@ class LabelLayoutTest {
         // future change to it is caught here rather than only failing at some consumer far
         // downstream. For "AB" centered both ways: the line (and the block) is exactly 24
         // em-units wide, so justification contributes no offset and the anchor shift alone
-        // centers the block, putting the first glyph's origin at x = -12 + left(1) = -11,
-        // and the single line's baseline sits exactly at the vertical center, so
-        // y = 0 + top(-14) = -14.
+        // centers the block, and the single line's baseline sits exactly at the vertical
+        // center, at y = 0.
+        //
+        // A quad is the buffered *cell*, so its corner sits BUFFER_PX up and left of the
+        // bearing the provider gave for the glyph body: x = -12 + left(1) - 3 = -14, and
+        // y = 0 + top(-14) - 3 = -17.
         val (whitespace, atlas) = setUp('A'.code, 'B'.code)
         val laid = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas))!!
 
-        assertEquals(-11.0, laid.quads[0].x)
-        assertEquals(-14.0, laid.quads[0].y)
+        assertEquals(-14.0, laid.quads[0].x)
+        assertEquals(-17.0, laid.quads[0].y)
+    }
+
+    @Test
+    fun theGlyphBodyRestsExactlyOnTheBaseline() {
+        // The invariant behind the absolute numbers above, stated so it cannot be satisfied by
+        // whatever the code happens to produce. The fixture's top = -height is the canonical
+        // rests-on-baseline encoding, and the single line's baseline is at y = 0, so the body's
+        // top edge must sit exactly `height` above it and its bottom edge exactly on it.
+        //
+        // The body begins BUFFER_PX inside the cell the quad describes. Placing the cell's corner
+        // at the bearing instead - as this did before the buffer was compensated for - put the
+        // body BUFFER_PX below the baseline, a 0.125 em error at the 24-pixel em on every glyph.
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
+        val laid = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas))!!
+        val quad = laid.quads[0]
+        val entry = atlas.entries[quad.entryIndex]
+        val buffer = GlyphRangeDecoder.BUFFER_PX * quad.scale
+
+        val bodyTop = quad.y + buffer
+        val bodyBottom = bodyTop + (entry.height - GlyphRangeDecoder.BUFFER_PX * 2) * quad.scale
+
+        assertEquals(-14.0, bodyTop)
+        assertEquals(0.0, bodyBottom)
+        // The horizontal bearing lands the body's left edge on left(1), likewise.
+        assertEquals(-11.0, quad.x + buffer)
     }
 }

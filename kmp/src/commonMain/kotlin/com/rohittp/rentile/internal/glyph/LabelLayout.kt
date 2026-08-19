@@ -233,10 +233,18 @@ internal object LabelLayout {
                 val entry = atlas.entries[glyph.entryIndex]
                 val penX = glyph.x - blockWidth / 2.0 + anchorDx + offsetDx
                 val baselineY = glyph.y - blockHeight / 2.0 + anchorDy + offsetDy
+                // BUFFER_PX comes off both axes because the quad is the *cell*, not the glyph
+                // body. GlyphAtlasPacker sizes an entry as the buffered cell
+                // (glyph.width + BUFFER_PX * 2) while carrying the provider's unbuffered bearings,
+                // so placing the cell's corner at the bearing would put the body - which starts
+                // BUFFER_PX inside the cell - that far down and right of where the bearing says.
+                // Moving the corner up-left by BUFFER_PX lands the body exactly on the bearing.
+                // At the 24-pixel em that error was 0.125 em on every glyph, at every zoom, on
+                // every platform, and the bounding box inherited it.
                 quads += LabelGlyphQuad(
                     entryIndex = glyph.entryIndex,
-                    x = (penX + entry.left) * scale,
-                    y = (baselineY + entry.top) * scale,
+                    x = (penX + entry.left - GlyphRangeDecoder.BUFFER_PX) * scale,
+                    y = (baselineY + entry.top - GlyphRangeDecoder.BUFFER_PX) * scale,
                     scale = scale,
                 )
             }

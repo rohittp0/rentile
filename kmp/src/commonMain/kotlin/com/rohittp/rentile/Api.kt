@@ -139,7 +139,36 @@ public data class ValidatedMvtTile(
     public val contentDigest: String,
 )
 
-/** One block of 256 codepoints of one font stack, as SDF bitmaps packed into the batch atlas. */
+/**
+ * One glyph in the batch atlas: where its cell sits in the texture, and the metrics that position
+ * it.
+ *
+ * Every value is in atlas pixels at the signed-distance-field em of **24 pixels**, which is the
+ * size the provider rendered these glyphs at. [LabelGlyphQuad.scale] carries the ratio from that
+ * em to the label's own `text-size`, so a consumer multiplies by it rather than assuming any
+ * particular text size here.
+ *
+ * The buffered-versus-unbuffered distinction matters and is the one thing easy to get wrong:
+ *
+ * - [x], [y], [width] and [height] describe the glyph's **cell** in the texture — the region to
+ *   sample. Signed-distance-field glyphs carry a **3-pixel** buffer on all four sides so the
+ *   distance field stays continuous past the ink, and that buffer is inside the cell: the cell is
+ *   6 pixels wider and 6 taller than the glyph body it contains. [x] and [y] are the cell's
+ *   top-left corner, measured from the texture's top-left, x rightwards and y downwards.
+ * - [left] and [top] are the provider's bearings for the glyph **body**, not the cell, forwarded
+ *   verbatim from the glyph range: [left] is the horizontal distance from the pen position to the
+ *   body's left edge, positive rightwards, and [top] is the vertical distance from the baseline to
+ *   the body's top edge. Rentile's own layout reads [top] in the same y-downwards sense as [y],
+ *   adding it to the baseline, which is the interpretation [LabelGlyphQuad] positions are built on.
+ *
+ * A consumer drawing this itself therefore places the cell's corner 3 pixels up and left of the
+ * bearing, which is what [LabelGlyphQuad.x] and [LabelGlyphQuad.y] already have applied — they
+ * are cell corners, so nothing further is needed unless the quads are being recomputed.
+ *
+ * [advance] is how far the pen moves after this glyph, positive rightwards. [fontStackDigest]
+ * identifies the font stack this glyph came from without naming it, and [codepoint] is its
+ * Unicode code point.
+ */
 public data class LabelGlyphEntry(
     public val fontStackDigest: String,
     public val codepoint: Int,
@@ -179,14 +208,40 @@ public data class LabelGlyphAtlas(
             "contentKey=$contentKey, entryCount=${entries.size})"
 }
 
-/** A glyph quad in label-local coordinates, referencing [LabelGlyphAtlas.entries] by index. */
+/**
+ * One glyph positioned within its label, referencing [LabelGlyphAtlas.entries] by [entryIndex].
+ *
+ * [x] and [y] are the **top-left corner of the glyph's cell** in label-local coordinates: x
+ * rightwards, y downwards, and the origin is the label's own anchor point — the position
+ * [LabelCandidate.longitude] and [LabelCandidate.latitude] name — after `text-anchor` and
+ * `text-offset` have been applied. Nothing here is in screen coordinates and nothing is projected.
+ *
+ * The buffer is already compensated for: these are cell corners, not bearings, so the glyph body
+ * lands on the provider's bearing without further adjustment.
+ *
+ * [scale] is `text-size` divided by the 24-pixel signed-distance-field em, and it is the factor
+ * relating this label to the atlas. The quad occupies
+ * `x .. x + entry.width * scale` by `y .. y + entry.height * scale`, using the cell extent from
+ * [LabelGlyphEntry]; [x] and [y] already have it applied, so it is needed only for the extent.
+ */
 public data class LabelGlyphQuad(
     public val entryIndex: Int,
     public val x: Double, public val y: Double,
     public val scale: Double,
 )
 
-/** Label-local bounds, before any projection, for the consumer's screen-space collision. */
+/**
+ * Label-local bounds, before any projection, for the consumer's screen-space collision.
+ *
+ * In the same coordinates and the same units as [LabelGlyphQuad]: the origin is the label's anchor
+ * point, x runs rightwards and y downwards, and the values are at the label's own `text-size`
+ * rather than at the atlas em. So [top] is above [bottom] numerically — [top] is the smaller value
+ * — and both are typically negative for a single-line label centred on its anchor.
+ *
+ * The box is the union of every quad's cell extent, expanded on all sides by the layer's
+ * `text-padding`. It therefore includes each glyph's 3-pixel signed-distance-field buffer, which
+ * makes it very slightly larger than the ink it contains.
+ */
 public data class LabelBox(
     public val left: Double, public val top: Double,
     public val right: Double, public val bottom: Double,
@@ -196,6 +251,15 @@ public data class LabelBox(
  * Paint resolved for one layer at one requested output zoom with no feature context.
  * One entry per (layer, zoom) pair present in the batch; [LabelCandidate.layerStyleIndex]
  * selects the entry matching that candidate's own `requestedTile.z`.
+ *
+ * [priority] is the layer's position in the style's own layer list, ascending, so a larger value
+ * means the style declared the layer later and it should win a placement conflict against a
+ * smaller one. It exists so that two consumers resolve ties the same way; the absolute values are
+ * not contiguous and carry no meaning beyond their order.
+ *
+ * [color] and [haloColor] are packed `0xAARRGGBB` integers. Both are resolved with no feature
+ * context because no place-name layer in the rolling corpus makes either feature-driven, unlike
+ * `text-opacity` and the halo widths, which sit on [LabelCandidate] for exactly that reason.
  */
 public data class LabelLayerStyle(
     public val layerId: String,
@@ -310,6 +374,24 @@ public data class ResourceLimits(
     public val maxTileBytes: Long = 32L * 1024L * 1024L,
     public val maxSpriteImageBytes: Long = 32L * 1024L * 1024L,
     public val maxGeoJsonBytes: Long = 64L * 1024L * 1024L,
+    public val maxRasterDimensionPx: Int = 8192,
+    public val maxDecodedRasterBytes: Long = 256L * 1024L * 1024L,
+    public val maxMvtLayers: Int = 512,
+    public val maxMvtFeatures: Int = 500_000,
+    public val maxMvtTags: Int = 4_000_000,
+    public val maxMvtCommands: Int = 8_000_000,
+    public val maxMvtCoordinates: Int = 8_000_000,
+    public val maxMvtExtent: Int = 65_536,
+    public val maxRedirects: Int = 5,
+    /**
+     * Appended, not inserted, and every field added here in future must be too. These two arrived
+     * with label candidates, and while they sat between `maxGeoJsonBytes` and
+     * `maxRasterDimensionPx` a caller written against the previous version silently changed
+     * meaning instead of failing to compile: six positional arguments ending in a `4096` intended
+     * for `maxRasterDimensionPx` type-check as a `Long` and set `maxGlyphRangeBytes` to 4 KiB, so
+     * every glyph range over 4 KiB raised [SafetyLimitException]. A source-compatible signature
+     * that quietly reassigns a caller's arguments is worse than an incompatible one.
+     */
     public val maxGlyphRangeBytes: Long = 1L * 1024L * 1024L,
     /**
      * Highest observed in the rolling corpus was 15 glyph ranges, at Tokyo z14, dense CJK
@@ -324,15 +406,6 @@ public data class ResourceLimits(
      * from the single-tile number above.
      */
     public val maxGlyphRangesPerBatch: Int = 64,
-    public val maxRasterDimensionPx: Int = 8192,
-    public val maxDecodedRasterBytes: Long = 256L * 1024L * 1024L,
-    public val maxMvtLayers: Int = 512,
-    public val maxMvtFeatures: Int = 500_000,
-    public val maxMvtTags: Int = 4_000_000,
-    public val maxMvtCommands: Int = 8_000_000,
-    public val maxMvtCoordinates: Int = 8_000_000,
-    public val maxMvtExtent: Int = 65_536,
-    public val maxRedirects: Int = 5,
 ) {
     init {
         require(maxStyleBytes > 0)
