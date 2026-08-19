@@ -2,17 +2,19 @@ package com.rohittp.rentile.internal.glyph
 
 import com.rohittp.rentile.InMemoryRawResourceStore
 import com.rohittp.rentile.RentileConfiguration
+import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.ResourceTransport
 import com.rohittp.rentile.TransportResponse
 import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class GlyphResourceAcquirerTest {
     @Test
@@ -68,7 +70,11 @@ class GlyphResourceAcquirerTest {
             rawResourceStore = InMemoryRawResourceStore(),
         )
 
-        val (first, second) = coroutineScope {
+        // supervisorScope, not coroutineScope: DefaultBasemapRasterizer always hands acquirers a
+        // supervisor-rooted scope so one acquisition's SingleFlight work cannot cancel its
+        // scope-mates by failing; a plain coroutineScope here would make that failure propagate
+        // and race with (or replace) whatever this test is asserting.
+        val (first, second) = supervisorScope {
             val acquirer = GlyphResourceAcquirer(
                 configuration = configuration,
                 scope = this,
@@ -95,5 +101,46 @@ class GlyphResourceAcquirerTest {
 
         assertEquals(1, requestsMutex.withLock { requestCount })
         assertEquals(first.contentDigest, second.contentDigest)
+    }
+
+    @Test
+    fun wrapsAMalformedGlyphPayloadInATypedException() = runTest {
+        // The bitmap's declared extent (10 + 6) * (14 + 6) does not match its actual size (4
+        // bytes), which GlyphRangeDecoder.decode already rejects via `require` - a bare
+        // IllegalArgumentException that must not escape acquire() untyped.
+        val malformedPayload = Glyphs(
+            stacks = listOf(
+                Glyphs.Fontstack(
+                    name = "Open Sans Regular",
+                    range = "0-255",
+                    glyphs = listOf(
+                        Glyph(
+                            id = 66, width = 10, height = 14, left = 0, top = 0, advance = 12,
+                            bitmap = okio.ByteString.of(*ByteArray(4)),
+                        ),
+                    ),
+                ),
+            ),
+        ).encode()
+        val configuration = RentileConfiguration(
+            transport = ResourceTransport { TransportResponse(200, malformedPayload) },
+            rawResourceStore = InMemoryRawResourceStore(),
+        )
+
+        supervisorScope {
+            val acquirer = GlyphResourceAcquirer(
+                configuration = configuration,
+                scope = this,
+                workCoordinator = ResourceWorkCoordinator(configuration.executionPolicy),
+            )
+
+            assertFailsWith<ResourceDecodeException> {
+                acquirer.acquire(
+                    template = "https://glyphs.example.test/fonts/{fontstack}/{range}.pbf",
+                    fontStack = "Open Sans Regular",
+                    rangeStart = 0,
+                )
+            }
+        }
     }
 }
