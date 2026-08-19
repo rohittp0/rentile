@@ -2862,6 +2862,128 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun anUnusableTextPropertySkipsItsFeatureAndReportsOncePerLayer() = runTest {
+        // One good feature and three whose data-driven text-size is a string. Failing the batch
+        // over them is the failure 0.2.0 spent two rounds removing for icons: a data-dependent
+        // property throwing on one feature must not take everything else down with it.
+        val vectorTile = placeNameVectorTile("Tokyo", copies = 1, badSizeCopies = 3)
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val recording = RecordingDiagnosticSink()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+            diagnosticSink = recording,
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(textSize = """["get","size"]""")),
+            )
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            // The good feature still produced its candidate: the batch did not fail.
+            assertEquals(1, batch.candidates.size)
+            // One diagnostic for the layer, not one per skipped feature.
+            assertEquals(1, batch.diagnostics.count { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED })
+            assertEquals(1, recording.snapshot().count { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED })
+            val diagnostic = batch.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
+            assertEquals(DiagnosticSeverity.INFO, diagnostic.severity)
+            // Both counts, so losing three of four is distinguishable from losing all four.
+            assertEquals("4", diagnostic.details["candidateFeatures"])
+            assertEquals("3", diagnostic.details["skippedFeatures"])
+            assertEquals("0", diagnostic.details["layerIndex"])
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aLayerWhoseEveryFeatureIsSkippedReportsNothingElseAndDoesNotFail() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo", copies = 0, badSizeCopies = 2)
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(textSize = """["get","size"]""")),
+            )
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            assertTrue(batch.candidates.isEmpty())
+            val diagnostic = batch.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
+            // Equal counts is what "this layer contributed nothing here" looks like.
+            assertEquals(diagnostic.details["candidateFeatures"], diagnostic.details["skippedFeatures"])
+            assertEquals("2", diagnostic.details["skippedFeatures"])
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun requestedTilesSharingASourceTileAtOneZoomYieldOneCandidate() = runTest {
+        // Source maxzoom 1, so z2/0/0 and z2/1/0 both overzoom from source tile 1/0/0. The
+        // candidates they would produce differ in nothing but which requested tile they name, so
+        // an overzoomed viewport would otherwise multiply every label for no benefit.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson(sourceMaxZoom = 1)))
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 0, 0), TileId(2, 1, 0)))
+
+            assertEquals(1, batch.candidates.size)
+            assertEquals(TileId(1, 0, 0), batch.candidates.single().sourceTile)
+            // The lowest-ordered requested tile of the group carries it, deterministically.
+            assertEquals(TileId(2, 0, 0), batch.candidates.single().requestedTile)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun requestedTilesSharingASourceTileAcrossZoomsStillYieldOneCandidateEach() = runTest {
+        // The other half of the same rule. Zoom-driven paint and text-size resolve at
+        // requestedTile.z, so the same feature at two requested zooms is two real candidates and
+        // the dedup must not collapse them.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson(sourceMaxZoom = 1)))
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 0, 0), TileId(3, 0, 0)))
+
+            assertEquals(2, batch.candidates.size)
+            assertEquals(listOf(2, 3), batch.candidates.map { it.requestedTile.z })
+            assertTrue(batch.candidates.all { it.sourceTile == TileId(1, 0, 0) })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun tooManyGlyphRangesExceedsItsLimit() = runTest {
         // 70 codepoints, each from a different 256-block of CJK Unified Ideographs, so the
         // name needs 70 glyph ranges. CJK is chosen because it is supported by layout, so
@@ -3326,26 +3448,38 @@ class RentileRuntimeTest {
         name: String,
         latinName: String? = null,
         copies: Int = 1,
+        badSizeCopies: Int = 0,
     ): ByteArray {
-        val keys = listOfNotNull("name", latinName?.let { "name:latin" })
+        val keys = listOfNotNull("name", latinName?.let { "name:latin" }, "size".takeIf { badSizeCopies > 0 })
         val values = listOfNotNull(
             Tile.Value(string_value = name),
             latinName?.let { Tile.Value(string_value = it) },
+            Tile.Value(string_value = "not-a-number").takeIf { badSizeCopies > 0 },
         )
-        val tags = keys.indices.flatMap { listOf(it, it) }
-        val inside = listOf(2048 to 2048, 1024 to 1024, 3072 to 3072)
-        fun feature(x: Int, y: Int) = Tile.Feature(
+        // A "good" feature omits "size" entirely, so a data-driven text-size expression evaluates
+        // to Null and falls back to its compiled default. A "bad" one declares "size" as a string,
+        // which no text-size can use - the same shape iconOffsetVectorTile uses for icon-offset.
+        val nameTags = keys.indices.filter { keys[it] != "size" }.flatMap { listOf(it, it) }
+        val badTags = nameTags + listOf(keys.indexOf("size"), values.lastIndex)
+        val inside = listOf(
+            2048 to 2048, 1024 to 1024, 3072 to 3072, 1024 to 3072,
+            3072 to 1024, 1536 to 1536, 2560 to 2560,
+        )
+        fun feature(position: Pair<Int, Int>, tags: List<Int>) = Tile.Feature(
             tags = tags,
             type = Tile.GeomType.POINT,
-            geometry = listOf(command(1, 1), zigZag(x), zigZag(y)),
+            geometry = listOf(command(1, 1), zigZag(position.first), zigZag(position.second)),
         )
+        val features = inside.take(copies).map { feature(it, nameTags) } +
+            inside.drop(copies).take(badSizeCopies).map { feature(it, badTags) } +
+            feature(-100 to 2048, nameTags)
         return Tile.ADAPTER.encode(
             Tile(
                 layers = listOf(
                     Tile.Layer(
                         version = 2,
                         name = "place",
-                        features = inside.take(copies).map { (x, y) -> feature(x, y) } + feature(-100, 2048),
+                        features = features,
                         keys = keys,
                         values = values,
                         extent = 4096,
@@ -3394,13 +3528,16 @@ class RentileRuntimeTest {
         glyphs: String? = "https://glyphs.example.test/{fontstack}/{range}.pbf",
         iconImage: String? = null,
         textField: String = """["get","name"]""",
+        textSize: String = "14",
+        sourceMaxZoom: Int = 14,
     ): String = buildString {
         append("""{"version":8""")
         if (glyphs != null) append(""","glyphs":"$glyphs"""")
         if (iconImage != null) append(""","sprite":"https://sprite.example.test/icons"""")
-        append(""","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}}""")
+        append(""","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],""")
+        append(""""maxzoom":$sourceMaxZoom}}""")
         append(""","layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place",""")
-        append(""""layout":{"text-field":$textField,"text-font":["Open Sans Regular"],"text-size":14""")
+        append(""""layout":{"text-field":$textField,"text-font":["Open Sans Regular"],"text-size":$textSize""")
         if (iconImage != null) append(""","icon-image":"$iconImage"""")
         append("""}}]}""")
     }

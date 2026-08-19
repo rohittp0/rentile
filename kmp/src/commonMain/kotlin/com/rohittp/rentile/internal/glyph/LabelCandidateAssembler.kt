@@ -40,6 +40,7 @@ internal data class GlyphRangeRequest(val fontStack: String, val rangeStart: Int
 internal data class PendingLabel(
     val program: CompiledLabelTextProgram,
     val layerId: String,
+    val layerStyle: LabelLayerStyle,
     val requestedTile: TileId,
     val sourceTile: TileId,
     val featureIndex: Int,
@@ -76,14 +77,19 @@ internal class LabelCandidatePlan internal constructor(
      */
     fun assemble(ranges: List<AcquiredGlyphRange>): LabelCandidateBatch {
         val atlas = GlyphAtlasPacker.pack(ranges)
+        // Once per batch, never per label: the map depends only on the acquired ranges, and
+        // rebuilding it inside layOut cost up to 64 x 256 map operations for every label.
+        val whitespace = LabelLayout.whitespaceAdvances(ranges)
         val layerStyles = mutableListOf<LabelLayerStyle>()
         val layerStyleIndex = mutableMapOf<Pair<String, Int>, Int>()
         val candidates = mutableListOf<LabelCandidate>()
 
         for (label in pending) {
-            val laidOut = LabelLayout.layOut(label.text, atlas, ranges, label.textStyle) ?: continue
+            val laidOut = LabelLayout.layOut(label.text, atlas, whitespace, label.textStyle) ?: continue
+            // Appended only when a candidate actually survives layout, so the list holds one entry
+            // per (layer, zoom) genuinely present in the batch and never an orphan.
             val styleIndex = layerStyleIndex.getOrPut(label.layerId to label.requestedTile.z) {
-                layerStyles += resolveLayerStyle(label)
+                layerStyles += label.layerStyle
                 layerStyles.lastIndex
             }
             candidates += LabelCandidate(
@@ -122,24 +128,6 @@ internal class LabelCandidatePlan internal constructor(
             // candidates, so a caller reading only this batch would otherwise have no way to
             // tell an excluded layer from an empty one.
             diagnostics = style.diagnostics + diagnostics,
-        )
-    }
-
-    /**
-     * Paint for one layer at one requested output zoom, evaluated with no feature context. The
-     * corpus has no feature-driven `text-color` or `text-halo-color` in any of its 265 place-name
-     * layers, which is why colour lives here rather than on each candidate.
-     */
-    private fun resolveLayerStyle(label: PendingLabel): LabelLayerStyle {
-        val program = label.program
-        val zoom = label.requestedTile.z
-        val context = StyleEvaluationContext(zoom = zoom.toDouble())
-        return LabelLayerStyle(
-            layerId = label.layerId,
-            zoom = zoom,
-            priority = program.layerOrder,
-            color = program.color.evaluate(context).asColor("text-color").packedArgb(),
-            haloColor = program.haloColor.evaluate(context).asColor("text-halo-color").packedArgb(),
         )
     }
 
@@ -193,18 +181,34 @@ internal object LabelCandidateAssembler {
         val pending = mutableListOf<PendingLabel>()
         val ranges = mutableSetOf<GlyphRangeRequest>()
         val complexScript = mutableMapOf<Int, ComplexScriptExclusion>()
+        val featureSkips = mutableMapOf<Int, LabelFeatureSkips>()
+        // Paint for one (layer, requested zoom) is feature-independent, so it is resolved once and
+        // reused. Resolved inside the per-feature guard below rather than at assembly time, so a
+        // text-color that will not evaluate degrades exactly like any other unusable text
+        // property instead of failing the whole acquisition from a different phase.
+        val layerStyles = mutableMapOf<Pair<Int, Int>, LabelLayerStyle>()
 
         // Style layer order, then requested tile, then feature index: iterating in the contract's
         // own order means the emitted list is already sorted, and the explicit sort below only has
         // to prove it rather than establish it.
         for (layer in style.labelLayers.sortedBy { it.textProgram?.layerOrder ?: Int.MAX_VALUE }) {
             val program = layer.textProgram ?: continue
+            val coveredSources = mutableSetOf<Pair<TileId, Int>>()
             for (tile in tiles.sortedWith(TILE_ORDER)) {
                 if (tile.z < program.minZoom || tile.z >= program.maxZoom) continue
                 val resource = resources[layer.source.idDigest to tile] ?: continue
                 val sourceLayer = resource.tile.layers
                     .firstOrNull { it.name == layer.descriptor.sourceLayer } ?: continue
                 val sourceTile = TileId(resource.sample.sourceZ, resource.sample.sourceX, resource.sample.sourceY)
+
+                // Overzoom lets several requested tiles share one source tile. Across zooms that
+                // repetition is real - zoom-driven paint and text-size resolve at requestedTile.z,
+                // so the same feature legitimately yields differently styled candidates - but
+                // within one zoom the candidates are identical in everything except which
+                // requested tile they name, so an overzoomed viewport would multiply every label
+                // for no benefit. The dedup key is therefore (source tile, requested zoom), and
+                // the lowest-ordered requested tile of the group is the one that carries it.
+                if (!coveredSources.add(sourceTile to tile.z)) continue
 
                 for ((featureIndex, feature) in sourceLayer.features.withIndex()) {
                     val context = StyleEvaluationContext(
@@ -241,12 +245,38 @@ internal object LabelCandidateAssembler {
                         continue
                     }
 
-                    val fontStack = fontStackOf(program, context) ?: continue
-                    val size = program.size.evaluate(context).asNumber("text-size", tile)
-                    if (size <= 0.0) continue
-                    val textStyle = textStyleFor(program, context, fontStack, size, tile)
+                    // Past the script gate this feature qualified for a candidate, and
+                    // everything left is property evaluation against its own data. A single
+                    // feature carrying a value no text property can use must not take the batch
+                    // down with it: 0.2.0 spent two rounds removing exactly that failure for
+                    // icons, and ADR 0026's reasoning is unchanged here. The feature is skipped,
+                    // counted, and reported once for its layer.
+                    val skips = featureSkips.getOrPut(program.layerOrder) {
+                        LabelFeatureSkips(layer.descriptor.id)
+                    }
+                    skips.candidates += 1
+                    val resolved = try {
+                        val fontStack = fontStackOf(program, context, tile)
+                        val size = program.size.evaluate(context).asNumber("text-size", tile)
+                        // Not a failure: a style that resolves text-size to zero is asking for no
+                        // visible text, exactly as placeIcons reads an icon-size of zero.
+                        if (size <= 0.0) null else ResolvedLabel(
+                            fontStack = fontStack,
+                            textStyle = textStyleFor(program, context, fontStack, size, tile),
+                            scalars = evaluateScalars(program, context, tile),
+                            layerStyle = layerStyles.getOrPut(program.layerOrder to tile.z) {
+                                resolveLayerStyle(program, layer.descriptor.id, tile.z)
+                            },
+                        )
+                    } catch (error: RasterizationException) {
+                        skips.skipped += 1
+                        skips.tiles += tile
+                        continue
+                    } ?: continue
+                    val fontStack = resolved.fontStack
+                    val textStyle = resolved.textStyle
+                    val scalars = resolved.scalars
                     val icon = iconRefFor(style, program.layerOrder, tile, feature, context, iconImageNameOf)
-                    val scalars = evaluateScalars(program, context, tile)
 
                     var index = 0
                     while (index < text.length) {
@@ -260,6 +290,7 @@ internal object LabelCandidateAssembler {
                         pending += PendingLabel(
                             program = program,
                             layerId = layer.descriptor.id,
+                            layerStyle = resolved.layerStyle,
                             requestedTile = tile,
                             sourceTile = sourceTile,
                             featureIndex = featureIndex,
@@ -298,12 +329,18 @@ internal object LabelCandidateAssembler {
             )
         }
 
+        // One entry per layer per code, in layer order, so the list is identical between runs.
+        val diagnostics = (complexScript.keys + featureSkips.keys).sorted().flatMap { layerOrder ->
+            listOfNotNull(
+                complexScript[layerOrder]?.toDiagnostic(layerOrder),
+                featureSkips[layerOrder]?.takeIf { it.skipped > 0 }?.toDiagnostic(layerOrder),
+            )
+        }
+
         return LabelCandidatePlan(
             pending = pending.sortedWith(PENDING_ORDER),
             requiredRanges = required,
-            diagnostics = complexScript.entries.sortedBy { it.key }.map { (layerOrder, exclusion) ->
-                exclusion.toDiagnostic(layerOrder)
-            },
+            diagnostics = diagnostics,
             style = style,
             contentDigests = resources.values.map { it.contentDigest }.distinct().sorted(),
         )
@@ -338,6 +375,59 @@ internal object LabelCandidateAssembler {
         message = "The prepared style resolves no glyphs template, so it has no label candidates",
         affectedTiles = tiles.sortedWith(TILE_ORDER),
     )
+
+    /** Everything one feature's property evaluation produces, or nothing if it produced none. */
+    private class ResolvedLabel(
+        val fontStack: String,
+        val textStyle: LabelTextStyle,
+        val scalars: LabelScalars,
+        val layerStyle: LabelLayerStyle,
+    )
+
+    /**
+     * Paint for one layer at one requested output zoom, evaluated with no feature context. The
+     * corpus has no feature-driven `text-color` or `text-halo-color` in any of its 265 place-name
+     * layers, which is why colour lives on the layer record rather than on each candidate.
+     */
+    private fun resolveLayerStyle(
+        program: CompiledLabelTextProgram,
+        layerId: String,
+        zoom: Int,
+    ): LabelLayerStyle {
+        val context = StyleEvaluationContext(zoom = zoom.toDouble())
+        return LabelLayerStyle(
+            layerId = layerId,
+            zoom = zoom,
+            priority = program.layerOrder,
+            color = program.color.evaluate(context).asColor("text-color").packedArgb(),
+            haloColor = program.haloColor.evaluate(context).asColor("text-halo-color").packedArgb(),
+        )
+    }
+
+    /**
+     * Per-layer tally behind `LABEL_FEATURE_SKIPPED`. Counted rather than flagged for the reason
+     * `ICON_FEATURE_SKIPPED` counts: a layer that lost one of its features and a layer that lost
+     * every one are different situations, and only the pair of counts can tell them apart.
+     */
+    private class LabelFeatureSkips(val layerId: String) {
+        var candidates: Int = 0
+        var skipped: Int = 0
+        val tiles: MutableSet<TileId> = mutableSetOf()
+
+        fun toDiagnostic(layerOrder: Int): RenderDiagnostic = RenderDiagnostic(
+            code = DiagnosticCode.LABEL_FEATURE_SKIPPED,
+            severity = DiagnosticSeverity.INFO,
+            stage = PipelineStage.RESOURCE_DECODING,
+            message = "A place-name label layer produced no candidate for one or more of its features",
+            details = mapOf(
+                "layerIndex" to layerOrder.toString(),
+                "layerIdDigest" to layerId.sha256Hex(),
+                "candidateFeatures" to candidates.toString(),
+                "skippedFeatures" to skipped.toString(),
+            ),
+            affectedTiles = tiles.sortedWith(TILE_ORDER),
+        )
+    }
 
     private class ComplexScriptExclusion(val layerId: String) {
         var features: Int = 0
@@ -443,14 +533,24 @@ internal object LabelCandidateAssembler {
 
     /**
      * The font stack a glyph endpoint is asked for: the evaluated `text-font` names joined by
-     * commas, exactly as `{fontstack}` expects them. Null when the property evaluates to
-     * something that is not a non-empty list of names, which leaves the feature with no glyph
-     * source and so no candidate.
+     * commas, exactly as `{fontstack}` expects them. A `text-font` that evaluates to anything but
+     * a non-empty list of names leaves the feature with no glyph source at all, so it raises like
+     * any other unusable text property and the caller skips that one feature.
      */
-    private fun fontStackOf(program: CompiledLabelTextProgram, context: StyleEvaluationContext): String? {
-        val value = program.font.evaluate(context) as? StyleValue.ArrayValue ?: return null
-        val names = value.values.mapNotNull { (it as? StyleValue.StringValue)?.value?.takeIf(String::isNotEmpty) }
-        return names.takeIf { it.isNotEmpty() }?.joinToString(",")
+    private fun fontStackOf(
+        program: CompiledLabelTextProgram,
+        context: StyleEvaluationContext,
+        tile: TileId,
+    ): String {
+        val value = program.font.evaluate(context) as? StyleValue.ArrayValue
+        val names = value?.values
+            ?.mapNotNull { (it as? StyleValue.StringValue)?.value?.takeIf(String::isNotEmpty) }
+            ?.takeIf { it.isNotEmpty() }
+            ?: throw RasterizationException(
+                message = "text-font did not evaluate to a non-empty list of font names",
+                affectedTiles = listOf(tile),
+            )
+        return names.joinToString(",")
     }
 
     /**

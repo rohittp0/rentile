@@ -8,11 +8,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LabelLayoutTest {
-    // layOut takes the AcquiredGlyphRange list alongside the packed atlas, not atlas alone as
+    // layOut takes a whitespace-advance map alongside the packed atlas, not atlas alone as
     // originally sketched: PackedGlyphAtlas has no entry - and so no advance - for a glyph with
     // an empty bitmap (a space, most often), since GlyphAtlasPacker deliberately drops those.
-    // The ranges are the only place that advance still lives, so layOut takes them directly
-    // rather than falling back to an invented constant.
+    // The acquired ranges are the only place that advance still lives. The map is derived from
+    // them once per batch rather than inside layOut, which would rebuild it for every label.
     private fun rangesOf(vararg codepoints: Int): List<AcquiredGlyphRange> = listOf(
         AcquiredGlyphRange(
             "Test Font", 0,
@@ -23,9 +23,9 @@ class LabelLayoutTest {
         ),
     )
 
-    private fun setUp(vararg codepoints: Int): Pair<List<AcquiredGlyphRange>, PackedGlyphAtlas> {
+    private fun setUp(vararg codepoints: Int): Pair<Map<Pair<String, Int>, Int>, PackedGlyphAtlas> {
         val ranges = rangesOf(*codepoints)
-        return ranges to GlyphAtlasPacker.pack(ranges)
+        return LabelLayout.whitespaceAdvances(ranges) to GlyphAtlasPacker.pack(ranges)
     }
 
     private fun styleFor(atlas: PackedGlyphAtlas, maxWidthEm: Double = 10.0) = LabelTextStyle(
@@ -37,8 +37,8 @@ class LabelLayoutTest {
 
     @Test
     fun oneQuadPerDrawableGlyph() {
-        val (ranges, atlas) = setUp('A'.code, 'B'.code)
-        val laid = LabelLayout.layOut("AB", atlas, ranges, styleFor(atlas))!!
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
+        val laid = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas))!!
 
         assertEquals(2, laid.quads.size)
         // Advance is 12 em-units and sizePx equals EM_PX, so scale is 1.0. Assert the
@@ -50,8 +50,8 @@ class LabelLayoutTest {
 
     @Test
     fun whitespaceAdvancesWithoutAQuad() {
-        val (ranges, atlas) = setUp('A'.code, 'B'.code)
-        val laid = LabelLayout.layOut("A B", atlas, ranges, styleFor(atlas))!!
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
+        val laid = LabelLayout.layOut("A B", atlas, whitespace, styleFor(atlas))!!
 
         assertEquals(2, laid.quads.size)
         // 12 for 'A' plus 6 for the space.
@@ -60,9 +60,9 @@ class LabelLayoutTest {
 
     @Test
     fun wrapsAtTheWidthLimitOnWordBoundaries() {
-        val (ranges, atlas) = setUp('A'.code, 'B'.code)
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
         // Two two-glyph words are 24 em-units each; a 2-em limit forces a break.
-        val laid = LabelLayout.layOut("AB AB", atlas, ranges, styleFor(atlas, maxWidthEm = 2.0))!!
+        val laid = LabelLayout.layOut("AB AB", atlas, whitespace, styleFor(atlas, maxWidthEm = 2.0))!!
 
         val rows = laid.quads.map { it.y }.distinct()
         assertEquals(2, rows.size)
@@ -71,10 +71,10 @@ class LabelLayoutTest {
 
     @Test
     fun aSingleWordLongerThanTheLimitIsNotSplit() {
-        val (ranges, atlas) = setUp('A'.code, 'B'.code)
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
         // "AB" alone is 24 em-units, already over a 1-em (24px) limit, but it is one word
         // with no space to break at, so it stays whole on its own line.
-        val laid = LabelLayout.layOut("AB", atlas, ranges, styleFor(atlas, maxWidthEm = 1.0))!!
+        val laid = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas, maxWidthEm = 1.0))!!
 
         assertEquals(2, laid.quads.size)
         assertEquals(laid.quads[0].y, laid.quads[1].y)
@@ -83,9 +83,9 @@ class LabelLayoutTest {
 
     @Test
     fun scalesGeometryByTextSize() {
-        val (ranges, atlas) = setUp('A'.code, 'B'.code)
-        val small = LabelLayout.layOut("AB", atlas, ranges, styleFor(atlas))!!
-        val large = LabelLayout.layOut("AB", atlas, ranges, styleFor(atlas).copy(sizePx = 48.0))!!
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
+        val small = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas))!!
+        val large = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas).copy(sizePx = 48.0))!!
 
         assertEquals(2.0, large.quads[1].x / small.quads[1].x)
         assertTrue(large.quads.all { it.scale == 2.0 })
@@ -93,8 +93,8 @@ class LabelLayoutTest {
 
     @Test
     fun theBoundingBoxCoversEveryQuadPlusPadding() {
-        val (ranges, atlas) = setUp('A'.code, 'B'.code)
-        val laid = LabelLayout.layOut("AB", atlas, ranges, styleFor(atlas))!!
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
+        val laid = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas))!!
 
         assertTrue(laid.box.left <= laid.quads.minOf { it.x } - 2.0)
         assertTrue(laid.box.right >= laid.quads.maxOf { it.x } + 2.0)
@@ -102,8 +102,8 @@ class LabelLayoutTest {
 
     @Test
     fun emptyTextYieldsNoLabel() {
-        val (ranges, atlas) = setUp('A'.code)
-        assertNull(LabelLayout.layOut("   ", atlas, ranges, styleFor(atlas)))
+        val (whitespace, atlas) = setUp('A'.code)
+        assertNull(LabelLayout.layOut("   ", atlas, whitespace, styleFor(atlas)))
     }
 
     @Test
@@ -111,21 +111,21 @@ class LabelLayoutTest {
         // 'Z' is not in the atlas at all - not drawable, and not whitespace either - so it
         // must contribute neither a quad nor an advance, leaving "AZB" laid out exactly as
         // "AB" would be.
-        val (ranges, atlas) = setUp('A'.code, 'B'.code)
-        val withZ = LabelLayout.layOut("AZB", atlas, ranges, styleFor(atlas))!!
-        val withoutZ = LabelLayout.layOut("AB", atlas, ranges, styleFor(atlas))!!
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
+        val withZ = LabelLayout.layOut("AZB", atlas, whitespace, styleFor(atlas))!!
+        val withoutZ = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas))!!
 
         assertEquals(withoutZ.quads, withZ.quads)
     }
 
     @Test
     fun isDeterministicAcrossRepeatedCalls() {
-        val (ranges, atlas) = setUp('A'.code, 'B'.code)
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
         val style = styleFor(atlas)
 
         assertEquals(
-            LabelLayout.layOut("AB AB", atlas, ranges, style),
-            LabelLayout.layOut("AB AB", atlas, ranges, style),
+            LabelLayout.layOut("AB AB", atlas, whitespace, style),
+            LabelLayout.layOut("AB AB", atlas, whitespace, style),
         )
     }
 
@@ -138,8 +138,8 @@ class LabelLayoutTest {
         // centers the block, putting the first glyph's origin at x = -12 + left(1) = -11,
         // and the single line's baseline sits exactly at the vertical center, so
         // y = 0 + top(-14) = -14.
-        val (ranges, atlas) = setUp('A'.code, 'B'.code)
-        val laid = LabelLayout.layOut("AB", atlas, ranges, styleFor(atlas))!!
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
+        val laid = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas))!!
 
         assertEquals(-11.0, laid.quads[0].x)
         assertEquals(-14.0, laid.quads[0].y)

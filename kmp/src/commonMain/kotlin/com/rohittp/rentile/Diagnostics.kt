@@ -139,6 +139,35 @@ public enum class DiagnosticCode {
      * Always INFO. Nothing failed: preparation continues without that layer's label candidates.
      */
     LINE_PLACEMENT_LABEL_EXCLUDED,
+
+    /**
+     * A place-name label layer produced no candidate for one or more of the features that
+     * qualified for one, because a text property would not evaluate to a usable value, and the
+     * batch was returned without them rather than failing.
+     *
+     * Reported once per layer per acquisition, whatever the cause and however many features were
+     * affected. The name is deliberately neutral: this fires for any text layout or paint property
+     * that evaluates to something unusable - a `text-size` that is not a finite number, a
+     * `text-offset` that is not a pair of numbers, a `text-opacity` outside zero to one, a
+     * negative halo value - and the emitting code cannot attribute it to one of those without
+     * asserting a cause it does not know.
+     *
+     * `details` carries `layerIndex` and `layerIdDigest`, the same identity pair used by the other
+     * layer-level label diagnostics, plus two counts: `candidateFeatures`, how many features
+     * reached property evaluation, and `skippedFeatures`, how many of those produced no candidate.
+     * The counts exist so that losing one feature is distinguishable from losing every one, which
+     * a single boolean flag could not express.
+     *
+     * Both counts describe **this batch only**, across every requested tile in it.
+     * `skippedFeatures == candidateFeatures` means this layer contributed nothing here; it does
+     * not mean the style is broken, because the condition is frequently data-dependent and the
+     * same layer can lose everything for one tile set and behave normally for the next.
+     * `affectedTiles` names the requested tiles the skipped features came from.
+     *
+     * Always INFO. Nothing failed: acquisition continues and these features are simply absent from
+     * the result.
+     */
+    LABEL_FEATURE_SKIPPED,
 }
 
 /** Sanitized diagnostic. [details] must never contain secrets or signed URLs. */
