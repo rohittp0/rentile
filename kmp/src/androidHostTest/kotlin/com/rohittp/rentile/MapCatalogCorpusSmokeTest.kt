@@ -1,5 +1,6 @@
 package com.rohittp.rentile
 
+import com.rohittp.rentile.internal.glyph.ScriptSupport
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -63,7 +64,9 @@ class MapCatalogCorpusSmokeTest {
 
         writeReports(outputDirectory, coverage, results)
         val completedStyles = results.count { result ->
-            result.preparationErrorCode == null && result.tiles.values.all { it.status == SmokeStatus.RENDERED }
+            result.preparationErrorCode == null &&
+                result.tiles.values.all { it.status == SmokeStatus.RENDERED } &&
+                result.labelResults.all { it.errorCode == null }
         }
         assertEquals(
             expected = results.size,
@@ -88,6 +91,7 @@ class MapCatalogCorpusSmokeTest {
                 diagnostics = error.redactedDiagnosticSummaries(),
                 tiles = emptyMap(),
                 mosaics = emptyMap(),
+                labelResults = emptyList(),
             )
         } catch (error: Throwable) {
             return StyleSmokeResult(
@@ -97,6 +101,7 @@ class MapCatalogCorpusSmokeTest {
                 diagnostics = emptyList(),
                 tiles = emptyMap(),
                 mosaics = emptyMap(),
+                labelResults = emptyList(),
             )
         }
 
@@ -105,6 +110,7 @@ class MapCatalogCorpusSmokeTest {
             renderTile(rasterizer, prepared, style.id, tile, outputDirectory)
         }
         val mosaics = createMosaics(style.id, coverage, outcomes, outputDirectory)
+        val labelResults = acquireLabelSmoke(rasterizer, prepared, coverage)
         return StyleSmokeResult(
             styleId = style.id,
             styleName = style.name,
@@ -112,7 +118,132 @@ class MapCatalogCorpusSmokeTest {
             diagnostics = prepared.diagnostics.map { "${it.code}: ${it.message}" }.distinct(),
             tiles = outcomes,
             mosaics = mosaics,
+            labelResults = labelResults,
         )
+    }
+
+    /**
+     * Acquires label candidates for the three cases whose geography and script exercise the
+     * label pipeline against live styles: [LABEL_SMOKE_CASE_IDS]. Only the highest-zoom tile of
+     * each case is used - label correctness varies by geography and script, not by zoom, and the
+     * publish gate is already a long-running job. See `compatibility/README.md`.
+     */
+    private suspend fun acquireLabelSmoke(
+        rasterizer: BasemapRasterizer,
+        prepared: PreparedStyle,
+        coverage: CoverageManifest,
+    ): List<LabelCaseSmokeResult> =
+        LABEL_SMOKE_CASE_IDS.map { caseId ->
+            val case = coverage.cases.first { it.id == caseId }
+            val tile = case.tiles.maxBy(CoverageTile::z).asTileId()
+            acquireLabelCaseSmoke(rasterizer, prepared, caseId, tile)
+        }
+
+    /**
+     * Mirrors [renderTile]'s architecture deliberately: a failed invariant becomes an
+     * [LabelCaseSmokeResult.errorCode] rather than a thrown assertion, so one style's violation
+     * neither stops the remaining styles from acquiring nor loses the Corpus Report that
+     * [writeReports] would otherwise never reach. The one final `assertEquals` in
+     * [rendersPublicCatalogCoverageThroughPublicInterface] still fails the gate when any style
+     * carries a non-null error code here - acquisition throwing included.
+     */
+    private suspend fun acquireLabelCaseSmoke(
+        rasterizer: BasemapRasterizer,
+        prepared: PreparedStyle,
+        caseId: String,
+        tile: TileId,
+    ): LabelCaseSmokeResult {
+        val batch = try {
+            rasterizer.acquireLabelCandidates(prepared, listOf(tile))
+        } catch (error: RentileException) {
+            return LabelCaseSmokeResult(
+                caseId = caseId,
+                tile = tile,
+                errorCode = error.code.name,
+                candidateCount = 0,
+                atlasWidth = 0,
+                atlasHeight = 0,
+                glyphRangeCount = 0,
+                diagnostics = error.redactedDiagnosticSummaries(),
+            )
+        } catch (error: Throwable) {
+            return LabelCaseSmokeResult(
+                caseId = caseId,
+                tile = tile,
+                errorCode = error::class.simpleName ?: "UNKNOWN_FAILURE",
+                candidateCount = 0,
+                atlasWidth = 0,
+                atlasHeight = 0,
+                glyphRangeCount = 0,
+                diagnostics = emptyList(),
+            )
+        }
+
+        // Distinct (font stack, 256-codepoint block) pairs: what `maxGlyphRangesPerBatch` counts.
+        val glyphRangeCount = batch.atlas.entries
+            .map { entry -> entry.fontStackDigest to entry.codepoint / GLYPH_RANGE_SIZE }
+            .distinct()
+            .size
+        val diagnostics = batch.diagnostics.map { "${it.code}: ${it.message}" }.distinct().toMutableList()
+
+        var errorCode: String? = null
+        if (glyphRangeCount > MAX_GLYPH_RANGES_PER_BATCH) {
+            errorCode = "GLYPH_RANGE_LIMIT_EXCEEDED"
+            diagnostics += "$errorCode: acquired $glyphRangeCount glyph ranges, over the " +
+                "$MAX_GLYPH_RANGES_PER_BATCH maxGlyphRangesPerBatch ceiling acquireLabelCandidates " +
+                "is supposed to enforce"
+        }
+        if (caseId == CAIRO_CASE_ID) {
+            cairoOutcomeFailure(batch)?.let { failureDetail ->
+                errorCode = errorCode ?: "CAIRO_SCRIPT_OUTCOME_INVALID"
+                diagnostics += "CAIRO_SCRIPT_OUTCOME_INVALID: $failureDetail"
+            }
+        }
+
+        return LabelCaseSmokeResult(
+            caseId = caseId,
+            tile = tile,
+            errorCode = errorCode,
+            candidateCount = batch.candidates.size,
+            atlasWidth = batch.atlas.width,
+            atlasHeight = batch.atlas.height,
+            glyphRangeCount = glyphRangeCount,
+            diagnostics = diagnostics,
+        )
+    }
+
+    /**
+     * Cairo is right-to-left, so exactly two outcomes are acceptable: either the style branched
+     * on `is-supported-script` and every candidate's resolved text is a script this renderer's
+     * glyph-metrics-only layout can lay out (typically a `name:latin` fallback), or no candidates
+     * exist because [DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED] reported the exclusion.
+     * Candidates whose text still requires complex shaping would render as garbled output and
+     * must fail the gate - that is the one outcome this check exists to catch. Returns a
+     * redaction-safe description of the violation, or null when the outcome is acceptable.
+     */
+    private fun cairoOutcomeFailure(batch: LabelCandidateBatch): String? {
+        if (batch.candidates.isEmpty()) {
+            return if (batch.diagnostics.any { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED }) {
+                null
+            } else {
+                "no label candidates were acquired without COMPLEX_SCRIPT_LABEL_EXCLUDED being " +
+                    "reported - every corpus style has a resolvable glyphs template, so an empty " +
+                    "batch here is otherwise unexplained"
+            }
+        }
+        val garbledCandidateCount = batch.candidates.count { candidate ->
+            val text = candidate.glyphs.joinToString(separator = "") { quad ->
+                String(Character.toChars(batch.atlas.entries[quad.entryIndex].codepoint))
+            }
+            ScriptSupport.requiresComplexShaping(text)
+        }
+        return if (garbledCandidateCount == 0) {
+            null
+        } else {
+            "$garbledCandidateCount/${batch.candidates.size} label candidates still require a " +
+                "script this renderer cannot lay out; the style must fall back to a supported " +
+                "script via is-supported-script or the label must be excluded entirely"
+        }
     }
 
     @Test
@@ -335,6 +466,9 @@ class MapCatalogCorpusSmokeTest {
         require(coverage.cases.flatMap(CoverageCase::tiles).all { it.z in 0..22 }) {
             "Coverage Manifest contains an unsupported output zoom"
         }
+        require(LABEL_SMOKE_CASE_IDS.all { id -> coverage.cases.any { case -> case.id == id } }) {
+            "Coverage Manifest is missing a case the corpus gate acquires label candidates for"
+        }
     }
 
     private fun writeReports(
@@ -357,6 +491,9 @@ class MapCatalogCorpusSmokeTest {
                             result.preparationErrorCode,
                             "",
                             result.diagnostics.joinToString(" | "),
+                            "",
+                            "",
+                            "",
                         ),
                     )
                 } else {
@@ -375,15 +512,40 @@ class MapCatalogCorpusSmokeTest {
                                     outcome.errorCode.orEmpty(),
                                     outcome.pngFile.orEmpty(),
                                     outcome.diagnostics.joinToString(" | "),
+                                    "",
+                                    "",
+                                    "",
                                 ),
                             )
                         }
+                    }
+                    result.labelResults.forEach { labelResult ->
+                        add(
+                            listOf(
+                                result.styleId,
+                                result.styleName,
+                                "label:${labelResult.caseId}",
+                                labelResult.tile.z.toString(),
+                                labelResult.tile.x.toString(),
+                                labelResult.tile.y.toString(),
+                                if (labelResult.errorCode == null) "ACQUIRED" else "FAILED",
+                                labelResult.errorCode.orEmpty(),
+                                "",
+                                labelResult.diagnostics.joinToString(" | "),
+                                "candidates=${labelResult.candidateCount}",
+                                "atlas=${labelResult.atlasWidth}x${labelResult.atlasHeight}",
+                                "ranges=${labelResult.glyphRangeCount}",
+                            ),
+                        )
                     }
                 }
             }
         }
         val tsv = buildString {
-            appendLine("style_id\tstyle_name\tcase_id\tz\tx\ty\tstatus\terror_code\tpng\tdiagnostics")
+            appendLine(
+                "style_id\tstyle_name\tcase_id\tz\tx\ty\tstatus\terror_code\tpng\tdiagnostics\t" +
+                    "candidates\tatlas\tranges",
+            )
             rows.forEach { row -> appendLine(row.joinToString("\t") { it.tsvSafe() }) }
         }
         Files.writeString(
@@ -402,7 +564,9 @@ class MapCatalogCorpusSmokeTest {
         val z0 = TileId(0, 0, 0)
         val z0Rendered = results.count { it.tiles[z0]?.status == SmokeStatus.RENDERED }
         val complete = results.count { result ->
-            result.preparationErrorCode == null && result.tiles.values.all { it.status == SmokeStatus.RENDERED }
+            result.preparationErrorCode == null &&
+                result.tiles.values.all { it.status == SmokeStatus.RENDERED } &&
+                result.labelResults.all { it.errorCode == null }
         }
         val html = buildString {
             appendLine("<!doctype html>")
@@ -440,6 +604,29 @@ class MapCatalogCorpusSmokeTest {
                 if (result.diagnostics.isNotEmpty()) {
                     appendLine("<details><summary>${result.diagnostics.size} preparation diagnostics</summary><ul>")
                     result.diagnostics.forEach { appendLine("<li><code>${it.htmlSafe()}</code></li>") }
+                    appendLine("</ul></details>")
+                }
+                if (result.labelResults.isNotEmpty()) {
+                    appendLine("<details><summary>Label candidates</summary><ul>")
+                    result.labelResults.forEach { labelResult ->
+                        val summary = if (labelResult.errorCode != null) {
+                            "FAILED (${labelResult.errorCode})"
+                        } else {
+                            "${labelResult.candidateCount} candidates · " +
+                                "atlas ${labelResult.atlasWidth}x${labelResult.atlasHeight} · " +
+                                "${labelResult.glyphRangeCount} glyph ranges"
+                        }
+                        appendLine(
+                            "<li><strong>${labelResult.caseId.htmlSafe()}</strong> " +
+                                "(z${labelResult.tile.z}): ${summary.htmlSafe()}" +
+                                if (labelResult.diagnostics.isNotEmpty()) {
+                                    "<br><code>${labelResult.diagnostics.joinToString(" | ").htmlSafe()}</code>"
+                                } else {
+                                    ""
+                                } +
+                                "</li>",
+                        )
+                    }
                     appendLine("</ul></details>")
                 }
                 appendLine("</div></article>")
@@ -550,12 +737,24 @@ class MapCatalogCorpusSmokeTest {
         val diagnostics: List<String>,
         val tiles: Map<TileId, TileSmokeResult>,
         val mosaics: Map<String, String>,
+        val labelResults: List<LabelCaseSmokeResult>,
     )
 
     private data class TileSmokeResult(
         val status: SmokeStatus,
         val pngFile: String?,
         val errorCode: String?,
+        val diagnostics: List<String>,
+    )
+
+    private data class LabelCaseSmokeResult(
+        val caseId: String,
+        val tile: TileId,
+        val errorCode: String?,
+        val candidateCount: Int,
+        val atlasWidth: Int,
+        val atlasHeight: Int,
+        val glyphRangeCount: Int,
         val diagnostics: List<String>,
     )
 
@@ -605,6 +804,20 @@ class MapCatalogCorpusSmokeTest {
         const val MAX_CATALOG_PAGE_BYTES = 1024L * 1024L
         const val MAX_CATALOG_PAGES = 10
         const val MAX_CATALOG_STYLES = 1_000
+
+        /**
+         * Cases the corpus gate acquires label candidates for, one highest-zoom tile each: a
+         * Latin baseline, and the two non-Latin cases exercising CJK glyph-range fan-out and the
+         * complex-script exclusion path. See `compatibility/README.md`.
+         */
+        val LABEL_SMOKE_CASE_IDS: List<String> = listOf("new-york-zoom-ladder", "tokyo-cjk-dense", "cairo-rtl")
+        const val CAIRO_CASE_ID = "cairo-rtl"
+
+        /** Glyph endpoints always serve 256-codepoint blocks; the `{range}` template is `N-(N+255)`. */
+        const val GLYPH_RANGE_SIZE = 256
+
+        /** The ceiling `acquireLabelCandidates` enforces under the default [ResourceLimits] this gate uses. */
+        val MAX_GLYPH_RANGES_PER_BATCH: Int = ResourceLimits().maxGlyphRangesPerBatch
         val catalogJson: Json = Json {
             ignoreUnknownKeys = true
             isLenient = false

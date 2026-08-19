@@ -14,6 +14,12 @@ The harness follows the catalog's `next` links, requires all pages to remain on 
 
 Two cases, `tokyo-cjk-dense` and `cairo-rtl`, exist specifically to keep non-Latin text rendering honest. Tokyo is dense and CJK, so it exercises glyph-range fan-out: CJK labels pull in far more codepoints per tile than Latin scripts do, and that fan-out is exactly what a later bound on glyph-range size has to account for. Cairo is right-to-left, so it exercises the complex-script path, where Rentile must either fall back to a style-authored Latin label or drop the label outright, and must never emit garbled text.
 
+## Label candidates in the gate
+
+After a style's coverage tiles render, the gate additionally calls `acquireLabelCandidates` against three of the manifest's cases per style — `new-york-zoom-ladder`, `tokyo-cjk-dense` and `cairo-rtl` — taking only the highest-zoom tile of each, not every case at every zoom. Label correctness turns on geography and script, not on zoom level, so acquiring the same three geographies again at every zoom would multiply the gate's runtime without adding signal; the corpus gate already takes tens of minutes before every release. Per style, the report records the candidate count, the glyph atlas dimensions, the distinct glyph-range count, and the redacted diagnostic codes, and checks that the glyph-range count never exceeds `maxGlyphRangesPerBatch`.
+
+Cairo's outcome is checked strictly, because eleven corpus layers branch on `is-supported-script` and this is what proves that branch works against live styles rather than fixtures: the acquisition must produce either candidates whose resolved text is a supported script (typically a style-authored `name:latin` fallback) or no candidates at all alongside a reported `COMPLEX_SCRIPT_LABEL_EXCLUDED` diagnostic. Any other outcome — in particular, candidates whose text still requires a script this renderer cannot lay out — fails the gate, because that text would render as garbled output.
+
 Validate it without network access:
 
 ```shell
@@ -29,7 +35,7 @@ RENTILE_CORPUS_REPORT_DIR="$PWD/build/reports/rentile-corpus" \
   --tests com.rohittp.rentile.MapCatalogCorpusSmokeTest
 ```
 
-The report contains PNG tiles, available 3×3 mosaics, `results.tsv`, capability names, and a contact sheet. It never contains catalog responses, style JSON, source caches, resource URLs, query strings, or provider responses.
+The report contains PNG tiles, available 3×3 mosaics, `results.tsv`, capability names, and a contact sheet; `results.tsv` also carries one label-acquisition row per style per label case, tagged `label:<case-id>`, with the candidate count, atlas dimensions, glyph-range count and redacted diagnostic codes described above. It never contains catalog responses, style JSON, source caches, resource URLs, query strings, or provider responses — the label rows carry only counts and dimensions, never a glyphs URL or a font stack that could identify a provider account.
 
 ## GitHub Actions
 
