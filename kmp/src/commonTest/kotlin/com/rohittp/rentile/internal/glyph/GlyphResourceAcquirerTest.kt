@@ -15,6 +15,8 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class GlyphResourceAcquirerTest {
     @Test
@@ -37,6 +39,52 @@ class GlyphResourceAcquirerTest {
             "https://glyphs.example.test/fonts/Open%20Sans%20Regular,Noto%20Sans%20Regular/256-511.pbf?key=secret",
             url,
         )
+    }
+
+    @Test
+    fun percentEncodesAFontStackThatCameFromUntrustedFeatureData() {
+        // text-font may be a data-driven expression, so a decoded MVT property reaches this URL.
+        // Encoding only spaces let a "#" truncate the URL at the fragment - taking the credential
+        // query with it - a "?" start a query of its own, and "../" climb the path.
+        val url = GlyphResourceAcquirer.resolveUrl(
+            template = "https://glyphs.example.test/fonts/{fontstack}/{range}.pbf?key=secret",
+            fontStack = "../../etc#x?y Regular",
+            rangeStart = 0,
+        )
+
+        assertEquals(
+            "https://glyphs.example.test/fonts/..%2F..%2Fetc%23x%3Fy%20Regular/0-255.pbf?key=secret",
+            url,
+        )
+        // The credential is still on the URL rather than beyond a fragment the server ignores.
+        assertTrue(url.endsWith("?key=secret"))
+    }
+
+    @Test
+    fun keepsTheCommaSeparatorAndSurvivesNonLatinFontNames() {
+        // The comma is what glyph endpoints parse as the stack separator, so it stays literal; a
+        // non-Latin name is encoded over its UTF-8 bytes rather than mangled.
+        val url = GlyphResourceAcquirer.resolveUrl(
+            template = "https://glyphs.example.test/{fontstack}/{range}.pbf",
+            fontStack = "Noto Sans Regular,\u65E5\u672C\u8A9E",
+            rangeStart = 256,
+        )
+
+        assertEquals(
+            "https://glyphs.example.test/Noto%20Sans%20Regular,%E6%97%A5%E6%9C%AC%E8%AA%9E/256-511.pbf",
+            url,
+        )
+    }
+
+    @Test
+    fun boundsCodepointsToTheBasicMultilingualPlane() {
+        // Glyph endpoints publish blocks up to 65280-65535 and nothing above, so an astral
+        // codepoint has no range to request at all.
+        assertTrue(GlyphResourceAcquirer.servesCodepoint('A'.code))
+        assertTrue(GlyphResourceAcquirer.servesCodepoint(0x4E2D))
+        assertTrue(GlyphResourceAcquirer.servesCodepoint(0xFFFF))
+        assertFalse(GlyphResourceAcquirer.servesCodepoint(0x10000))
+        assertFalse(GlyphResourceAcquirer.servesCodepoint(0x1F5FC))
     }
 
     @Test

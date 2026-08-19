@@ -1,7 +1,10 @@
 package com.rohittp.rentile.internal.glyph
 
+import com.rohittp.rentile.ResourceLimits
+import com.rohittp.rentile.SafetyLimitException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -98,5 +101,46 @@ class GlyphAtlasPackerTest {
         assertEquals(1, atlas.width)
         assertEquals(1, atlas.height)
         assertTrue(atlas.pngBytes.isNotEmpty())
+    }
+
+    @Test
+    fun rejectsAnAtlasTallerThanTheDimensionCeiling() {
+        // Glyph extents are provider-declared. maxGlyphRangeBytes bounds one range, but nothing
+        // bounded the sum: enough tall glyphs shelf-pack into an arbitrarily tall atlas, whose
+        // width * height * 4 pixel buffer overflowed Int into a bare NegativeArraySizeException.
+        // 206-pixel cells: four per 1024-wide shelf, so 40 glyphs need ten shelves.
+        val tall = (0 until 40).map { index -> glyph(index, 200, 200) }
+        val limits = ResourceLimits(maxRasterDimensionPx = 1024)
+
+        val failure = assertFailsWith<SafetyLimitException> {
+            GlyphAtlasPacker.pack(listOf(range("Open Sans Regular", 0, *tall.toTypedArray())), limits)
+        }
+
+        assertEquals("maxRasterDimensionPx", failure.limitName)
+    }
+
+    @Test
+    fun rejectsAnAtlasOverTheDecodedByteCeiling() {
+        // The dimensions are individually fine; it is their product that is not.
+        val wide = (0 until 60).map { index -> glyph(index, 100, 100) }
+        val limits = ResourceLimits(maxDecodedRasterBytes = 4096L)
+
+        val failure = assertFailsWith<SafetyLimitException> {
+            GlyphAtlasPacker.pack(listOf(range("Open Sans Regular", 0, *wide.toTypedArray())), limits)
+        }
+
+        assertEquals("maxDecodedRasterBytes", failure.limitName)
+    }
+
+    @Test
+    fun packsWithinTheDefaultCeilings() {
+        // The ceilings must not fire on ordinary input: 200 Latin-sized glyphs is a realistic
+        // single-range atlas and stays far inside both defaults.
+        val ordinary = (0 until 200).map { index -> glyph(index, 10, 14) }
+
+        val atlas = GlyphAtlasPacker.pack(listOf(range("Open Sans Regular", 0, *ordinary.toTypedArray())))
+
+        assertEquals(200, atlas.entries.size)
+        assertTrue(atlas.width in 1..1024)
     }
 }

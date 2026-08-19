@@ -195,6 +195,21 @@ internal class GlyphResourceAcquirer(
         fun rangeStartFor(codepoint: Int): Int = codepoint / RANGE_SIZE * RANGE_SIZE
 
         /**
+         * Whether a glyph endpoint serves this codepoint at all.
+         *
+         * Glyph ranges are generated over the Basic Multilingual Plane only: fontnik-derived
+         * servers, `api.maptiler.com` included, publish blocks up to `65280-65535` and nothing
+         * above, so `65536-65791.pbf` is a 404 rather than an empty range. Mapbox GL guards the
+         * same boundary explicitly.
+         *
+         * This matters because acquisition is all-or-error. One astral codepoint - an emoji in an
+         * OpenStreetMap `name` tag, a CJK Extension B ideograph, Cuneiform, Osage - in one feature
+         * of one tile would otherwise request a range that cannot exist and fail the entire batch,
+         * so a thirty-tile viewport returns no labels at all because of one character.
+         */
+        fun servesCodepoint(codepoint: Int): Boolean = codepoint <= 0xFFFF
+
+        /**
          * The `{range}` token for a block, e.g. `"0-255"`. The URL is built from this and the
          * served payload is checked against it, so both must come from here - a second copy of the
          * formatting would make the check compare one spelling of the block against another.
@@ -202,12 +217,41 @@ internal class GlyphResourceAcquirer(
         fun rangeLabelFor(rangeStart: Int): String = "$rangeStart-${rangeStart + RANGE_SIZE - 1}"
 
         /**
-         * Substitutes `{fontstack}` and `{range}` into a glyph URL template. Spaces in font names
-         * are percent-encoded; the commas separating stack members are left literal, matching what
-         * glyph endpoints expect.
+         * Substitutes `{fontstack}` and `{range}` into a glyph URL template.
+         *
+         * The font stack is percent-encoded, because it is not trustworthy input: `text-font` may
+         * be a data-driven expression, so a decoded MVT feature property reaches this string.
+         * Encoding only spaces left a value containing `#` truncating the URL at the fragment -
+         * dropping the credential query with it - a `?` injecting a query of its own, and `../`
+         * traversing the path. The commas separating stack members stay literal, because that is
+         * the separator glyph endpoints parse; every other byte outside the unreserved set is
+         * escaped.
          */
         fun resolveUrl(template: String, fontStack: String, rangeStart: Int): String = template
-            .replace("{fontstack}", fontStack.replace(" ", "%20"))
+            .replace("{fontstack}", fontStack.percentEncodeFontStack())
             .replace("{range}", rangeLabelFor(rangeStart))
+
+        /**
+         * Percent-encodes a font stack for a URL path segment, preserving only the unreserved
+         * characters of RFC 3986 plus the `,` that separates stack members. Encoding is done over
+         * UTF-8 bytes, so a non-Latin font name survives rather than being mangled.
+         */
+        private fun String.percentEncodeFontStack(): String = buildString {
+            for (byte in this@percentEncodeFontStack.encodeToByteArray()) {
+                val value = byte.toInt() and 0xFF
+                val character = value.toChar()
+                val unreserved = character in 'A'..'Z' || character in 'a'..'z' ||
+                    character in '0'..'9' || character in "-._~,"
+                if (unreserved) {
+                    append(character)
+                } else {
+                    append('%')
+                    append(HEX_DIGITS[value shr 4])
+                    append(HEX_DIGITS[value and 0x0F])
+                }
+            }
+        }
+
+        private const val HEX_DIGITS = "0123456789ABCDEF"
     }
 }

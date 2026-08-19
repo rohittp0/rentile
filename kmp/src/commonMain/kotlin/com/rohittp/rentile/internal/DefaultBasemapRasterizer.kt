@@ -374,18 +374,26 @@ private class DefaultBasemapRasterizer(
         val compiled = requireOwnedStyle(style)
         val stableTiles = tiles.toList()
         stableTiles.forEach { validateTile(it, compiled.policy) }
-        // Sorted, de-duplicated and canonicalized on x exactly as acquireLabelCandidates treats
-        // its own tile set: a caller that reorders its viewport tiles between frames (or repeats
-        // one, or names a wrapped antimeridian x) must land on the same candidates and therefore
-        // the same key, or it refetches everything for nothing.
+        // Sorted and de-duplicated, so a caller that reorders its viewport tiles between frames or
+        // repeats one lands on the same key rather than refetching for nothing.
+        //
+        // x is NOT canonicalized, and that is the difference from an earlier version of this key.
+        // acquireLabelCandidates emits requestedTile verbatim, so TileId(1,-1,0) and TileId(1,1,0)
+        // - world copies of one another, both legitimate inputs, since validateTile bounds only z
+        // and y - produce different batches, each tagged for its own copy. Folding them onto one
+        // key handed a consumer panning across the antimeridian the other copy's candidates, whose
+        // requestedTile matches no tile it is drawing, so it drew nothing on one side of the world.
+        // A key must alias only what the operation it guards actually treats as identical.
         val stableTileList = stableTiles
-            .map { Triple(it.z, canonicalX(it), it.y) }
+            .map { Triple(it.z, it.x, it.y) }
             .distinct()
             .sortedWith(compareBy({ it.first }, { it.second }, { it.third }))
             .joinToString(",") { (z, x, y) -> "$z/$x/$y" }
-        // compiled.digest is already credential-free (it excludes the raw style URL and any
-        // glyphs template) and already folds in compiled.policy.id, so nothing else from the
-        // style needs to be added here to keep this key from ever leaking a credential.
+        // compiled.digest is credential-free: it is computed over the style JSON passed through
+        // redactedForIdentity(), which strips authentication query values wherever they appear -
+        // the glyphs template's included, since that is where its credential lives. It also folds
+        // in compiled.policy.id. So nothing else from the style is needed here, and nothing that
+        // is here can leak a credential.
         return listOf(
             LABEL_SEMANTICS_VERSION,
             compiled.digest,
@@ -405,7 +413,7 @@ private class DefaultBasemapRasterizer(
         // this API is opt-in, so it reports and returns empty rather than failing (ADR 0026).
         val glyphsTemplate = compiledStyle.glyphsTemplate ?: run {
             recordDiagnosticSafely(LabelCandidateAssembler.glyphRangeUnavailable(stableTiles))
-            return@operation LabelCandidateAssembler.emptyBatch(compiledStyle, stableTiles)
+            return@operation LabelCandidateAssembler.emptyBatch(compiledStyle, stableTiles, configuration.resourceLimits)
         }
 
         val samples = compiledStyle.labelLayers

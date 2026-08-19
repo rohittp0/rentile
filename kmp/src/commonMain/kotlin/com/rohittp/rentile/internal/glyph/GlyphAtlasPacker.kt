@@ -1,7 +1,10 @@
 package com.rohittp.rentile.internal.glyph
 
 import com.rohittp.rentile.LabelGlyphEntry
+import com.rohittp.rentile.PipelineStage
 import com.rohittp.rentile.PngEncodingException
+import com.rohittp.rentile.ResourceLimits
+import com.rohittp.rentile.SafetyLimitException
 import com.rohittp.rentile.internal.sha256Hex
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
@@ -38,7 +41,15 @@ internal object GlyphAtlasPacker {
     private fun DecodedGlyph.contentSignature(): String =
         "$width:$height:$left:$top:$advance:${bitmap.sha256Hex()}"
 
-    fun pack(ranges: List<AcquiredGlyphRange>): PackedGlyphAtlas {
+    /**
+     * [limits] bounds the texture this builds. The extents come from provider-declared glyph
+     * metrics, and while `maxGlyphRangeBytes` bounds any single range, nothing bounded the sum:
+     * `maxGlyphRangesPerBatch` ranges of tall glyphs shelf-pack into an arbitrarily tall atlas,
+     * whose `width * height * 4` byte buffer overflowed Int into a bare
+     * `NegativeArraySizeException`. The same two ceilings the raster and sprite decode paths
+     * already enforce apply here, reported the same way.
+     */
+    fun pack(ranges: List<AcquiredGlyphRange>, limits: ResourceLimits = ResourceLimits()): PackedGlyphAtlas {
         // Flatten to (fontStackDigest, glyph), then order canonically so layout is
         // independent of arrival order. Whitespace glyphs carry no bitmap and are dropped.
         //
@@ -58,9 +69,10 @@ internal object GlyphAtlasPacker {
         val entries = ArrayList<LabelGlyphEntry>(drawable.size)
         val index = HashMap<Pair<String, Int>, Int>(drawable.size)
         var penX = 0
-        var penY = 0
+        var penY = 0L
         var shelfHeight = 0
         var atlasWidth = 0
+        val maxDimension = limits.maxRasterDimensionPx.toLong()
         for ((digest, glyph) in drawable) {
             val cellWidth = glyph.width + GlyphRangeDecoder.BUFFER_PX * 2
             val cellHeight = glyph.height + GlyphRangeDecoder.BUFFER_PX * 2
@@ -69,11 +81,27 @@ internal object GlyphAtlasPacker {
                 penX = 0
                 shelfHeight = 0
             }
+            // Checked per cell, before an entry exists for it, so a payload that would build a
+            // texture beyond the ceiling is rejected instead of first accumulating millions of
+            // entries. A single cell wider than MAX_WIDTH sets the atlas width by itself, which is
+            // why width is bounded here too and not only the running height.
+            val observedDimension = maxOf(cellWidth.toLong(), penY + cellHeight)
+            if (observedDimension > maxDimension) {
+                throw SafetyLimitException(
+                    message = "Glyph atlas dimensions exceed the configured limit",
+                    limitName = "maxRasterDimensionPx",
+                    limit = maxDimension,
+                    observed = observedDimension,
+                    stage = PipelineStage.RESOURCE_DECODING,
+                )
+            }
             index[digest to glyph.codepoint] = entries.size
             entries += LabelGlyphEntry(
                 fontStackDigest = digest,
                 codepoint = glyph.codepoint,
-                x = penX, y = penY,
+                // Narrowing is safe: the per-cell check above already rejected anything whose
+                // shelf position exceeds maxRasterDimensionPx, which is itself an Int.
+                x = penX, y = penY.toInt(),
                 width = cellWidth, height = cellHeight,
                 left = glyph.left, top = glyph.top,
                 advance = glyph.advance,
@@ -100,14 +128,28 @@ internal object GlyphAtlasPacker {
 
         // An empty glyph set still needs a valid (non-zero-dimension) atlas: Skia rejects
         // a zero-dimension image, so a 1x1 fully transparent placeholder stands in.
-        val width = maxOf(atlasWidth, 1)
-        val height = maxOf(atlasHeight, 1)
+        val width = maxOf(atlasWidth.toLong(), 1L)
+        val height = maxOf(atlasHeight, 1L)
+        // Int.MAX_VALUE caps the effective ceiling because the pixel buffer below is a ByteArray,
+        // whose length is an Int: a caller raising maxDecodedRasterBytes past 2 GiB must still get
+        // a typed limit failure rather than an allocation overflow.
+        val decodedLimit = minOf(limits.maxDecodedRasterBytes, Int.MAX_VALUE.toLong())
+        val decodedBytes = width * height * 4L
+        if (decodedBytes > decodedLimit) {
+            throw SafetyLimitException(
+                message = "Glyph atlas exceeds the configured memory limit",
+                limitName = "maxDecodedRasterBytes",
+                limit = decodedLimit,
+                observed = decodedBytes,
+                stage = PipelineStage.RESOURCE_DECODING,
+            )
+        }
 
         return PackedGlyphAtlas(
             entries = entries,
-            pngBytes = encode(drawable, entries, width, height),
-            width = width,
-            height = height,
+            pngBytes = encode(drawable, entries, width.toInt(), height.toInt()),
+            width = width.toInt(),
+            height = height.toInt(),
             contentKey = contentKey,
             indexOf = index,
         )

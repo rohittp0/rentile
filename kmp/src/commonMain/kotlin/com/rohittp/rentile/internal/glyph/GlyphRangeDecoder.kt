@@ -52,9 +52,15 @@ internal object GlyphRangeDecoder {
             val width = glyph.width.toInt()
             val height = glyph.height.toInt()
             val bitmap = glyph.bitmap?.toByteArray() ?: ByteArray(0)
+            // Long, and a non-negative guard, because both are provider-declared. `width` and
+            // `height` arrive from proto2 `uint32` fields, which Wire surfaces as Int, so a
+            // declared value above 2^31 reads back negative; and even within Int, the buffered
+            // product of two large extents overflows. Either would make this check pass on a
+            // payload it should reject, and the packer would then size a cell from those extents.
+            require(width >= 0 && height >= 0) { "A glyph declared a negative extent" }
             if (bitmap.isNotEmpty()) {
-                val expected = (width + BUFFER_PX * 2) * (height + BUFFER_PX * 2)
-                require(bitmap.size == expected) { "A glyph bitmap does not match its declared extent" }
+                val expected = (width.toLong() + BUFFER_PX * 2) * (height.toLong() + BUFFER_PX * 2)
+                require(bitmap.size.toLong() == expected) { "A glyph bitmap does not match its declared extent" }
             }
             DecodedGlyph(
                 codepoint = glyph.id.toInt(),

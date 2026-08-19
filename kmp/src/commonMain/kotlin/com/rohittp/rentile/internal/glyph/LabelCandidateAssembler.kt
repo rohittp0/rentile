@@ -142,6 +142,7 @@ internal class LabelCandidatePlan internal constructor(
     private val style: CompiledPreparedStyle,
     private val contentDigests: List<String>,
     private val requestedTiles: List<TileId>,
+    private val limits: ResourceLimits,
 ) {
     /**
      * Packs [ranges] into one atlas, lays every surviving label out against it, and assembles the
@@ -156,7 +157,7 @@ internal class LabelCandidatePlan internal constructor(
         ranges: List<AcquiredGlyphRange>,
         record: (RenderDiagnostic) -> Unit,
     ): LabelCandidateBatch {
-        val atlas = GlyphAtlasPacker.pack(ranges)
+        val atlas = GlyphAtlasPacker.pack(ranges, limits)
         // Once per batch, never per label: the map depends only on the acquired ranges, and
         // rebuilding it inside layOut cost up to 64 x 256 map operations for every label.
         val whitespace = LabelLayout.whitespaceAdvances(ranges)
@@ -207,7 +208,11 @@ internal class LabelCandidatePlan internal constructor(
             candidates = candidates,
             layerStyles = layerStyles,
             atlas = LabelGlyphAtlas(
-                pngBytes = atlas.pngBytes,
+                // Defensive copy, the convention ValidatedMvtTile already follows for its
+                // bytes: this type's equals and hashCode are computed over the array's
+                // contents, so handing out a reference to the packer's own buffer would let
+                // a mutation change an already-published atlas's hash.
+                pngBytes = atlas.pngBytes.copyOf(),
                 width = atlas.width,
                 height = atlas.height,
                 contentKey = atlas.contentKey,
@@ -428,6 +433,21 @@ internal object LabelCandidateAssembler {
                     while (index < text.length) {
                         val codepoint = text.codePointAtCompat(index)
                         index += if (codepoint > 0xFFFF) 2 else 1
+                        // An astral codepoint has no range to request: glyph endpoints stop at the
+                        // Basic Multilingual Plane, so asking would 404 and, because acquisition
+                        // is all-or-error, one emoji in one feature would return no labels for the
+                        // whole batch. Skipping it here drops that character from the label and
+                        // keeps the rest; layout already ignores a codepoint the atlas has no
+                        // entry and no whitespace advance for.
+                        //
+                        // A label that is *entirely* astral therefore requests nothing, lays out
+                        // to nothing, and is counted as skippedNoGlyphs by the layout pass - which
+                        // is the honest count: the label was lost, and for want of glyphs. No
+                        // count is added here, because a label that lost one character out of
+                        // several was not skipped, and inflating skippedNoGlyphs with it would
+                        // break the invariant that the three loss counts are subsets of
+                        // candidateFeatures whose sum means the layer contributed nothing.
+                        if (!GlyphResourceAcquirer.servesCodepoint(codepoint)) continue
                         ranges += GlyphRangeRequest(fontStack, GlyphResourceAcquirer.rangeStartFor(codepoint))
                     }
 
@@ -480,6 +500,7 @@ internal object LabelCandidateAssembler {
             style = style,
             contentDigests = resources.values.map { it.contentDigest }.distinct().sorted(),
             requestedTiles = tiles.sortedWith(TILE_ORDER),
+            limits = limits,
         )
     }
 
@@ -488,13 +509,21 @@ internal object LabelCandidateAssembler {
      * opt-in, so a style that never declared glyphs must not fail a caller that asks for labels -
      * it reports why and returns nothing, per ADR 0026's degrade-rather-than-fail rule.
      */
-    fun emptyBatch(style: CompiledPreparedStyle, tiles: List<TileId>): LabelCandidateBatch {
-        val atlas = GlyphAtlasPacker.pack(emptyList())
+    fun emptyBatch(
+        style: CompiledPreparedStyle,
+        tiles: List<TileId>,
+        limits: ResourceLimits,
+    ): LabelCandidateBatch {
+        val atlas = GlyphAtlasPacker.pack(emptyList(), limits)
         return LabelCandidateBatch(
             candidates = emptyList(),
             layerStyles = emptyList(),
             atlas = LabelGlyphAtlas(
-                pngBytes = atlas.pngBytes,
+                // Defensive copy, the convention ValidatedMvtTile already follows for its
+                // bytes: this type's equals and hashCode are computed over the array's
+                // contents, so handing out a reference to the packer's own buffer would let
+                // a mutation change an already-published atlas's hash.
+                pngBytes = atlas.pngBytes.copyOf(),
                 width = atlas.width,
                 height = atlas.height,
                 contentKey = atlas.contentKey,
