@@ -22,7 +22,7 @@ class GlyphRangeDecoderTest {
             ),
         ).encode()
 
-        val decoded = GlyphRangeDecoder.decode(bytes, "Open Sans Regular")
+        val decoded = GlyphRangeDecoder.decode(bytes, "0-255")
 
         assertEquals(2, decoded.size)
         val a = decoded.single { it.codepoint == 65 }
@@ -47,63 +47,64 @@ class GlyphRangeDecoderTest {
         ).encode()
 
         assertFailsWith<IllegalArgumentException> {
-            GlyphRangeDecoder.decode(bytes, "Open Sans Regular")
+            GlyphRangeDecoder.decode(bytes, "0-255")
         }
     }
 
     @Test
-    fun acceptsAServedStackThatDiffersOnlyBySeparatorWhitespace() {
-        // api.maptiler.com is asked for "Roboto Italic,Noto Sans Italic" and answers with
-        // "Roboto Italic, Noto Sans Italic". Every corpus font stack is a multi-font chain, so a
-        // string equality here failed every label acquisition against every corpus style.
+    fun acceptsAServedStackWhateverNameTheProviderGivesIt() {
+        // Stadia Maps resolves the requested alias rather than echoing it: a request for
+        // "Stadia Regular" is answered by the thirteen fonts it expands to, none of them the
+        // requested name. MapTiler echoes the request but reformats the separator. The field is
+        // metadata about what the stack resolved to, not an echo, so nothing about it is checked.
         val bytes = Glyphs(
             stacks = listOf(
-                Glyphs.Fontstack("Roboto Italic, Noto Sans Italic", "0-255", listOf(
-                    Glyph(id = 65, width = 0, height = 0, left = 0, top = 0, advance = 12),
-                )),
+                Glyphs.Fontstack(
+                    "Roboto Regular, Open Sans Regular, Noto Sans Arabic Regular, Noto Sans Regular",
+                    "0-255",
+                    listOf(Glyph(id = 65, width = 0, height = 0, left = 0, top = 0, advance = 12)),
+                ),
             ),
         ).encode()
 
-        val decoded = GlyphRangeDecoder.decode(bytes, "Roboto Italic,Noto Sans Italic")
+        val decoded = GlyphRangeDecoder.decode(bytes, "0-255")
 
         assertEquals(1, decoded.size)
         assertEquals(65, decoded.single().codepoint)
     }
 
     @Test
-    fun rejectsAStackWhoseNamesDifferRatherThanItsSeparators() {
-        // The normalisation must stay narrow: a provider serving a genuinely different chain would
-        // draw the wrong glyphs at the right metrics, which is invisible in the output and is the
-        // reason this check exists at all.
+    fun rejectsAPayloadCoveringADifferentBlock() {
+        // range is a genuine echo of the URL's {range} token, so a mismatch means either this
+        // library's own block arithmetic is off or the provider served the wrong block. Either
+        // way the glyphs decode perfectly - they are simply the wrong ones - so nothing
+        // downstream would notice.
         val bytes = Glyphs(
-            stacks = listOf(Glyphs.Fontstack("Roboto Italic, Noto Serif Italic", "0-255", emptyList())),
+            stacks = listOf(
+                Glyphs.Fontstack("Open Sans Regular", "256-511", listOf(
+                    Glyph(id = 300, width = 0, height = 0, left = 0, top = 0, advance = 12),
+                )),
+            ),
         ).encode()
 
         assertFailsWith<IllegalArgumentException> {
-            GlyphRangeDecoder.decode(bytes, "Roboto Italic,Noto Sans Italic")
+            GlyphRangeDecoder.decode(bytes, "0-255")
         }
     }
 
     @Test
-    fun rejectsAChainServedInADifferentFallbackOrder() {
-        // Order is the fallback order, so it is significant and normalisation must not sort it.
+    fun rejectsAPayloadCarryingMoreThanOneStack() {
+        // One request, one stack. Two means the payload is not the one this URL asked for, and
+        // whichever were picked would be a guess.
         val bytes = Glyphs(
-            stacks = listOf(Glyphs.Fontstack("Noto Sans Italic, Roboto Italic", "0-255", emptyList())),
+            stacks = listOf(
+                Glyphs.Fontstack("Open Sans Regular", "0-255", emptyList()),
+                Glyphs.Fontstack("Noto Sans Regular", "0-255", emptyList()),
+            ),
         ).encode()
 
         assertFailsWith<IllegalArgumentException> {
-            GlyphRangeDecoder.decode(bytes, "Roboto Italic,Noto Sans Italic")
-        }
-    }
-
-    @Test
-    fun rejectsAStackThatIsNotTheOneRequested() {
-        val bytes = Glyphs(
-            stacks = listOf(Glyphs.Fontstack("Some Other Font", "0-255", emptyList())),
-        ).encode()
-
-        assertFailsWith<IllegalArgumentException> {
-            GlyphRangeDecoder.decode(bytes, "Open Sans Regular")
+            GlyphRangeDecoder.decode(bytes, "0-255")
         }
     }
 }
