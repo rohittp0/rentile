@@ -8,6 +8,7 @@ import com.rohittp.rentile.RentileConfiguration
 import com.rohittp.rentile.RentileMetric
 import com.rohittp.rentile.ResourceAcquisitionException
 import com.rohittp.rentile.ResourceClass
+import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.SafetyLimitException
 import com.rohittp.rentile.StoredRawResource
 import com.rohittp.rentile.TransportRequest
@@ -53,10 +54,30 @@ internal class GlyphResourceAcquirer(
             AcquiredGlyphRange(
                 fontStack = fontStack,
                 rangeStart = rangeStart,
-                glyphs = GlyphRangeDecoder.decode(bytes, fontStack),
+                glyphs = decode(bytes, fontStack, sanitizedId),
                 contentDigest = bytes.sha256Hex(),
             )
         }
+    }
+
+    /**
+     * [GlyphRangeDecoder.decode] throws a bare `IllegalArgumentException` from its `require`
+     * checks, and Wire's adapter throws its own codec exceptions on malformed protobuf; neither is
+     * a [com.rohittp.rentile.RentileException]. Wrap both the same way
+     * [com.rohittp.rentile.internal.sprite.SpriteResourceAcquirer.compile] wraps its JSON/PNG
+     * decode failures, so a malformed or truncated glyph payload never escapes untyped. The
+     * original exception's message is never forwarded since it may echo provider-controlled bytes.
+     */
+    private fun decode(bytes: ByteArray, fontStack: String, sanitizedId: String): List<DecodedGlyph> = try {
+        GlyphRangeDecoder.decode(bytes, fontStack)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Throwable) {
+        throw ResourceDecodeException(
+            message = "Glyph range payload is malformed",
+            resourceClass = ResourceClass.GLYPH_RANGE,
+            sanitizedResourceId = sanitizedId,
+        )
     }
 
     private suspend fun acquireRaw(url: String, sanitizedId: String): ByteArray {
