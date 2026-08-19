@@ -3184,6 +3184,29 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun theLabelRequestKeyIsStableTileOrderIndependentAndCredentialFree() = runTest {
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(glyphs = "https://glyphs.example.test/{fontstack}/{range}.pbf?key=supersecret")),
+            )
+            val a = TileId(2, 1, 1)
+            val b = TileId(2, 1, 2)
+
+            val forward = rasterizer.labelCandidateRequestKey(style, listOf(a, b))
+            val reversed = rasterizer.labelCandidateRequestKey(style, listOf(b, a))
+            val single = rasterizer.labelCandidateRequestKey(style, listOf(a))
+
+            assertEquals(forward, reversed)
+            assertNotEquals(forward, single)
+            assertFalse(forward.contains("supersecret"))
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun auxiliaryLabelAcquisitionIsAllOrError() = runTest {
         val rasterizer = testRasterizer(
             transport = ResourceTransport { TransportResponse(404, ByteArray(0)) },
