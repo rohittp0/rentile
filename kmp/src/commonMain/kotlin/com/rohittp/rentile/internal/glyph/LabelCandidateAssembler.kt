@@ -26,7 +26,10 @@ import com.rohittp.rentile.internal.style.StyleValue
 import com.rohittp.rentile.internal.style.TextTransform
 import com.rohittp.rentile.internal.style.mercatorLatitude
 import com.rohittp.rentile.internal.style.parseCssColor
+import com.rohittp.rentile.internal.style.shift
 import com.rohittp.rentile.internal.withExpandedFeatureTokens
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /**
  * Per-layer tally behind `LABEL_FEATURE_SKIPPED`.
@@ -89,6 +92,13 @@ internal class ComplexScriptExclusion(val layerId: String) {
 
 internal val LABEL_TILE_ORDER: Comparator<TileId> = compareBy(TileId::z, TileId::x, TileId::y)
 
+/**
+ * Check for cancellation every 1024 items rather than every one. Both loops below are pure CPU
+ * work over untrusted, unbounded input, so they need a cancellation point; making it periodic
+ * keeps the check off the hot path of a tile with half a million features.
+ */
+private const val CANCELLATION_CHECK_MASK = 0x3FF
+
 /** One Glyph Range a batch needs: a resolved font stack and the 256-codepoint block within it. */
 internal data class GlyphRangeRequest(val fontStack: String, val rangeStart: Int)
 
@@ -131,6 +141,7 @@ internal class LabelCandidatePlan internal constructor(
     private val featureSkips: Map<Int, LabelFeatureSkips>,
     private val style: CompiledPreparedStyle,
     private val contentDigests: List<String>,
+    private val requestedTiles: List<TileId>,
 ) {
     /**
      * Packs [ranges] into one atlas, lays every surviving label out against it, and assembles the
@@ -141,7 +152,7 @@ internal class LabelCandidatePlan internal constructor(
      * They are emitted here rather than by `plan` because one of the losses they count - a label
      * whose codepoints the acquired atlas does not cover - is not knowable until layout runs.
      */
-    fun assemble(
+    suspend fun assemble(
         ranges: List<AcquiredGlyphRange>,
         record: (RenderDiagnostic) -> Unit,
     ): LabelCandidateBatch {
@@ -153,7 +164,8 @@ internal class LabelCandidatePlan internal constructor(
         val layerStyleIndex = mutableMapOf<Pair<String, Int>, Int>()
         val candidates = mutableListOf<LabelCandidate>()
 
-        for (label in pending) {
+        for ((index, label) in pending.withIndex()) {
+            if (index and CANCELLATION_CHECK_MASK == 0) currentCoroutineContext().ensureActive()
             val laidOut = LabelLayout.layOut(label.text, atlas, whitespace, label.textStyle)
             if (laidOut == null) {
                 // The label wanted glyphs the acquired atlas does not cover, so it lays out to
@@ -237,6 +249,11 @@ internal class LabelCandidatePlan internal constructor(
         append(contentDigests.joinToString(","))
         append('\n')
         append(ranges.map { it.contentDigest }.sorted().joinToString(","))
+        append('\n')
+        // The requested tiles are part of the identity, not just the resources they resolved to.
+        // Two different tile sets can share every MVT and glyph digest - overzoomed siblings of
+        // one source tile do exactly that - and would otherwise alias onto one content key.
+        append(requestedTiles.joinToString(",") { "${it.z}/${it.x}/${it.y}" })
     }.sha256Hex()
 }
 
@@ -260,7 +277,7 @@ internal object LabelCandidateAssembler {
      * `acquireLabelTiles` acquires by - and [iconImageNameOf] is the rasterizer's own
      * `icon-image` evaluator, passed in rather than reimplemented.
      */
-    fun plan(
+    suspend fun plan(
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
         resources: Map<Pair<String, TileId>, VectorResource>,
@@ -282,24 +299,19 @@ internal object LabelCandidateAssembler {
         // to prove it rather than establish it.
         for (layer in style.labelLayers.sortedBy { it.textProgram?.layerOrder ?: Int.MAX_VALUE }) {
             val program = layer.textProgram ?: continue
-            val coveredSources = mutableSetOf<Pair<TileId, Int>>()
             for (tile in tiles.sortedWith(TILE_ORDER)) {
+                currentCoroutineContext().ensureActive()
                 if (tile.z < program.minZoom || tile.z >= program.maxZoom) continue
                 val resource = resources[layer.source.idDigest to tile] ?: continue
                 val sourceLayer = resource.tile.layers
                     .firstOrNull { it.name == layer.descriptor.sourceLayer } ?: continue
                 val sourceTile = TileId(resource.sample.sourceZ, resource.sample.sourceX, resource.sample.sourceY)
 
-                // Overzoom lets several requested tiles share one source tile. Across zooms that
-                // repetition is real - zoom-driven paint and text-size resolve at requestedTile.z,
-                // so the same feature legitimately yields differently styled candidates - but
-                // within one zoom the candidates are identical in everything except which
-                // requested tile they name, so an overzoomed viewport would multiply every label
-                // for no benefit. The dedup key is therefore (source tile, requested zoom), and
-                // the lowest-ordered requested tile of the group is the one that carries it.
-                if (!coveredSources.add(sourceTile to tile.z)) continue
-
                 for ((featureIndex, feature) in sourceLayer.features.withIndex()) {
+                    // A single dense tile can carry hundreds of thousands of features, and this
+                    // whole pass runs before any glyph is fetched, so without this a cancelled
+                    // acquisition would still finish decoding and evaluating all of them.
+                    if (featureIndex and CANCELLATION_CHECK_MASK == 0) currentCoroutineContext().ensureActive()
                     val context = StyleEvaluationContext(
                         zoom = tile.z.toDouble(),
                         geometryType = feature.geometryType,
@@ -329,14 +341,36 @@ internal object LabelCandidateAssembler {
                         skips.tiles += tile
                         continue
                     }
-                    // A tile buffer repeats a point feature into its neighbours. Emitting only
-                    // when the anchor falls inside [0, extent) of its own source tile removes
-                    // those duplicates exactly, rather than by proximity. A feature that is
-                    // entirely outside is not a loss - it belongs to the neighbouring tile - so it
-                    // is not counted.
+                    // One rule covers both ways a feature can be repeated, and it is exact rather
+                    // than proximity-based: the anchor must fall inside the requested tile's own
+                    // window of its source tile, which is what
+                    // VectorTileSample.sourceCoordinateToOutputPixels maps to [0, outputSizePx).
+                    //
+                    // A tile buffer repeats a point feature into its neighbours; the window
+                    // excludes it from every tile but the one that contains it. Overzoom has
+                    // several requested tiles share one source tile; the window gives the feature
+                    // to the single child whose bounds contain it, so a label is emitted once per
+                    // requested zoom and attributed to the tile that actually holds it.
+                    //
+                    // Attribution must not depend on which other tiles the caller asked for in the
+                    // same call: a key like (source tile, requested zoom) would hand the label to
+                    // the lowest-ordered tile of whatever group it landed in, so panning a viewport
+                    // would move a label between tiles and a consumer holding per-tile lists across
+                    // frames would draw it twice. It would also collapse two requested tiles that
+                    // are world copies of each other - sampleFor canonicalises x, while validateTile
+                    // bounds only z and y, so TileId(1,-1,0) and TileId(1,1,0) share a source tile
+                    // and are both legitimate requests.
+                    //
+                    // When childScale is 1 - every non-overzoom case - this reduces exactly to
+                    // the anchor falling inside [0, extent) of the source tile.
+                    val sample = resource.sample
+                    val extent = sourceLayer.extent
                     val inside = anchors.withIndex().filter { (_, point) ->
-                        point.x in 0 until sourceLayer.extent && point.y in 0 until sourceLayer.extent
+                        val localX = point.x.toLong() * sample.childScale - sample.childX.toLong() * extent
+                        val localY = point.y.toLong() * sample.childScale - sample.childY.toLong() * extent
+                        localX in 0 until extent.toLong() && localY in 0 until extent.toLong()
                     }
+                    // Not a loss: the feature belongs to a different tile, not to this one.
                     if (inside.isEmpty()) continue
 
                     // From here the feature wanted a label on this tile, whatever becomes of it.
@@ -363,9 +397,16 @@ internal object LabelCandidateAssembler {
                     val resolved = try {
                         val fontStack = fontStackOf(program, context, tile)
                         val size = program.size.evaluate(context).asNumber("text-size", tile)
-                        // Not a failure: a style that resolves text-size to zero is asking for no
-                        // visible text, exactly as placeIcons reads an icon-size of zero.
-                        if (size <= 0.0) null else ResolvedLabel(
+                        // Not a failure and not a loss: a style that resolves text-size to zero
+                        // is asking for no visible text at this zoom, exactly as placeIcons reads
+                        // an icon-size of zero. It leaves the denominator rather than sitting in
+                        // it uncounted, so the reported counts still account for every label the
+                        // layer wanted - and a layer that deliberately hides its text does not
+                        // start reporting a loss for doing so.
+                        if (size <= 0.0) {
+                            skips.candidates -= inside.size
+                            null
+                        } else ResolvedLabel(
                             fontStack = fontStack,
                             textStyle = textStyleFor(program, context, fontStack, size, tile),
                             scalars = evaluateScalars(program, context, tile),
@@ -400,12 +441,9 @@ internal object LabelCandidateAssembler {
                             sourceTile = sourceTile,
                             featureIndex = featureIndex,
                             anchorIndex = anchorIndex,
-                            longitude = (sourceTile.x + point.x.toDouble() / sourceLayer.extent) /
+                            longitude = (sourceTile.x + point.x.toDouble() / extent) /
                                 dimension * 360.0 - 180.0,
-                            latitude = mercatorLatitude(
-                                sourceTile.y + point.y.toDouble() / sourceLayer.extent,
-                                dimension,
-                            ),
+                            latitude = mercatorLatitude(sourceTile.y + point.y.toDouble() / extent, dimension),
                             text = text,
                             textStyle = textStyle,
                             icon = icon,
@@ -441,6 +479,7 @@ internal object LabelCandidateAssembler {
             featureSkips = featureSkips,
             style = style,
             contentDigests = resources.values.map { it.contentDigest }.distinct().sorted(),
+            requestedTiles = tiles.sortedWith(TILE_ORDER),
         )
     }
 
@@ -637,12 +676,19 @@ internal object LabelCandidateAssembler {
             val size = iconLayer.size.evaluate(iconContext).asNumber("icon-size", tile)
             if (size <= 0.0) return null
             val offset = iconLayer.offset.evaluate(iconContext).asNumberPair("icon-offset", tile)
+            val width = entry.width / entry.pixelRatio * size
+            val height = entry.height / entry.pixelRatio * size
+            // The same shift placeIcons applies, from the same shared helper, so a label and the
+            // icon Rentile itself would draw for that layer anchor against the same point.
+            val anchorShift = iconLayer.anchor.shift(width, height)
             LabelIconRef(
                 imageName = imageName,
-                width = entry.width / entry.pixelRatio * size,
-                height = entry.height / entry.pixelRatio * size,
+                width = width,
+                height = height,
                 offsetX = offset.first * size,
                 offsetY = offset.second * size,
+                anchorOffsetX = anchorShift.first,
+                anchorOffsetY = anchorShift.second,
             )
         } catch (_: RasterizationException) {
             null

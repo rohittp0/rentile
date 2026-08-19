@@ -29,7 +29,9 @@ internal object GlyphRangeDecoder {
         val message = Glyphs.ADAPTER.decode(bytes)
         val stack = message.stacks.singleOrNull()
         require(stack != null) { "A glyph range must contain exactly one font stack" }
-        require(stack.name == expectedFontStack) { "A glyph range declared an unexpected font stack" }
+        require(stack.name.asFontStackChain() == expectedFontStack.asFontStackChain()) {
+            "A glyph range declared an unexpected font stack"
+        }
         return stack.glyphs.map { glyph ->
             val width = glyph.width.toInt()
             val height = glyph.height.toInt()
@@ -49,4 +51,21 @@ internal object GlyphRangeDecoder {
             )
         }.sortedBy(DecodedGlyph::codepoint)
     }
+
+    /**
+     * A font stack as its ordered chain of names, with the separator's cosmetic whitespace removed.
+     *
+     * The check this feeds is comparing what the endpoint served against what was requested, and
+     * it must survive the fact that providers reformat the separator. `api.maptiler.com` is asked
+     * for `Roboto Italic,Noto Sans Italic` and answers with `Roboto Italic, Noto Sans Italic` - one
+     * space, no other difference - which a string equality rejected. Every rolling-corpus stack is
+     * a multi-font chain ending in a Noto fallback, so that rejected every label acquisition
+     * against every corpus style.
+     *
+     * Normalised rather than deleted, deliberately. The check's purpose is to catch an endpoint
+     * serving a genuinely different font stack, which would draw the wrong glyphs at the right
+     * metrics and be invisible in the output. Order is significant and preserved, because the
+     * chain is a fallback order; only the whitespace around each name is discarded.
+     */
+    private fun String.asFontStackChain(): List<String> = split(',').map(String::trim)
 }

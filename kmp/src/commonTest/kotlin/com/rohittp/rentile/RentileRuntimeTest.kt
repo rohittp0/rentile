@@ -2509,8 +2509,12 @@ class RentileRuntimeTest {
             // behaviour.
             assertEquals(
                 "https://glyphs.example.test/{fontstack}/{range}.pbf?key=secret",
-                style.glyphsTemplate,
+                style.glyphsTemplate?.resolve(),
             )
+            // Held protected, not as a plain String, so the credential lives in the SecretContext
+            // and is scrubbed by close() rather than surviving on the PreparedStyle.
+            assertFalse(style.glyphsTemplate.toString().contains("secret"))
+            assertFalse(style.glyphsTemplate!!.canonicalUrl.contains("secret"))
 
             // glyphsTemplate deliberately retains the credential - mirroring the sprite path -
             // because Task 10 needs the real key to fetch glyph ranges later. What must never
@@ -2842,7 +2846,9 @@ class RentileRuntimeTest {
         val glyphs = testGlyphRange("Open Sans Regular", 0)
         val rasterizer = testRasterizer(transport = spriteAndGlyphTransport(vectorTile, glyphs))
         try {
-            val withIcon = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson(iconImage = "marker")))
+            val withIcon = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(iconImage = "marker", iconAnchor = "bottom")),
+            )
             val withoutIcon = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
 
             val iconBatch = rasterizer.acquireLabelCandidates(withIcon, listOf(TileId(2, 1, 1)))
@@ -2853,6 +2859,10 @@ class RentileRuntimeTest {
             // Logical extent, exactly as placeIcons computes it: width / pixelRatio * icon-size.
             assertEquals(8.0, icon?.width)
             assertEquals(8.0, icon?.height)
+            // icon-anchor: bottom lifts the sprite by half its height, the same shift placeIcons
+            // applies. Without it a consumer draws the marker half a sprite below Rentile's own.
+            assertEquals(0.0, icon?.anchorOffsetX)
+            assertEquals(-4.0, icon?.anchorOffsetY)
             // A layer with no icon-image leaves it null rather than inventing a placeholder.
             assertEquals(null, plainBatch.candidates.single().icon)
         } finally {
@@ -3036,10 +3046,38 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun requestedTilesSharingASourceTileAtOneZoomYieldOneCandidate() = runTest {
-        // Source maxzoom 1, so z2/0/0 and z2/1/0 both overzoom from source tile 1/0/0. The
-        // candidates they would produce differ in nothing but which requested tile they name, so
-        // an overzoomed viewport would otherwise multiply every label for no benefit.
+    fun anOverzoomGroupAttributesItsLabelToTheTileThatContainsIt() = runTest {
+        // Source maxzoom 1, so all four z2 children overzoom from source tile 1/0/0. The feature
+        // sits at (2048, 2048) of that source tile, which is inside exactly one child's window.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson(sourceMaxZoom = 1)))
+            val group = listOf(TileId(2, 0, 0), TileId(2, 1, 0), TileId(2, 0, 1), TileId(2, 1, 1))
+
+            val batch = rasterizer.acquireLabelCandidates(style, group)
+
+            assertEquals(1, batch.candidates.size)
+            assertEquals(TileId(1, 0, 0), batch.candidates.single().sourceTile)
+            // The containing child, not the lowest-ordered member of the group.
+            assertEquals(TileId(2, 1, 1), batch.candidates.single().requestedTile)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun labelAttributionDoesNotChangeWhenTheCallerRegroupsTiles() = runTest {
+        // A key that handed the label to the lowest-ordered tile of whatever group it landed in
+        // would move it between tiles as a viewport pans, and a consumer holding per-tile lists
+        // across frames would draw it twice - the flicker the determinism contract exists to stop.
         val vectorTile = placeNameVectorTile("Tokyo")
         val glyphs = testGlyphRange("Open Sans Regular", 0)
         val rasterizer = testRasterizer(
@@ -3051,12 +3089,12 @@ class RentileRuntimeTest {
         try {
             val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson(sourceMaxZoom = 1)))
 
-            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 0, 0), TileId(2, 1, 0)))
+            val first = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 0, 0), TileId(2, 1, 1)))
+            val second = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1), TileId(2, 0, 1)))
 
-            assertEquals(1, batch.candidates.size)
-            assertEquals(TileId(1, 0, 0), batch.candidates.single().sourceTile)
-            // The lowest-ordered requested tile of the group carries it, deterministically.
-            assertEquals(TileId(2, 0, 0), batch.candidates.single().requestedTile)
+            assertEquals(TileId(2, 1, 1), first.candidates.single().requestedTile)
+            assertEquals(TileId(2, 1, 1), second.candidates.single().requestedTile)
+            assertEquals(first.candidates, second.candidates)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -3065,9 +3103,9 @@ class RentileRuntimeTest {
 
     @Test
     fun requestedTilesSharingASourceTileAcrossZoomsStillYieldOneCandidateEach() = runTest {
-        // The other half of the same rule. Zoom-driven paint and text-size resolve at
-        // requestedTile.z, so the same feature at two requested zooms is two real candidates and
-        // the dedup must not collapse them.
+        // Zoom-driven paint and text-size resolve at requestedTile.z, so the same feature at two
+        // requested zooms is two real candidates and the clip must not collapse them. z2/1/1 and
+        // z3/2/2 are the windows of source tile 1/0/0 that contain the feature at each zoom.
         val vectorTile = placeNameVectorTile("Tokyo")
         val glyphs = testGlyphRange("Open Sans Regular", 0)
         val rasterizer = testRasterizer(
@@ -3079,11 +3117,74 @@ class RentileRuntimeTest {
         try {
             val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson(sourceMaxZoom = 1)))
 
-            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 0, 0), TileId(3, 0, 0)))
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1), TileId(3, 2, 2)))
 
             assertEquals(2, batch.candidates.size)
             assertEquals(listOf(2, 3), batch.candidates.map { it.requestedTile.z })
             assertTrue(batch.candidates.all { it.sourceTile == TileId(1, 0, 0) })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun worldCopyTilesEachGetTheirOwnCandidates() = runTest {
+        // sampleFor canonicalises x while validateTile bounds only z and y, so a wrapped x is a
+        // supported request everywhere else in this API - acquireLabelTiles returns data for both.
+        // TileId(1,-1,0) and TileId(1,1,0) are copies of one another and resolve to one source
+        // tile; a pitched camera must get place names on both copies, not one.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+            val tiles = listOf(TileId(1, -1, 0), TileId(1, 1, 0))
+
+            val batch = rasterizer.acquireLabelCandidates(style, tiles)
+
+            assertEquals(2, batch.candidates.size)
+            assertEquals(tiles.toSet(), batch.candidates.map { it.requestedTile }.toSet())
+            // Same feature of the same source tile, so the geography is identical on both copies.
+            assertTrue(batch.candidates.all { it.sourceTile == TileId(1, 1, 0) })
+            assertEquals(1, batch.candidates.map { it.longitude to it.latitude }.distinct().size)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aLegacyTokenTextFieldIsExpandedFromTheFeatureProperties() = runTest {
+        // 82 corpus layers still write text-field as the pre-expression "{name}" shorthand. If the
+        // expansion were dropped, every one of them would lay out six literal glyphs - { n a m e }
+        // - instead of the place name, so this asserts the codepoints, not just that a candidate
+        // exists.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(textField = "\"{name}\"")),
+            )
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            val candidate = batch.candidates.single()
+            assertEquals(
+                "Tokyo".map { it.code },
+                candidate.glyphs.map { batch.atlas.entries[it.entryIndex].codepoint },
+            )
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -3664,6 +3765,7 @@ class RentileRuntimeTest {
     private fun placeNameStyleJson(
         glyphs: String? = "https://glyphs.example.test/{fontstack}/{range}.pbf",
         iconImage: String? = null,
+        iconAnchor: String? = null,
         textField: String = """["get","name"]""",
         textSize: String = "14",
         sourceMaxZoom: Int = 14,
@@ -3676,6 +3778,7 @@ class RentileRuntimeTest {
         append(""","layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place",""")
         append(""""layout":{"text-field":$textField,"text-font":["Open Sans Regular"],"text-size":$textSize""")
         if (iconImage != null) append(""","icon-image":"$iconImage"""")
+        if (iconAnchor != null) append(""","icon-anchor":"$iconAnchor"""")
         append("""}}]}""")
     }
 

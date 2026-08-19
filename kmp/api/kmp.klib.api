@@ -785,8 +785,12 @@ final class com.rohittp.rentile/LabelGlyphQuad { // com.rohittp.rentile/LabelGly
 }
 
 final class com.rohittp.rentile/LabelIconRef { // com.rohittp.rentile/LabelIconRef|null[0]
-    constructor <init>(kotlin/String, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double) // com.rohittp.rentile/LabelIconRef.<init>|<init>(kotlin.String;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
+    constructor <init>(kotlin/String, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double) // com.rohittp.rentile/LabelIconRef.<init>|<init>(kotlin.String;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
 
+    final val anchorOffsetX // com.rohittp.rentile/LabelIconRef.anchorOffsetX|{}anchorOffsetX[0]
+        final fun <get-anchorOffsetX>(): kotlin/Double // com.rohittp.rentile/LabelIconRef.anchorOffsetX.<get-anchorOffsetX>|<get-anchorOffsetX>(){}[0]
+    final val anchorOffsetY // com.rohittp.rentile/LabelIconRef.anchorOffsetY|{}anchorOffsetY[0]
+        final fun <get-anchorOffsetY>(): kotlin/Double // com.rohittp.rentile/LabelIconRef.anchorOffsetY.<get-anchorOffsetY>|<get-anchorOffsetY>(){}[0]
     final val height // com.rohittp.rentile/LabelIconRef.height|{}height[0]
         final fun <get-height>(): kotlin/Double // com.rohittp.rentile/LabelIconRef.height.<get-height>|<get-height>(){}[0]
     final val imageName // com.rohittp.rentile/LabelIconRef.imageName|{}imageName[0]
@@ -803,7 +807,9 @@ final class com.rohittp.rentile/LabelIconRef { // com.rohittp.rentile/LabelIconR
     final fun component3(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component3|component3(){}[0]
     final fun component4(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component4|component4(){}[0]
     final fun component5(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component5|component5(){}[0]
-    final fun copy(kotlin/String = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ...): com.rohittp.rentile/LabelIconRef // com.rohittp.rentile/LabelIconRef.copy|copy(kotlin.String;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
+    final fun component6(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component6|component6(){}[0]
+    final fun component7(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component7|component7(){}[0]
+    final fun copy(kotlin/String = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ...): com.rohittp.rentile/LabelIconRef // com.rohittp.rentile/LabelIconRef.copy|copy(kotlin.String;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelIconRef.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelIconRef.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/LabelIconRef.toString|toString(){}[0]

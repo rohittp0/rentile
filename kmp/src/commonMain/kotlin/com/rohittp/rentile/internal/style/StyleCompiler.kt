@@ -139,7 +139,9 @@ internal class StyleCompiler(
         // shapes, rather than failing preparation. A style that has never declared glyphs (or a
         // style whose consumer never asks for labels) must keep preparing exactly as before; the
         // label-candidate API turns a null template into an empty batch and a diagnostic instead
-        // of failing that request.
+        // of failing that request. It is still protected rather than kept as a plain String: the
+        // template carries the provider credential, and resolving it eagerly would leave that key
+        // alive on the PreparedStyle beyond any SecretContext.clear().
         val glyphsReference = root["glyphs"]?.asPrimitive()?.takeIf { it.isString }?.content
         val glyphsTemplate = glyphsReference?.let { reference ->
             val resolved = when {
@@ -147,7 +149,7 @@ internal class StyleCompiler(
                 baseUri != null -> resolveHttpReference(baseUri, reference)
                 else -> null
             }
-            resolved?.let { secretContext.protectUrl(it).resolve() }
+            resolved?.let { secretContext.protectUrl(it) }
         }
         val compiledRasterSources = mutableMapOf<String, CompiledRasterSource>()
         val compiledVectorSources = mutableMapOf<String, CompiledVectorSource>()

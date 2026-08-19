@@ -52,6 +52,51 @@ class GlyphRangeDecoderTest {
     }
 
     @Test
+    fun acceptsAServedStackThatDiffersOnlyBySeparatorWhitespace() {
+        // api.maptiler.com is asked for "Roboto Italic,Noto Sans Italic" and answers with
+        // "Roboto Italic, Noto Sans Italic". Every corpus font stack is a multi-font chain, so a
+        // string equality here failed every label acquisition against every corpus style.
+        val bytes = Glyphs(
+            stacks = listOf(
+                Glyphs.Fontstack("Roboto Italic, Noto Sans Italic", "0-255", listOf(
+                    Glyph(id = 65, width = 0, height = 0, left = 0, top = 0, advance = 12),
+                )),
+            ),
+        ).encode()
+
+        val decoded = GlyphRangeDecoder.decode(bytes, "Roboto Italic,Noto Sans Italic")
+
+        assertEquals(1, decoded.size)
+        assertEquals(65, decoded.single().codepoint)
+    }
+
+    @Test
+    fun rejectsAStackWhoseNamesDifferRatherThanItsSeparators() {
+        // The normalisation must stay narrow: a provider serving a genuinely different chain would
+        // draw the wrong glyphs at the right metrics, which is invisible in the output and is the
+        // reason this check exists at all.
+        val bytes = Glyphs(
+            stacks = listOf(Glyphs.Fontstack("Roboto Italic, Noto Serif Italic", "0-255", emptyList())),
+        ).encode()
+
+        assertFailsWith<IllegalArgumentException> {
+            GlyphRangeDecoder.decode(bytes, "Roboto Italic,Noto Sans Italic")
+        }
+    }
+
+    @Test
+    fun rejectsAChainServedInADifferentFallbackOrder() {
+        // Order is the fallback order, so it is significant and normalisation must not sort it.
+        val bytes = Glyphs(
+            stacks = listOf(Glyphs.Fontstack("Noto Sans Italic, Roboto Italic", "0-255", emptyList())),
+        ).encode()
+
+        assertFailsWith<IllegalArgumentException> {
+            GlyphRangeDecoder.decode(bytes, "Roboto Italic,Noto Sans Italic")
+        }
+    }
+
+    @Test
     fun rejectsAStackThatIsNotTheOneRequested() {
         val bytes = Glyphs(
             stacks = listOf(Glyphs.Fontstack("Some Other Font", "0-255", emptyList())),

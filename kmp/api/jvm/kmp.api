@@ -320,15 +320,19 @@ public final class com/rohittp/rentile/LabelGlyphQuad {
 }
 
 public final class com/rohittp/rentile/LabelIconRef {
-	public fun <init> (Ljava/lang/String;DDDD)V
+	public fun <init> (Ljava/lang/String;DDDDDD)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()D
 	public final fun component3 ()D
 	public final fun component4 ()D
 	public final fun component5 ()D
-	public final fun copy (Ljava/lang/String;DDDD)Lcom/rohittp/rentile/LabelIconRef;
-	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelIconRef;Ljava/lang/String;DDDDILjava/lang/Object;)Lcom/rohittp/rentile/LabelIconRef;
+	public final fun component6 ()D
+	public final fun component7 ()D
+	public final fun copy (Ljava/lang/String;DDDDDD)Lcom/rohittp/rentile/LabelIconRef;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelIconRef;Ljava/lang/String;DDDDDDILjava/lang/Object;)Lcom/rohittp/rentile/LabelIconRef;
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAnchorOffsetX ()D
+	public final fun getAnchorOffsetY ()D
 	public final fun getHeight ()D
 	public final fun getImageName ()Ljava/lang/String;
 	public final fun getOffsetX ()D

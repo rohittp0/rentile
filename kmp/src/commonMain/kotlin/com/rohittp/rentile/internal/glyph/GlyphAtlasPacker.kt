@@ -1,6 +1,7 @@
 package com.rohittp.rentile.internal.glyph
 
 import com.rohittp.rentile.LabelGlyphEntry
+import com.rohittp.rentile.PngEncodingException
 import com.rohittp.rentile.internal.sha256Hex
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
@@ -141,7 +142,10 @@ internal object GlyphAtlasPacker {
         val image = Image.makeRaster(info, pixels, width * 4)
         try {
             val data = image.encodeToData(EncodedImageFormat.PNG)
-                ?: error("Skia could not encode the glyph atlas as PNG")
+                // Typed, not a bare error(): this escapes through the public
+                // acquireLabelCandidates, and every other encode failure in this library already
+                // surfaces as PngEncodingException rather than an IllegalStateException.
+                ?: throw PngEncodingException("Skia could not encode the glyph atlas as PNG")
             try {
                 return data.bytes
             } finally {
