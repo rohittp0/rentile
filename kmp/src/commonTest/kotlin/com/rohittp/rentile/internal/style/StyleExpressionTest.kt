@@ -141,6 +141,18 @@ class StyleExpressionTest {
     }
 
     @Test
+    fun isSupportedScriptReflectsWhatLayoutCanRender() {
+        assertEquals(
+            StyleValue.BooleanValue(true),
+            evaluate("""["is-supported-script","Tokyo"]""", StyleEvaluationContext(zoom = 0.0)),
+        )
+        assertEquals(
+            StyleValue.BooleanValue(false),
+            evaluate("""["is-supported-script","القاهرة"]""", StyleEvaluationContext(zoom = 0.0)),
+        )
+    }
+
+    @Test
     fun rejectsUnsupportedOperatorsAndInvalidTypesAtCompilation() {
         assertFailsWith<StyleExpressionCompilationException> {
             compile("""["not-a-real-operator","a","b"]""")
