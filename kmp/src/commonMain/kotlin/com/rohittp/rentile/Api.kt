@@ -205,11 +205,20 @@ public data class LabelLayerStyle(
     public val haloColor: Int,
 )
 
-/** The sprite the style pairs with this label, indexing the atlas Rentile already builds. */
+/**
+ * The sprite the style pairs with this label, indexing the atlas Rentile already builds.
+ *
+ * The sprite's centre sits at the label's anchor displaced by `anchorOffset + offset`, which is
+ * how Rentile's own icon pass positions the same sprite. [anchorOffsetX] and [anchorOffsetY] carry
+ * `icon-anchor`'s shift, in logical pixels for the resolved [width] and [height]; [offsetX] and
+ * [offsetY] carry `icon-offset` scaled by `icon-size`. A consumer that applies only the latter
+ * draws an `icon-anchor: bottom` marker half a sprite away from where Rentile puts it.
+ */
 public data class LabelIconRef(
     public val imageName: String,
     public val width: Double, public val height: Double,
     public val offsetX: Double, public val offsetY: Double,
+    public val anchorOffsetX: Double, public val anchorOffsetY: Double,
 )
 
 /**

@@ -164,7 +164,10 @@ public enum class DiagnosticCode {
      *
      * The three are counted apart rather than summed, because a consumer seeing no labels needs to
      * know which of them happened; they are strict subsets of `candidateFeatures` and share its
-     * unit, one label meaning one anchor of one feature on one requested tile.
+     * unit, one label meaning one anchor of one feature on one requested tile. A label whose
+     * `text-size` resolves to zero or less is not among them and is not in `candidateFeatures`
+     * either: that is a style asking for no visible text at this zoom, not a loss, and reporting
+     * it would make every style that hides its labels by zoom look broken.
      *
      * Every count describes **this batch only**, across every requested tile in it. The three
      * summing to `candidateFeatures` means this layer contributed nothing here; it does not mean

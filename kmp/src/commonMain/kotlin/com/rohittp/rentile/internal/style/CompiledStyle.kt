@@ -422,12 +422,17 @@ internal class CompiledPreparedStyle(
     val groundRadiance: GroundRadianceDescriptor?,
     val spriteAtlas: CompiledSpriteAtlas?,
     /**
-     * The style's `glyphs` URL template, resolved against the style base URI and with any
-     * embedded credential extracted into [secretContext], or null when the style declares no
-     * `glyphs` key or the reference could not be resolved. Label-candidate preparation (a
-     * separate, opt-in API) turns a null template into an empty batch and a diagnostic instead of
-     * failing, so a consumer that never asks for labels is never failed by this field.
+     * The style's `glyphs` URL template, resolved against the style base URI, or null when the
+     * style declares no `glyphs` key or the reference could not be resolved. Label-candidate
+     * preparation (a separate, opt-in API) turns a null template into an empty batch and a
+     * diagnostic instead of failing, so a consumer that never asks for labels is never failed by
+     * this field.
+     *
+     * Held as a [ProtectedResourceUrl] and resolved at request time, like every other
+     * credential-bearing URL in a compiled style. A plain String here would keep a live API key
+     * reachable on a [PreparedStyle] for as long as the caller holds it - surviving `close()`,
+     * because [SecretContext.clear] can only scrub what it owns.
      */
-    val glyphsTemplate: String?,
+    val glyphsTemplate: ProtectedResourceUrl?,
     val secretContext: SecretContext,
 ) : PreparedStyle

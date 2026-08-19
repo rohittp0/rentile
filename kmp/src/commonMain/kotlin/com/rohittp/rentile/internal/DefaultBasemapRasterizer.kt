@@ -420,7 +420,7 @@ private class DefaultBasemapRasterizer(
             plan.requiredRanges.map { request ->
                 async {
                     acquireOutcome {
-                        glyphAcquirer.acquire(glyphsTemplate, request.fontStack, request.rangeStart, resourceAccess)
+                        glyphAcquirer.acquire(glyphsTemplate.resolve(), request.fontStack, request.rangeStart, resourceAccess)
                     }
                 }
             }.awaitAll()
