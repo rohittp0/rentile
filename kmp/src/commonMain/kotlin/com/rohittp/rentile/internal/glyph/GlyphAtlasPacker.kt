@@ -28,14 +28,29 @@ internal data class PackedGlyphAtlas(
 internal object GlyphAtlasPacker {
     private const val MAX_WIDTH = 1024
 
+    /**
+     * A total-order string over a glyph's own content: its metrics and its decoded bitmap
+     * digest. Used only to break ties deterministically when two ranges disagree about the
+     * same (fontStackDigest, codepoint) - the tiebreak must depend on glyph content, never on
+     * which range happened to be iterated first.
+     */
+    private fun DecodedGlyph.contentSignature(): String =
+        "$width:$height:$left:$top:$advance:${bitmap.sha256Hex()}"
+
     fun pack(ranges: List<AcquiredGlyphRange>): PackedGlyphAtlas {
         // Flatten to (fontStackDigest, glyph), then order canonically so layout is
         // independent of arrival order. Whitespace glyphs carry no bitmap and are dropped.
+        //
+        // Sort BEFORE dedup, with a content-signature tiebreak. If two ranges disagree about
+        // one (fontStackDigest, codepoint) - different metrics or bitmap bytes - distinctBy
+        // keeps whichever sorts first, which is now a function of glyph content, not of which
+        // range happened to arrive first. Deduping before sorting would let arrival order pick
+        // the survivor, defeating determinism whenever two ranges collide on the same glyph.
         val drawable = ranges
             .flatMap { range -> range.glyphs.map { range.fontStack.sha256Hex() to it } }
             .filter { (_, glyph) -> glyph.bitmap.isNotEmpty() }
+            .sortedWith(compareBy({ it.first }, { it.second.codepoint }, { it.second.contentSignature() }))
             .distinctBy { (digest, glyph) -> digest to glyph.codepoint }
-            .sortedWith(compareBy({ it.first }, { it.second.codepoint }))
 
         // Shelf-pack left to right, wrapping at MAX_WIDTH. Each cell is the buffered
         // bitmap extent, so the consumer samples the same padding the provider encoded.
@@ -68,11 +83,18 @@ internal object GlyphAtlasPacker {
         }
         val atlasHeight = penY + shelfHeight
 
-        // contentKey covers the glyph set and its metrics, never the encoded PNG:
-        // ADR 0010 measures determinism on decoded pixels, not compressed bytes.
-        val contentKey = entries.joinToString("|") { entry ->
+        // contentKey covers the glyph set, its metrics, AND its decoded bitmap bytes - never
+        // the encoded PNG. ADR 0010 forbids keying on encoded PNG bytes because encoders are
+        // not byte-identical across platforms; it does not forbid keying on the decoded SDF
+        // bitmap, which arrives verbatim from the provider and is identical everywhere. Without
+        // the bitmap in the key, an upstream font revision that changes distance values without
+        // changing box metrics or advance would silently keep the old contentKey, and a
+        // consumer would never re-upload the changed texture.
+        val contentKey = entries.indices.joinToString("|") { i ->
+            val entry = entries[i]
+            val bitmapDigest = drawable[i].second.bitmap.sha256Hex()
             "${entry.fontStackDigest}:${entry.codepoint}:${entry.width}x${entry.height}:" +
-                "${entry.left},${entry.top},${entry.advance}"
+                "${entry.left},${entry.top},${entry.advance}:$bitmapDigest"
         }.sha256Hex()
 
         // An empty glyph set still needs a valid (non-zero-dimension) atlas: Skia rejects
