@@ -314,6 +314,17 @@ public data class LabelCandidate(
     public val glyphs: List<LabelGlyphQuad>,
     public val boundingBox: LabelBox,
     public val icon: LabelIconRef?,
+    /**
+     * Whether the style grants this label permission to overlap others, from `text-overlap` or the
+     * legacy `text-allow-overlap`.
+     *
+     * `text-overlap: cooperative` collapses to `false` here, which is a deliberate narrowing rather
+     * than a faithful mapping: cooperative means "overlap only if the colliding symbol also permits
+     * it", a negotiation between two symbols during placement, and placement belongs to the consumer
+     * under this profile. Rentile has no second symbol to consult, so it reports only what the
+     * author granted unconditionally and never asserts an overlap on their behalf. A consumer that
+     * implements cooperative placement itself cannot recover the distinction from this field.
+     */
     public val allowOverlap: Boolean,
     public val ignorePlacement: Boolean,
     public val padding: Double,
@@ -333,6 +344,12 @@ public data class LabelCandidate(
      * Ignoring it silently misplaces the label, which is why it is here even though only two layers
      * in the rolling corpus use it. Add it to the projected anchor before laying the quads out
      * around that point.
+     *
+     * `text-translate-anchor` decides the frame this is applied in, and it defaults to `map` — so on
+     * a rotated or pitched camera the displacement rotates with the map rather than staying fixed to
+     * the viewport. Rentile does not carry that property: a layer declaring it explicitly is
+     * excluded with [DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT], because Rentile has no camera to
+     * resolve `viewport` against, so anything reaching a consumer here is map-anchored.
      */
     public val translateX: Double,
     /** See [translateX]. */

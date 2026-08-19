@@ -30,7 +30,23 @@ internal data class PackedGlyphAtlas(
  * would change between runs and a consumer would needlessly re-upload an unchanged texture.
  */
 internal object GlyphAtlasPacker {
-    private const val MAX_WIDTH = 1024
+    /**
+     * Shelf width, and therefore the atlas's own width once more than one shelf is needed.
+     *
+     * Chosen so that `maxGlyphRangesPerBatch` genuinely fits, because the two ceilings must agree:
+     * that limit's KDoc promises 64 ranges as deliberate headroom over a measured 15, and a shelf
+     * that cannot hold 64 turns the promise into a `SafetyLimitException` thrown *after* every
+     * range has been fetched - a network cost paid for a failure. The previous 1024 held about 41
+     * dense ranges, so a 30-tile Tokyo viewport across two or three font stacks passed the range
+     * check and then failed in the packer.
+     *
+     * 64 dense CJK ranges are 16384 cells. At 4096 wide that is 3164 rows for 28-pixel cells and
+     * 6440 for 40-pixel ones - inside `maxRasterDimensionPx`'s 8192 default with room to spare, and
+     * 49 to 101 MiB against `maxDecodedRasterBytes`' 256 MiB. 2048 was rejected: it fits 28- and
+     * 32-pixel cells and breaches the height ceiling at 36, which is too little margin for a number
+     * derived from estimated glyph extents.
+     */
+    private const val SHELF_WIDTH_PX = 4096
 
     /**
      * A total-order string over a glyph's own content: its metrics and its decoded bitmap
@@ -64,7 +80,7 @@ internal object GlyphAtlasPacker {
             .sortedWith(compareBy({ it.first }, { it.second.codepoint }, { it.second.contentSignature() }))
             .distinctBy { (digest, glyph) -> digest to glyph.codepoint }
 
-        // Shelf-pack left to right, wrapping at MAX_WIDTH. Each cell is the buffered
+        // Shelf-pack left to right, wrapping at the shelf width. Each cell is the buffered
         // bitmap extent, so the consumer samples the same padding the provider encoded.
         val entries = ArrayList<LabelGlyphEntry>(drawable.size)
         val index = HashMap<Pair<String, Int>, Int>(drawable.size)
@@ -73,18 +89,23 @@ internal object GlyphAtlasPacker {
         var shelfHeight = 0
         var atlasWidth = 0
         val maxDimension = limits.maxRasterDimensionPx.toLong()
+        // A caller that lowers maxRasterDimensionPx below the shelf width has declared a texture
+        // ceiling, and handing them a wider atlas than they asked for would breach it silently.
+        val shelfWidth = minOf(SHELF_WIDTH_PX.toLong(), maxDimension)
         for ((digest, glyph) in drawable) {
             val cellWidth = glyph.width + GlyphRangeDecoder.BUFFER_PX * 2
             val cellHeight = glyph.height + GlyphRangeDecoder.BUFFER_PX * 2
-            if (penX + cellWidth > MAX_WIDTH && penX > 0) {
+            if (penX + cellWidth > shelfWidth && penX > 0) {
                 penY += shelfHeight
                 penX = 0
                 shelfHeight = 0
             }
             // Checked per cell, before an entry exists for it, so a payload that would build a
             // texture beyond the ceiling is rejected instead of first accumulating millions of
-            // entries. A single cell wider than MAX_WIDTH sets the atlas width by itself, which is
-            // why width is bounded here too and not only the running height.
+            // entries rather than failing on the first one that cannot fit. cellWidth is bounded
+            // here as well as the running height, because a cell wider than the shelf sits alone
+            // and sets the atlas width by itself - the wrap above cannot move it off a shelf it is
+            // already alone on.
             val observedDimension = maxOf(cellWidth.toLong(), penY + cellHeight)
             if (observedDimension > maxDimension) {
                 throw SafetyLimitException(
@@ -112,6 +133,22 @@ internal object GlyphAtlasPacker {
         }
         val atlasHeight = penY + shelfHeight
 
+        // A post-condition on what actually ships, not a restatement of the per-cell check. Given
+        // the shelf bound above, the running pen can never carry the width past the ceiling, so
+        // this is unreachable today - which is the point: it is what fails if a later change
+        // re-introduces a shelf width that ignores the caller's limit, instead of that change
+        // silently handing them a texture wider than they declared.
+        val observedAtlasDimension = maxOf(atlasWidth.toLong(), atlasHeight)
+        if (observedAtlasDimension > maxDimension) {
+            throw SafetyLimitException(
+                message = "Glyph atlas dimensions exceed the configured limit",
+                limitName = "maxRasterDimensionPx",
+                limit = maxDimension,
+                observed = observedAtlasDimension,
+                stage = PipelineStage.RESOURCE_DECODING,
+            )
+        }
+
         // contentKey covers the glyph set, its metrics, AND its decoded bitmap bytes - never
         // the encoded PNG. ADR 0010 forbids keying on encoded PNG bytes because encoders are
         // not byte-identical across platforms; it does not forbid keying on the decoded SDF
@@ -119,12 +156,20 @@ internal object GlyphAtlasPacker {
         // the bitmap in the key, an upstream font revision that changes distance values without
         // changing box metrics or advance would silently keep the old contentKey, and a
         // consumer would never re-upload the changed texture.
-        val contentKey = entries.indices.joinToString("|") { i ->
-            val entry = entries[i]
-            val bitmapDigest = drawable[i].second.bitmap.sha256Hex()
-            "${entry.fontStackDigest}:${entry.codepoint}:${entry.width}x${entry.height}:" +
-                "${entry.left},${entry.top},${entry.advance}:$bitmapDigest"
-        }.sha256Hex()
+        //
+        // The atlas dimensions are in the key too, because the shelf width is no longer a constant:
+        // it is bounded by maxRasterDimensionPx, so the same glyph set packed under two different
+        // limit configurations lays out differently. Without the dimensions a consumer holding a
+        // texture cached under the old configuration would keep it while reading coordinates from
+        // the new one, and sample the wrong cells.
+        val contentKey = (
+            entries.indices.joinToString("|") { i ->
+                val entry = entries[i]
+                val bitmapDigest = drawable[i].second.bitmap.sha256Hex()
+                "${entry.fontStackDigest}:${entry.codepoint}:${entry.width}x${entry.height}:" +
+                    "${entry.left},${entry.top},${entry.advance}:$bitmapDigest"
+            } + "|atlas:${maxOf(atlasWidth.toLong(), 1L)}x${maxOf(atlasHeight, 1L)}"
+            ).sha256Hex()
 
         // An empty glyph set still needs a valid (non-zero-dimension) atlas: Skia rejects
         // a zero-dimension image, so a 1x1 fully transparent placeholder stands in.

@@ -141,6 +141,67 @@ class GlyphAtlasPackerTest {
         val atlas = GlyphAtlasPacker.pack(listOf(range("Open Sans Regular", 0, *ordinary.toTypedArray())))
 
         assertEquals(200, atlas.entries.size)
-        assertTrue(atlas.width in 1..1024)
+        assertTrue(atlas.width in 1..4096)
+    }
+
+    @Test
+    fun packsAsManyDenseRangesAsTheBatchCeilingAllows() {
+        // The test that keeps two numbers agreeing. maxGlyphRangesPerBatch promises 64 ranges as
+        // headroom over a measured 15, and the packer must actually hold them: a shelf too narrow
+        // makes the range check pass, every range get fetched, and the packer then throw - paying
+        // the whole network cost for a failure. A 1024 shelf held about 41.
+        //
+        // 64 full ranges of 256 dense CJK-sized glyphs is the worst case that ceiling admits.
+        val limits = ResourceLimits()
+        val dense = (0 until limits.maxGlyphRangesPerBatch).map { rangeIndex ->
+            val start = rangeIndex * 256
+            range(
+                "Open Sans Regular",
+                start,
+                *(0 until 256).map { glyph(start + it, 22, 22) }.toTypedArray(),
+            )
+        }
+
+        val atlas = GlyphAtlasPacker.pack(dense, limits)
+
+        assertEquals(limits.maxGlyphRangesPerBatch * 256, atlas.entries.size)
+        assertTrue(
+            atlas.width <= limits.maxRasterDimensionPx && atlas.height <= limits.maxRasterDimensionPx,
+            "atlas was ${atlas.width}x${atlas.height}, over maxRasterDimensionPx",
+        )
+        assertTrue(
+            atlas.width.toLong() * atlas.height * 4L <= limits.maxDecodedRasterBytes,
+            "atlas was ${atlas.width}x${atlas.height}, over maxDecodedRasterBytes",
+        )
+    }
+
+    @Test
+    fun neverExceedsACallersOwnLoweredDimensionCeiling() {
+        // A caller lowering maxRasterDimensionPx has declared a texture ceiling. The shelf width was
+        // a hard 1024, so a caller asking for 512 still received a 1024-wide atlas - their own limit
+        // breached silently, with no exception and no diagnostic.
+        val limits = ResourceLimits(maxRasterDimensionPx = 512)
+        val glyphs = (0 until 120).map { glyph(it, 40, 40) }
+
+        val atlas = GlyphAtlasPacker.pack(listOf(range("Open Sans Regular", 0, *glyphs.toTypedArray())), limits)
+
+        assertTrue(atlas.width <= 512, "atlas width ${atlas.width} exceeds the caller's 512 ceiling")
+        assertTrue(atlas.height <= 512, "atlas height ${atlas.height} exceeds the caller's 512 ceiling")
+    }
+
+    @Test
+    fun theContentKeyCoversTheAtlasDimensions() {
+        // The shelf width is bounded by maxRasterDimensionPx, so the same glyph set lays out
+        // differently under different limits. contentKey answers "must I re-upload the texture?",
+        // so it has to change when the layout does, or a consumer keeps a cached texture while
+        // reading coordinates for a different one.
+        val glyphs = (0 until 120).map { glyph(it, 40, 40) }
+        val ranges = listOf(range("Open Sans Regular", 0, *glyphs.toTypedArray()))
+
+        val wide = GlyphAtlasPacker.pack(ranges)
+        val narrow = GlyphAtlasPacker.pack(ranges, ResourceLimits(maxRasterDimensionPx = 512))
+
+        assertNotEquals(wide.width, narrow.width)
+        assertNotEquals(wide.contentKey, narrow.contentKey)
     }
 }

@@ -1277,7 +1277,7 @@ The algorithm, in the units the glyph data uses. All glyph metrics are in a 24-p
 2. Each line's width is the sum of its advances, minus the trailing letter spacing.
 3. Lines stack downward by `lineHeightEm * 24`.
 4. The block is aligned horizontally per `justify`, then shifted so `anchor` sits at the origin, then displaced by `offsetEm * 24`.
-5. Each glyph's quad is at `((penX + entry.left) * scale, (baselineY + entry.top) * scale)` with the atlas cell's own extent, and `scale` on the quad.
+5. Each glyph's quad is at `((penX + entry.left - 3) * scale, (lineTopY - entry.top - 3) * scale)` with the atlas cell's own extent, and `scale` on the quad. Two corrections to the original sketch, both found after it was written and both measured against live providers on 2026-08-19. The reference is the line's **top edge**, not a baseline, and `top` is **subtracted**: a glyph range encodes `-top` as the distance from the line's ascender down to the bitmap's top edge, so no ascent metric is needed and none exists to be had. The `3` is `BUFFER_PX`, coming off both axes because the quad describes the buffered *cell* while `left` and `top` are bearings for the unbuffered body.
 6. The bounding box is the union of quads expanded by `paddingPx`.
 
 `layOut` returns `null` when the text is empty after trimming, so the caller drops the candidate.

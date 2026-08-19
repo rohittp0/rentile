@@ -195,10 +195,15 @@ internal object LabelLayout {
      * respectively with `height == 18`, putting its body's bottom edge exactly on the baseline in
      * both. Overshooting and descending glyphs fall out of the same rule.
      *
-     * Reading `top` as an offset from a baseline - which this did until it was measured - is wrong
-     * in both sign and reference, by `ascender - 2 * -top`, an amount that differs per font. It
-     * happened to be nearly right for Open Sans and badly wrong for Stadia, which is why nothing
-     * noticed: every fixture in the suite encoded the assumption under test.
+     * Reading `top` as an offset from a baseline - which this did until it was measured - is wrong in
+     * both sign and reference. The old formula placed a glyph at `baselineY + top` with
+     * `baselineY = (lineIndex + 0.5) * lineHeightPx - blockHeight / 2`, against
+     * `lineTopY - top` with `lineTopY = lineIndex * lineHeightPx - blockHeight / 2`, so it sat
+     * `lineHeightPx / 2 + 2 * top` too low - the block height and the line index both cancel, so the
+     * error is the same on every line. For Open Sans at a 1.2 em line height that is
+     * `14.4 + 2 * -7 = 0.4`, and for Stadia `14.4 + 2 * -5 = 4.4`. Nearly right for one font and
+     * visibly wrong for the other, which is why nothing noticed: every fixture in the suite encoded
+     * the assumption under test.
      */
     private fun place(lines: List<List<Token>>, atlas: PackedGlyphAtlas, style: LabelTextStyle): List<LabelGlyphQuad> {
         if (lines.isEmpty()) return emptyList()

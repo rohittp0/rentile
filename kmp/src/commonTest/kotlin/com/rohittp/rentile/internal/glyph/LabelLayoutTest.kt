@@ -96,6 +96,34 @@ class LabelLayoutTest {
     }
 
     @Test
+    fun theBoundingBoxSpansEveryCellExtentAndItsBottomIsBelowTheAnchor() {
+        // Nothing tested the box's vertical extent at all. The neighbouring test compares against
+        // quad *origins* with >= and <=, so it would still pass if bounds() stopped adding the cell
+        // extents entirely - the box would collapse onto the origins and the assertions would hold.
+        //
+        // The absolute values also pin the sign convention, which the public KDoc previously stated
+        // wrongly: top is above the anchor and negative, bottom is *below* it and positive, because
+        // the anchor sits at the centre of the line's row while the glyph bodies hang from the
+        // ascender down through the baseline.
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
+        val laid = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas))!!
+        val padding = 2.0
+
+        val expectedTop = laid.quads.minOf { it.y } - padding
+        val expectedBottom = laid.quads.maxOf { quad ->
+            quad.y + atlas.entries[quad.entryIndex].height * quad.scale
+        } + padding
+
+        assertEquals(expectedTop, laid.box.top, TOLERANCE)
+        assertEquals(expectedBottom, laid.box.bottom, TOLERANCE)
+        // y = -3.4 for the cell corner, less 2 padding; the cell is 14 + 6 tall, plus 2 padding.
+        assertEquals(-5.4, laid.box.top, TOLERANCE)
+        assertEquals(18.6, laid.box.bottom, TOLERANCE)
+        assertTrue(laid.box.bottom > 0.0, "bottom should sit below the anchor, was ${laid.box.bottom}")
+        assertTrue(laid.box.top < 0.0, "top should sit above the anchor, was ${laid.box.top}")
+    }
+
+    @Test
     fun theBoundingBoxCoversEveryQuadPlusPadding() {
         val (whitespace, atlas) = setUp('A'.code, 'B'.code)
         val laid = LabelLayout.layOut("AB", atlas, whitespace, styleFor(atlas))!!
