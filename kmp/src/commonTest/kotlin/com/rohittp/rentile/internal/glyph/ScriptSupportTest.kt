@@ -29,4 +29,13 @@ class ScriptSupportTest {
     fun mixedTextIsUnsupportedIfAnyPartIsUnsupported() {
         assertFalse(ScriptSupport.isSupported("Cairo القاهرة"))
     }
+
+    @Test
+    fun astralPlaneScriptsAreNotSupported() {
+        // Adlam and Hanifi Rohingya sit above U+FFFF, so every codepoint here is a UTF-16
+        // surrogate pair. This is the first test that requires codePointAtCompat to actually
+        // combine a surrogate pair rather than just read a single Char.
+        assertFalse(ScriptSupport.isSupported("𞤀𞤇𞤤𞤪𞤯")) // Adlam: right-to-left
+        assertFalse(ScriptSupport.isSupported("𐴀𐴄𐴉𐴒𐴛")) // Hanifi Rohingya: right-to-left
+    }
 }

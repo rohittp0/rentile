@@ -153,6 +153,31 @@ class StyleExpressionTest {
     }
 
     @Test
+    fun isSupportedScriptRequiresEveryArgumentToBeSupported() {
+        // A single-argument call cannot tell `.all` from `.any`, so this genuinely needs two
+        // arguments where only one is unsupported: `.all` reports false, but a mutant `.any`
+        // would short-circuit true on the first (supported) argument and pass silently.
+        assertEquals(
+            StyleValue.BooleanValue(false),
+            evaluate("""["is-supported-script","Cairo","القاهرة"]""", StyleEvaluationContext(zoom = 0.0)),
+        )
+        assertEquals(
+            StyleValue.BooleanValue(true),
+            evaluate("""["is-supported-script","Cairo","Tokyo"]""", StyleEvaluationContext(zoom = 0.0)),
+        )
+    }
+
+    @Test
+    fun isSupportedScriptTreatsNonStringArgumentsAsSupported() {
+        // A number or boolean renders as plain ASCII with no shaping risk, so it never
+        // disqualifies the expression. Documented here rather than left as an untested default.
+        assertEquals(
+            StyleValue.BooleanValue(true),
+            evaluate("""["is-supported-script",42,true]""", StyleEvaluationContext(zoom = 0.0)),
+        )
+    }
+
+    @Test
     fun rejectsUnsupportedOperatorsAndInvalidTypesAtCompilation() {
         assertFailsWith<StyleExpressionCompilationException> {
             compile("""["not-a-real-operator","a","b"]""")

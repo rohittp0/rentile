@@ -31,8 +31,16 @@ internal object ScriptSupport {
         0x1000..0x109F, // Myanmar: reordering vowel signs and stacked consonants
         0x1780..0x17FF, // Khmer: reordering vowel signs and stacked consonants
         0x1800..0x18AF, // Mongolian: contextual joining
+        0x1A20..0x1AAF, // Tai Tham: Brahmic reordering and stacked consonants
+        0x1B00..0x1B7F, // Balinese: Brahmic reordering and stacked consonants
+        0x1B80..0x1BBF, // Sundanese: Brahmic reordering and stacked consonants
+        0x1BC0..0x1BFF, // Batak: Brahmic reordering and stacked consonants
+        0xA980..0xA9DF, // Javanese: Brahmic reordering and stacked consonants
+        0xAA00..0xAA5F, // Cham: Brahmic reordering and stacked consonants
         0xFB1D..0xFDFF, // Hebrew and Arabic presentation forms: right-to-left
         0xFE70..0xFEFF, // Arabic presentation forms-B: right-to-left, contextual joining
+        0x10D00..0x10D3F, // Hanifi Rohingya: right-to-left
+        0x1E900..0x1E95F, // Adlam: right-to-left
     )
 
     fun requiresComplexShaping(text: String): Boolean {
