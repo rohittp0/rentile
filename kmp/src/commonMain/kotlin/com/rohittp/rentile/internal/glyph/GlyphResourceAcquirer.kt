@@ -68,7 +68,7 @@ internal class GlyphResourceAcquirer(
             AcquiredGlyphRange(
                 fontStack = fontStack,
                 rangeStart = rangeStart,
-                glyphs = decode(bytes, fontStack, sanitizedId),
+                glyphs = decode(bytes, rangeLabelFor(rangeStart), sanitizedId),
                 contentDigest = bytes.sha256Hex(),
             )
         }
@@ -82,8 +82,8 @@ internal class GlyphResourceAcquirer(
      * decode failures, so a malformed or truncated glyph payload never escapes untyped. The
      * original exception's message is never forwarded since it may echo provider-controlled bytes.
      */
-    private fun decode(bytes: ByteArray, fontStack: String, sanitizedId: String): List<DecodedGlyph> = try {
-        GlyphRangeDecoder.decode(bytes, fontStack)
+    private fun decode(bytes: ByteArray, expectedRange: String, sanitizedId: String): List<DecodedGlyph> = try {
+        GlyphRangeDecoder.decode(bytes, expectedRange)
     } catch (error: CancellationException) {
         throw error
     } catch (_: Throwable) {
@@ -195,12 +195,19 @@ internal class GlyphResourceAcquirer(
         fun rangeStartFor(codepoint: Int): Int = codepoint / RANGE_SIZE * RANGE_SIZE
 
         /**
+         * The `{range}` token for a block, e.g. `"0-255"`. The URL is built from this and the
+         * served payload is checked against it, so both must come from here - a second copy of the
+         * formatting would make the check compare one spelling of the block against another.
+         */
+        fun rangeLabelFor(rangeStart: Int): String = "$rangeStart-${rangeStart + RANGE_SIZE - 1}"
+
+        /**
          * Substitutes `{fontstack}` and `{range}` into a glyph URL template. Spaces in font names
          * are percent-encoded; the commas separating stack members are left literal, matching what
          * glyph endpoints expect.
          */
         fun resolveUrl(template: String, fontStack: String, rangeStart: Int): String = template
             .replace("{fontstack}", fontStack.replace(" ", "%20"))
-            .replace("{range}", "$rangeStart-${rangeStart + RANGE_SIZE - 1}")
+            .replace("{range}", rangeLabelFor(rangeStart))
     }
 }
