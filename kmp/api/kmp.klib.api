@@ -281,6 +281,76 @@ sealed interface com.rohittp.rentile/StyleInput { // com.rohittp.rentile/StyleIn
     }
 }
 
+final class com.rohittp.rentile.internal.glyph/Glyph : com.squareup.wire/Message<com.rohittp.rentile.internal.glyph/Glyph, kotlin/Nothing> { // com.rohittp.rentile.internal.glyph/Glyph|null[0]
+    constructor <init>(kotlin/Int, okio/ByteString? = ..., kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int, okio/ByteString = ...) // com.rohittp.rentile.internal.glyph/Glyph.<init>|<init>(kotlin.Int;okio.ByteString?;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;okio.ByteString){}[0]
+
+    final val advance // com.rohittp.rentile.internal.glyph/Glyph.advance|{}advance[0]
+        final fun <get-advance>(): kotlin/Int // com.rohittp.rentile.internal.glyph/Glyph.advance.<get-advance>|<get-advance>(){}[0]
+    final val bitmap // com.rohittp.rentile.internal.glyph/Glyph.bitmap|{}bitmap[0]
+        final fun <get-bitmap>(): okio/ByteString? // com.rohittp.rentile.internal.glyph/Glyph.bitmap.<get-bitmap>|<get-bitmap>(){}[0]
+    final val height // com.rohittp.rentile.internal.glyph/Glyph.height|{}height[0]
+        final fun <get-height>(): kotlin/Int // com.rohittp.rentile.internal.glyph/Glyph.height.<get-height>|<get-height>(){}[0]
+    final val id // com.rohittp.rentile.internal.glyph/Glyph.id|{}id[0]
+        final fun <get-id>(): kotlin/Int // com.rohittp.rentile.internal.glyph/Glyph.id.<get-id>|<get-id>(){}[0]
+    final val left // com.rohittp.rentile.internal.glyph/Glyph.left|{}left[0]
+        final fun <get-left>(): kotlin/Int // com.rohittp.rentile.internal.glyph/Glyph.left.<get-left>|<get-left>(){}[0]
+    final val top // com.rohittp.rentile.internal.glyph/Glyph.top|{}top[0]
+        final fun <get-top>(): kotlin/Int // com.rohittp.rentile.internal.glyph/Glyph.top.<get-top>|<get-top>(){}[0]
+    final val width // com.rohittp.rentile.internal.glyph/Glyph.width|{}width[0]
+        final fun <get-width>(): kotlin/Int // com.rohittp.rentile.internal.glyph/Glyph.width.<get-width>|<get-width>(){}[0]
+
+    final fun copy(kotlin/Int = ..., okio/ByteString? = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., okio/ByteString = ...): com.rohittp.rentile.internal.glyph/Glyph // com.rohittp.rentile.internal.glyph/Glyph.copy|copy(kotlin.Int;okio.ByteString?;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;okio.ByteString){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile.internal.glyph/Glyph.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile.internal.glyph/Glyph.hashCode|hashCode(){}[0]
+    final fun newBuilder(): kotlin/Nothing // com.rohittp.rentile.internal.glyph/Glyph.newBuilder|newBuilder(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile.internal.glyph/Glyph.toString|toString(){}[0]
+
+    final object Companion { // com.rohittp.rentile.internal.glyph/Glyph.Companion|null[0]
+        final val ADAPTER // com.rohittp.rentile.internal.glyph/Glyph.Companion.ADAPTER|{}ADAPTER[0]
+            final fun <get-ADAPTER>(): com.squareup.wire/ProtoAdapter<com.rohittp.rentile.internal.glyph/Glyph> // com.rohittp.rentile.internal.glyph/Glyph.Companion.ADAPTER.<get-ADAPTER>|<get-ADAPTER>(){}[0]
+    }
+}
+
+final class com.rohittp.rentile.internal.glyph/Glyphs : com.squareup.wire/Message<com.rohittp.rentile.internal.glyph/Glyphs, kotlin/Nothing> { // com.rohittp.rentile.internal.glyph/Glyphs|null[0]
+    constructor <init>(kotlin.collections/List<com.rohittp.rentile.internal.glyph/Glyphs.Fontstack> = ..., okio/ByteString = ...) // com.rohittp.rentile.internal.glyph/Glyphs.<init>|<init>(kotlin.collections.List<com.rohittp.rentile.internal.glyph.Glyphs.Fontstack>;okio.ByteString){}[0]
+
+    final val stacks // com.rohittp.rentile.internal.glyph/Glyphs.stacks|{}stacks[0]
+        final fun <get-stacks>(): kotlin.collections/List<com.rohittp.rentile.internal.glyph/Glyphs.Fontstack> // com.rohittp.rentile.internal.glyph/Glyphs.stacks.<get-stacks>|<get-stacks>(){}[0]
+
+    final fun copy(kotlin.collections/List<com.rohittp.rentile.internal.glyph/Glyphs.Fontstack> = ..., okio/ByteString = ...): com.rohittp.rentile.internal.glyph/Glyphs // com.rohittp.rentile.internal.glyph/Glyphs.copy|copy(kotlin.collections.List<com.rohittp.rentile.internal.glyph.Glyphs.Fontstack>;okio.ByteString){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile.internal.glyph/Glyphs.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile.internal.glyph/Glyphs.hashCode|hashCode(){}[0]
+    final fun newBuilder(): kotlin/Nothing // com.rohittp.rentile.internal.glyph/Glyphs.newBuilder|newBuilder(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile.internal.glyph/Glyphs.toString|toString(){}[0]
+
+    final class Fontstack : com.squareup.wire/Message<com.rohittp.rentile.internal.glyph/Glyphs.Fontstack, kotlin/Nothing> { // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack|null[0]
+        constructor <init>(kotlin/String, kotlin/String, kotlin.collections/List<com.rohittp.rentile.internal.glyph/Glyph> = ..., okio/ByteString = ...) // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.<init>|<init>(kotlin.String;kotlin.String;kotlin.collections.List<com.rohittp.rentile.internal.glyph.Glyph>;okio.ByteString){}[0]
+
+        final val glyphs // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.glyphs|{}glyphs[0]
+            final fun <get-glyphs>(): kotlin.collections/List<com.rohittp.rentile.internal.glyph/Glyph> // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.glyphs.<get-glyphs>|<get-glyphs>(){}[0]
+        final val name // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.name|{}name[0]
+            final fun <get-name>(): kotlin/String // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.name.<get-name>|<get-name>(){}[0]
+        final val range // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.range|{}range[0]
+            final fun <get-range>(): kotlin/String // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.range.<get-range>|<get-range>(){}[0]
+
+        final fun copy(kotlin/String = ..., kotlin/String = ..., kotlin.collections/List<com.rohittp.rentile.internal.glyph/Glyph> = ..., okio/ByteString = ...): com.rohittp.rentile.internal.glyph/Glyphs.Fontstack // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.copy|copy(kotlin.String;kotlin.String;kotlin.collections.List<com.rohittp.rentile.internal.glyph.Glyph>;okio.ByteString){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.hashCode|hashCode(){}[0]
+        final fun newBuilder(): kotlin/Nothing // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.newBuilder|newBuilder(){}[0]
+        final fun toString(): kotlin/String // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.toString|toString(){}[0]
+
+        final object Companion { // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.Companion|null[0]
+            final val ADAPTER // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.Companion.ADAPTER|{}ADAPTER[0]
+                final fun <get-ADAPTER>(): com.squareup.wire/ProtoAdapter<com.rohittp.rentile.internal.glyph/Glyphs.Fontstack> // com.rohittp.rentile.internal.glyph/Glyphs.Fontstack.Companion.ADAPTER.<get-ADAPTER>|<get-ADAPTER>(){}[0]
+        }
+    }
+
+    final object Companion { // com.rohittp.rentile.internal.glyph/Glyphs.Companion|null[0]
+        final val ADAPTER // com.rohittp.rentile.internal.glyph/Glyphs.Companion.ADAPTER|{}ADAPTER[0]
+            final fun <get-ADAPTER>(): com.squareup.wire/ProtoAdapter<com.rohittp.rentile.internal.glyph/Glyphs> // com.rohittp.rentile.internal.glyph/Glyphs.Companion.ADAPTER.<get-ADAPTER>|<get-ADAPTER>(){}[0]
+    }
+}
+
 final class com.rohittp.rentile.internal.mvt/Tile : com.squareup.wire/Message<com.rohittp.rentile.internal.mvt/Tile, kotlin/Nothing> { // com.rohittp.rentile.internal.mvt/Tile|null[0]
     constructor <init>(kotlin.collections/List<com.rohittp.rentile.internal.mvt/Tile.Layer> = ..., okio/ByteString = ...) // com.rohittp.rentile.internal.mvt/Tile.<init>|<init>(kotlin.collections.List<com.rohittp.rentile.internal.mvt.Tile.Layer>;okio.ByteString){}[0]
 

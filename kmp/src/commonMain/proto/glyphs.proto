@@ -1,0 +1,22 @@
+syntax = "proto2";
+
+package com.rohittp.rentile.internal.glyph;
+
+message Glyphs {
+  message Fontstack {
+    required string name = 1;
+    required string range = 2;
+    repeated Glyph glyphs = 3;
+  }
+  repeated Fontstack stacks = 1;
+}
+
+message Glyph {
+  required uint32 id = 1;
+  optional bytes bitmap = 2;
+  required uint32 width = 3;
+  required uint32 height = 4;
+  required sint32 left = 5;
+  required sint32 top = 6;
+  required uint32 advance = 7;
+}
