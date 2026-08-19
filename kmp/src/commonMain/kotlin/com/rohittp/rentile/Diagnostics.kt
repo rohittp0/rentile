@@ -93,9 +93,10 @@ public enum class DiagnosticCode {
     COMPLEX_SCRIPT_LABEL_EXCLUDED,
 
     /**
-     * A label layer used a text layout or paint property - or an expression inside one - that
-     * this compiler could not compile, and the whole layer was excluded from label candidates
-     * rather than failing style preparation.
+     * A place-name label layer carried a construct this compatibility profile cannot compile -
+     * its `filter`, a text layout property, a text paint property, or an expression inside any of
+     * those - and the whole layer was excluded from label candidates rather than failing style
+     * preparation.
      *
      * `details` carries `layerIndex` and `layerIdDigest`, the same identity pair used by other
      * layer-exclusion diagnostics, locating which layer was excluded in the compiled style.

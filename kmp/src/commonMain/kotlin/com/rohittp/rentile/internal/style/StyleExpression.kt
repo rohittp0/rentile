@@ -74,6 +74,29 @@ internal object StyleExpressionCompiler {
 
     fun compileBooleanFilter(element: JsonElement): StyleExpression = compile(element, StyleType.BOOLEAN)
 
+    /**
+     * True when [name] is an operator [compileNode] dispatches on, rather than falling through to
+     * its "Unsupported expression operator" branch - the question a caller elsewhere in this
+     * module needs answered to tell a literal JSON array (for example a `text-font` value such as
+     * `["Open Sans Regular"]`) apart from an expression call that merely happens to consist
+     * entirely of string arguments (for example `["get", "fontProperty"]`, which is exactly as
+     * all-strings-shaped as a two-entry font stack).
+     *
+     * There is deliberately no second list of operator names to keep in sync with [compileNode]'s
+     * `when`: this calls that same private dispatch with a zero-argument trial invocation
+     * (`[name]`) and inspects the result. Every branch in [compileNode] validates its argument
+     * count before doing anything else, so a zero-argument call either succeeds outright (an
+     * operator that takes no arguments, such as `zoom`) or fails with a message specific to that
+     * operator's own arity/type check - anything other than the exact "Unsupported expression
+     * operator: $name" message [compileNode] emits for a name it does not recognize at all.
+     */
+    fun isKnownOperator(name: String): Boolean = try {
+        compileNode(JsonArray(listOf(JsonPrimitive(name))))
+        true
+    } catch (error: StyleExpressionCompilationException) {
+        error.message != "Unsupported expression operator: $name"
+    }
+
     private fun compileNode(element: JsonElement): StyleExpression {
         if (element !is JsonArray) return LiteralExpression(element.toStyleValue())
         if (element.isEmpty()) fail("Expression arrays cannot be empty")
