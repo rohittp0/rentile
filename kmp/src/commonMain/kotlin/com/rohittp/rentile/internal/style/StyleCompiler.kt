@@ -1039,7 +1039,18 @@ internal class StyleCompiler(
         }
         val padding = layout["text-padding"]?.asPrimitive()?.doubleOrNull ?: 2.0
         if (!padding.isFinite() || padding < 0.0) failRetained(index, layerId, "text-padding must be non-negative")
-        val allowOverlap = layout["text-allow-overlap"]?.let { value ->
+        // text-overlap is the modern spelling and wins when both are present, per the style
+        // specification. "cooperative" allows an overlap only when the colliding symbol also
+        // permits one, which is a negotiation between two symbols during placement - and placement
+        // belongs to the consumer here - so it resolves to the same false as "never": Rentile
+        // reports what the style asked for and never asserts an overlap the author did not grant.
+        val allowOverlap = layout["text-overlap"]?.let { value ->
+            when (value.asPrimitive()?.takeIf { it.isString }?.content) {
+                "always" -> true
+                "never", "cooperative" -> false
+                else -> failRetained(index, layerId, "text-overlap must be a supported constant")
+            }
+        } ?: layout["text-allow-overlap"]?.let { value ->
             value.asPrimitive()?.booleanOrNull
                 ?: failRetained(index, layerId, "text-allow-overlap must be a boolean constant")
         } ?: false
@@ -1102,6 +1113,14 @@ internal class StyleCompiler(
             opacity = compilePropertyWithDefault(
                 paint["text-opacity"], JsonPrimitive(1.0), StyleType.NUMBER, index, layerId, "text-opacity",
             ),
+            translate = compilePropertyWithDefault(
+                paint["text-translate"],
+                JsonArray(listOf(JsonPrimitive(0.0), JsonPrimitive(0.0))),
+                StyleType.ARRAY,
+                index,
+                layerId,
+                "text-translate",
+            ),
             minZoom = layer["minzoom"]?.asPrimitive()?.doubleOrNull ?: 0.0,
             maxZoom = layer["maxzoom"]?.asPrimitive()?.doubleOrNull ?: 31.0,
         )
@@ -1145,12 +1164,19 @@ internal class StyleCompiler(
             "text-field",
             "text-font",
             "text-ignore-placement",
+            // Allowed and not honoured, with the reason recorded because that is the whole point of
+            // this allowlist: text-keep-upright decides whether text may flip to avoid reading
+            // upside-down as it follows a line, and this profile excludes line placement outright,
+            // so it cannot affect a point-placed place name. 20 corpus layers across 4 styles
+            // carry it.
+            "text-keep-upright",
             "text-justify",
             "text-letter-spacing",
             "text-line-height",
             "text-max-width",
             "text-offset",
             "text-optional",
+            "text-overlap",
             "text-padding",
             "text-size",
             "text-transform",
@@ -1165,6 +1191,7 @@ internal class StyleCompiler(
             "text-halo-color",
             "text-halo-width",
             "text-opacity",
+            "text-translate",
         )
         val unsupportedPaint = paint.keys.filter { key ->
             key !in supportedPaint && !key.startsWith("icon-")

@@ -452,6 +452,8 @@ internal data class CompiledLabelTextProgram(
     val haloWidth: CompiledStyleProperty,
     val haloBlur: CompiledStyleProperty,
     val opacity: CompiledStyleProperty,
+    /** `text-translate`, in pixels and never scaled by `text-size`, unlike `text-offset`. */
+    val translate: CompiledStyleProperty,
     val minZoom: Double,
     val maxZoom: Double,
 )

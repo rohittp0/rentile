@@ -3340,13 +3340,128 @@ class RentileRuntimeTest {
 
     @Test
     fun anUnsupportedTextPaintPropertyExcludesTheProgram() = runTest {
+        // text-translate-anchor chooses whether text-translate is applied in map space or viewport
+        // space. Rentile has no camera, so it cannot resolve viewport anchoring, and the consumer
+        // could not know the style asked for it - so the layer is excluded rather than translated
+        // in the wrong frame. No rolling-corpus place-name layer uses it.
         val rasterizer = testRasterizer()
         try {
             val style = rasterizer.prepare(
-                StyleInput.InlineJson(placeNameStyleJson(extraTextPaint = """"text-translate":[4,4]""")),
+                StyleInput.InlineJson(
+                    placeNameStyleJson(extraTextPaint = """"text-translate-anchor":"viewport""""),
+                ),
             )
 
             assertTrue(style.diagnostics.any { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun theModernTextOverlapSpellingIsHonouredAndBeatsTheLegacyKey() = runTest {
+        // 20 corpus layers across 7 styles use text-overlap. LabelCandidate already carries
+        // allowOverlap, so excluding them for a property representable exactly was pure loss.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val always = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(extraTextLayout = """"text-overlap":"always"""")),
+            )
+            val cooperative = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(extraTextLayout = """"text-overlap":"cooperative"""")),
+            )
+            // The modern key wins over the legacy one, per the style specification.
+            val conflicting = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        extraTextLayout = """"text-overlap":"never","text-allow-overlap":true""",
+                    ),
+                ),
+            )
+
+            val tiles = listOf(TileId(2, 1, 1))
+            assertTrue(always.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+            assertEquals(
+                true,
+                rasterizer.acquireLabelCandidates(always, tiles).candidates.single().allowOverlap,
+            )
+            // "cooperative" is a negotiation during placement, which is the consumer's, so Rentile
+            // does not assert an overlap the author did not unconditionally grant.
+            assertEquals(
+                false,
+                rasterizer.acquireLabelCandidates(cooperative, tiles).candidates.single().allowOverlap,
+            )
+            assertEquals(
+                false,
+                rasterizer.acquireLabelCandidates(conflicting, tiles).candidates.single().allowOverlap,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun textKeepUprightIsAllowedAndIgnoredBecauseLinePlacementIsExcluded() = runTest {
+        // 20 corpus layers across 4 styles carry it. It decides whether text may flip to avoid
+        // reading upside-down along a line, and this profile excludes line placement outright, so
+        // it cannot affect a point-placed place name. Allowed with the reason recorded, not
+        // silently dropped.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(extraTextLayout = """"text-keep-upright":false""")),
+            )
+
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+            assertEquals(1, rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1))).candidates.size)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aLabelCandidateCarriesTextTranslateUnscaledByTextSize() = runTest {
+        // Only 2 corpus layers in 1 style use it, but ignoring a genuine pixel offset silently
+        // misplaces the label. text-size is 40 here while text-translate is [6,-9]: the values must
+        // come through untouched, because text-translate is defined in pixels and is not scaled by
+        // text-size the way the em-based text-offset is.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(textSize = "40", extraTextPaint = """"text-translate":[6,-9]"""),
+                ),
+            )
+
+            val candidate = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+                .candidates.single()
+
+            assertEquals(6.0, candidate.translateX)
+            assertEquals(-9.0, candidate.translateY)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()

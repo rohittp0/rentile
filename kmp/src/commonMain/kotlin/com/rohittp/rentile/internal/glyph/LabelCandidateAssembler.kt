@@ -128,6 +128,7 @@ internal data class PendingLabel(
     val opacity: Double,
     val haloWidth: Double,
     val haloBlur: Double,
+    val translate: Pair<Double, Double>,
 )
 
 /**
@@ -201,6 +202,8 @@ internal class LabelCandidatePlan internal constructor(
                 opacity = label.opacity,
                 haloWidth = label.haloWidth,
                 haloBlur = label.haloBlur,
+                translateX = label.translate.first,
+                translateY = label.translate.second,
             )
         }
 
@@ -474,6 +477,7 @@ internal object LabelCandidateAssembler {
                             opacity = scalars.opacity,
                             haloWidth = scalars.haloWidth,
                             haloBlur = scalars.haloBlur,
+                            translate = scalars.translate,
                         )
                     }
                 }
@@ -575,6 +579,7 @@ internal object LabelCandidateAssembler {
         val opacity: Double,
         val haloWidth: Double,
         val haloBlur: Double,
+        val translate: Pair<Double, Double>,
     )
 
     private fun evaluateScalars(
@@ -605,6 +610,9 @@ internal object LabelCandidateAssembler {
             opacity = opacity,
             haloWidth = haloWidth,
             haloBlur = haloBlur,
+            // Pixels, not ems: text-translate is not scaled by text-size, so it is carried through
+            // untouched for the consumer to add to the projected anchor.
+            translate = program.translate.evaluate(context).asNumberPair("text-translate", tile),
         )
     }
 

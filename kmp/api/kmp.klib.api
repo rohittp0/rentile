@@ -621,7 +621,7 @@ final class com.rohittp.rentile/LabelBox { // com.rohittp.rentile/LabelBox|null[
 }
 
 final class com.rohittp.rentile/LabelCandidate { // com.rohittp.rentile/LabelCandidate|null[0]
-    constructor <init>(kotlin/Int, com.rohittp.rentile/TileId, com.rohittp.rentile/TileId, kotlin/Double, kotlin/Double, kotlin.collections/List<com.rohittp.rentile/LabelGlyphQuad>, com.rohittp.rentile/LabelBox, com.rohittp.rentile/LabelIconRef?, kotlin/Boolean, kotlin/Boolean, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double) // com.rohittp.rentile/LabelCandidate.<init>|<init>(kotlin.Int;com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.Double;kotlin.Double;kotlin.collections.List<com.rohittp.rentile.LabelGlyphQuad>;com.rohittp.rentile.LabelBox;com.rohittp.rentile.LabelIconRef?;kotlin.Boolean;kotlin.Boolean;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
+    constructor <init>(kotlin/Int, com.rohittp.rentile/TileId, com.rohittp.rentile/TileId, kotlin/Double, kotlin/Double, kotlin.collections/List<com.rohittp.rentile/LabelGlyphQuad>, com.rohittp.rentile/LabelBox, com.rohittp.rentile/LabelIconRef?, kotlin/Boolean, kotlin/Boolean, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double) // com.rohittp.rentile/LabelCandidate.<init>|<init>(kotlin.Int;com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.Double;kotlin.Double;kotlin.collections.List<com.rohittp.rentile.LabelGlyphQuad>;com.rohittp.rentile.LabelBox;com.rohittp.rentile.LabelIconRef?;kotlin.Boolean;kotlin.Boolean;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
 
     final val allowOverlap // com.rohittp.rentile/LabelCandidate.allowOverlap|{}allowOverlap[0]
         final fun <get-allowOverlap>(): kotlin/Boolean // com.rohittp.rentile/LabelCandidate.allowOverlap.<get-allowOverlap>|<get-allowOverlap>(){}[0]
@@ -653,6 +653,10 @@ final class com.rohittp.rentile/LabelCandidate { // com.rohittp.rentile/LabelCan
         final fun <get-sortKey>(): kotlin/Double // com.rohittp.rentile/LabelCandidate.sortKey.<get-sortKey>|<get-sortKey>(){}[0]
     final val sourceTile // com.rohittp.rentile/LabelCandidate.sourceTile|{}sourceTile[0]
         final fun <get-sourceTile>(): com.rohittp.rentile/TileId // com.rohittp.rentile/LabelCandidate.sourceTile.<get-sourceTile>|<get-sourceTile>(){}[0]
+    final val translateX // com.rohittp.rentile/LabelCandidate.translateX|{}translateX[0]
+        final fun <get-translateX>(): kotlin/Double // com.rohittp.rentile/LabelCandidate.translateX.<get-translateX>|<get-translateX>(){}[0]
+    final val translateY // com.rohittp.rentile/LabelCandidate.translateY|{}translateY[0]
+        final fun <get-translateY>(): kotlin/Double // com.rohittp.rentile/LabelCandidate.translateY.<get-translateY>|<get-translateY>(){}[0]
 
     final fun component1(): kotlin/Int // com.rohittp.rentile/LabelCandidate.component1|component1(){}[0]
     final fun component10(): kotlin/Boolean // com.rohittp.rentile/LabelCandidate.component10|component10(){}[0]
@@ -661,6 +665,8 @@ final class com.rohittp.rentile/LabelCandidate { // com.rohittp.rentile/LabelCan
     final fun component13(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component13|component13(){}[0]
     final fun component14(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component14|component14(){}[0]
     final fun component15(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component15|component15(){}[0]
+    final fun component16(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component16|component16(){}[0]
+    final fun component17(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component17|component17(){}[0]
     final fun component2(): com.rohittp.rentile/TileId // com.rohittp.rentile/LabelCandidate.component2|component2(){}[0]
     final fun component3(): com.rohittp.rentile/TileId // com.rohittp.rentile/LabelCandidate.component3|component3(){}[0]
     final fun component4(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component4|component4(){}[0]
@@ -669,7 +675,7 @@ final class com.rohittp.rentile/LabelCandidate { // com.rohittp.rentile/LabelCan
     final fun component7(): com.rohittp.rentile/LabelBox // com.rohittp.rentile/LabelCandidate.component7|component7(){}[0]
     final fun component8(): com.rohittp.rentile/LabelIconRef? // com.rohittp.rentile/LabelCandidate.component8|component8(){}[0]
     final fun component9(): kotlin/Boolean // com.rohittp.rentile/LabelCandidate.component9|component9(){}[0]
-    final fun copy(kotlin/Int = ..., com.rohittp.rentile/TileId = ..., com.rohittp.rentile/TileId = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin.collections/List<com.rohittp.rentile/LabelGlyphQuad> = ..., com.rohittp.rentile/LabelBox = ..., com.rohittp.rentile/LabelIconRef? = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ...): com.rohittp.rentile/LabelCandidate // com.rohittp.rentile/LabelCandidate.copy|copy(kotlin.Int;com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.Double;kotlin.Double;kotlin.collections.List<com.rohittp.rentile.LabelGlyphQuad>;com.rohittp.rentile.LabelBox;com.rohittp.rentile.LabelIconRef?;kotlin.Boolean;kotlin.Boolean;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
+    final fun copy(kotlin/Int = ..., com.rohittp.rentile/TileId = ..., com.rohittp.rentile/TileId = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin.collections/List<com.rohittp.rentile/LabelGlyphQuad> = ..., com.rohittp.rentile/LabelBox = ..., com.rohittp.rentile/LabelIconRef? = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ...): com.rohittp.rentile/LabelCandidate // com.rohittp.rentile/LabelCandidate.copy|copy(kotlin.Int;com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.Double;kotlin.Double;kotlin.collections.List<com.rohittp.rentile.LabelGlyphQuad>;com.rohittp.rentile.LabelBox;com.rohittp.rentile.LabelIconRef?;kotlin.Boolean;kotlin.Boolean;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelCandidate.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelCandidate.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/LabelCandidate.toString|toString(){}[0]

@@ -106,6 +106,12 @@ class ApiContractTest {
         // A compile-time contract check: a candidate exposes geography and label-local
         // geometry only. If someone later adds a screen-space field, this stops compiling
         // against the property list and the reviewer has to justify it.
+        //
+        // translateX/translateY were added and justified: text-translate is a pixel displacement
+        // the style specification defines in pixels, so it joins padding, haloWidth and haloBlur as
+        // a pixel-valued style scalar. It is an input to the consumer's screen placement, not a
+        // screen position - Rentile cannot apply it, because the anchor it moves is geographic
+        // until the consumer projects it. Ignoring it instead would silently misplace the label.
         val candidate = LabelCandidate(
             layerStyleIndex = 0,
             requestedTile = TileId(14, 14547, 6451),
@@ -117,6 +123,7 @@ class ApiContractTest {
             allowOverlap = false, ignorePlacement = false,
             padding = 2.0, sortKey = 0.0, opacity = 1.0,
             haloWidth = 0.0, haloBlur = 0.0,
+            translateX = 0.0, translateY = 0.0,
         )
 
         assertEquals(0, candidate.layerStyleIndex)

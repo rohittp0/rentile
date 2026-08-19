@@ -199,7 +199,7 @@ public final class com/rohittp/rentile/LabelBox {
 }
 
 public final class com/rohittp/rentile/LabelCandidate {
-	public fun <init> (ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;ZZDDDDD)V
+	public fun <init> (ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;ZZDDDDDDD)V
 	public final fun component1 ()I
 	public final fun component10 ()Z
 	public final fun component11 ()D
@@ -207,6 +207,8 @@ public final class com/rohittp/rentile/LabelCandidate {
 	public final fun component13 ()D
 	public final fun component14 ()D
 	public final fun component15 ()D
+	public final fun component16 ()D
+	public final fun component17 ()D
 	public final fun component2 ()Lcom/rohittp/rentile/TileId;
 	public final fun component3 ()Lcom/rohittp/rentile/TileId;
 	public final fun component4 ()D
@@ -215,8 +217,8 @@ public final class com/rohittp/rentile/LabelCandidate {
 	public final fun component7 ()Lcom/rohittp/rentile/LabelBox;
 	public final fun component8 ()Lcom/rohittp/rentile/LabelIconRef;
 	public final fun component9 ()Z
-	public final fun copy (ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;ZZDDDDD)Lcom/rohittp/rentile/LabelCandidate;
-	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelCandidate;ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;ZZDDDDDILjava/lang/Object;)Lcom/rohittp/rentile/LabelCandidate;
+	public final fun copy (ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;ZZDDDDDDD)Lcom/rohittp/rentile/LabelCandidate;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelCandidate;ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;ZZDDDDDDDILjava/lang/Object;)Lcom/rohittp/rentile/LabelCandidate;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAllowOverlap ()Z
 	public final fun getBoundingBox ()Lcom/rohittp/rentile/LabelBox;
@@ -233,6 +235,8 @@ public final class com/rohittp/rentile/LabelCandidate {
 	public final fun getRequestedTile ()Lcom/rohittp/rentile/TileId;
 	public final fun getSortKey ()D
 	public final fun getSourceTile ()Lcom/rohittp/rentile/TileId;
+	public final fun getTranslateX ()D
+	public final fun getTranslateY ()D
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }

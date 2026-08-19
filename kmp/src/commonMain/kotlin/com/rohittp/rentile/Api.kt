@@ -297,7 +297,13 @@ public data class LabelIconRef(
 
 /**
  * One Label decoded, evaluated and laid out, but not positioned on screen and not
- * resolved against any other Label. Nothing here is in screen coordinates.
+ * resolved against any other Label.
+ *
+ * No screen *position* appears here: the only position is geographic ([longitude], [latitude]),
+ * and every geometry is label-local, relative to that anchor. Several style-declared scalars are
+ * nevertheless in pixels — [padding], [haloWidth], [haloBlur] and [translateX] — because that is
+ * the unit the style specification gives them. They are inputs to the consumer's screen-space
+ * placement, not results of it.
  */
 public data class LabelCandidate(
     public val layerStyleIndex: Int,
@@ -315,6 +321,22 @@ public data class LabelCandidate(
     public val opacity: Double,
     public val haloWidth: Double,
     public val haloBlur: Double,
+    /**
+     * `text-translate`, in pixels, to be applied to the label's projected anchor position.
+     *
+     * Unlike `text-offset` — which is em-based and is already folded into every
+     * [LabelGlyphQuad] — this is a pixel displacement of the anchor itself and is **not** scaled by
+     * `text-size`, exactly as [LabelIconRef.translateX] is not scaled by `icon-size`. It is carried
+     * rather than applied because Rentile cannot apply it: the anchor it moves is a geographic
+     * position here, and a pixel offset only becomes meaningful once the consumer has projected it.
+     *
+     * Ignoring it silently misplaces the label, which is why it is here even though only two layers
+     * in the rolling corpus use it. Add it to the projected anchor before laying the quads out
+     * around that point.
+     */
+    public val translateX: Double,
+    /** See [translateX]. */
+    public val translateY: Double,
 )
 
 /** The immutable result of one Label acquisition. Not a Prepared Batch; see CONTEXT.md. */
