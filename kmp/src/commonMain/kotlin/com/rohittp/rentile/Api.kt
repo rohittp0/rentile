@@ -311,6 +311,18 @@ public data class ResourceLimits(
     public val maxSpriteImageBytes: Long = 32L * 1024L * 1024L,
     public val maxGeoJsonBytes: Long = 64L * 1024L * 1024L,
     public val maxGlyphRangeBytes: Long = 1L * 1024L * 1024L,
+    /**
+     * Highest observed in the rolling corpus was 15 glyph ranges, at Tokyo z14, dense CJK
+     * (measured 2026-08-19). That count is per tile, while this ceiling is per batch: a real
+     * consumer acquires ten to thirty tiles in one [acquireLabelCandidates] call. Ranges dedupe
+     * across the whole batch, so a large viewport over one dense area does not multiply 15 by
+     * the tile count — but a style with several font stacks does multiply it by the stack count.
+     * The failure mode is a hard [SafetyLimitException] that fails the entire acquisition, so
+     * headroom is worth more than tightness here: 64 is about four times the observed
+     * single-tile maximum, not the ~32 a naive "twice the observed maximum" would give.
+     * Tightening this further needs a real multi-tile viewport measurement, not a re-derivation
+     * from the single-tile number above.
+     */
     public val maxGlyphRangesPerBatch: Int = 64,
     public val maxRasterDimensionPx: Int = 8192,
     public val maxDecodedRasterBytes: Long = 256L * 1024L * 1024L,

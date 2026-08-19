@@ -199,10 +199,12 @@ Under place-name scope every qualifying source layer is point geometry, so `symb
 
 ## Determinism
 
-Two ways the same feature can appear more than once. One is spurious and is eliminated exactly; the other is intended and is kept.
+Two ways the same feature can appear more than once. One is spurious and is eliminated exactly; the other is intended and is kept. Both are governed by one rule, not two.
 
-- **Tile buffers** repeat a point feature in neighbouring tiles. A candidate is emitted only when its anchor falls inside `[0, extent)` of its own source tile, which removes buffer duplicates exactly rather than by proximity.
-- **Overzoom** lets several requested tiles share one source tile. Candidates are emitted per *requested* tile, carrying both identities exactly as `ValidatedMvtTile` does. That repetition is intended, not a duplicate: zoom-driven paint resolves at `requestedTile.z`, so the same feature legitimately yields differently styled candidates at different requested zooms, and `acquireLabelTiles` already returns one tile per requested tile when they share a source.
+- **Tile buffers and overzoom** are both a question of whether an anchor falls inside the *requested* tile's own window of the source tile: `point * childScale - (childX, childY) * extent` inside `[0, extent)`, the same mapping `VectorTileSample.sourceCoordinateToOutputPixels` uses to place pixels. A candidate is emitted only when its anchor falls inside that window. When `childScale == 1` — every non-overzoom case — the window is the whole source tile, so the rule reduces exactly to the anchor falling inside `[0, extent)` of the source tile, which is what removes buffer duplicates: exactly, not by proximity. When several requested tiles share one source tile (overzoom), the same window instead selects the single child whose bounds contain the anchor, so the feature is attributed to exactly one requested tile per zoom rather than to every child sharing that source.
+- **Repetition across requested zooms** is intended, not a duplicate: zoom-driven paint resolves at `requestedTile.z`, so the same feature legitimately yields differently styled candidates at different requested zooms. Candidates are emitted per *requested* tile, carrying both identities exactly as `ValidatedMvtTile` does, and `acquireLabelTiles` already returns one tile per requested tile when they share a source.
+
+Attribution must not depend on which other tiles the caller asked for in the same call: a key derived from the group of requested tiles sharing a source would hand the label to whichever tile sorted first, so panning a viewport would move a label between tiles and a consumer holding per-tile lists across frames would draw it twice. It would also wrongly collapse world copies of the same tile, since `sampleFor` canonicalises `x` while `validateTile` bounds only `z` and `y` — `TileId(1,-1,0)` and `TileId(1,1,0)` share a source tile and are both legitimate, distinct requests.
 
 Ordering is (style layer order, requested tile, source tile, feature index). Atlas packing is deterministic shelf packing ordered by (font-stack digest, codepoint), so `LabelGlyphAtlas.contentKey` depends only on the glyph set and not on tile order. Two runs over the same style and tiles produce identical candidates in identical order — required, because consumer-side collision would otherwise flicker between frames.
 
@@ -217,7 +219,7 @@ Exceeding either raises `SafetyLimitException` with the named limit, matching `S
 
 A style with no `glyphs` key yields an empty batch and a diagnostic, not a failure. Existing consumers that never call the new API see no behaviour change, no new configuration and no new network traffic.
 
-New diagnostic codes: `COMPLEX_SCRIPT_LABEL_EXCLUDED`, `UNSUPPORTED_TEXT_CONSTRUCT`, `GLYPH_RANGE_UNAVAILABLE`, `LINE_PLACEMENT_LABEL_EXCLUDED`.
+New diagnostic codes: `COMPLEX_SCRIPT_LABEL_EXCLUDED`, `UNSUPPORTED_TEXT_CONSTRUCT`, `GLYPH_RANGE_UNAVAILABLE`, `LINE_PLACEMENT_LABEL_EXCLUDED`, and `LABEL_FEATURE_SKIPPED`. The fifth was added under ADR 0026's degrade posture — repaired, newly-reachable work degrades with a diagnostic rather than failing the whole batch — and reports, once per layer per acquisition, the per-cause counts of labels a layer wanted but did not get: an unusable layout or paint value, an acquired glyph atlas that covers none of the label's codepoints, or non-point geometry.
 
 ## Coverage
 
