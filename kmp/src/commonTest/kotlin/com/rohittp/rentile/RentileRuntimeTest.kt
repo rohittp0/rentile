@@ -3239,6 +3239,186 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun anAstralCodepointIsDroppedFromItsLabelRatherThanFailingTheBatch() = runTest {
+        // Glyph endpoints stop at the Basic Multilingual Plane, so a request for 65536-65791 is a
+        // 404 - and acquisition is all-or-error, so one emoji in one OpenStreetMap name tag would
+        // otherwise mean a whole viewport returns no labels. U+1F5FC is the Tokyo Tower, which is
+        // exactly the kind of character that reaches a place name in practice.
+        val vectorTile = placeNameVectorTile("Tokyo\uD83D\uDDFC")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val requestedRanges = mutableListOf<String>()
+        val requestedRangesMutex = Mutex()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) {
+                    requestedRangesMutex.withLock { requestedRanges += request.url.substringAfterLast('/') }
+                    TransportResponse(200, glyphs)
+                } else {
+                    TransportResponse(200, vectorTile)
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            // Only the BMP block was ever asked for.
+            assertEquals(setOf("0-255.pbf"), requestedRangesMutex.withLock { requestedRanges.toSet() })
+            // The label survives, carrying "Tokyo" and not the astral character.
+            val candidate = batch.candidates.single()
+            assertEquals(
+                "Tokyo".map { it.code },
+                candidate.glyphs.map { batch.atlas.entries[it.entryIndex].codepoint },
+            )
+            // Losing one character out of six is not a lost label, so nothing is counted.
+            assertTrue(batch.diagnostics.none { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun anEntirelyAstralNameIsCountedAsALabelWithoutGlyphs() = runTest {
+        // Two CJK Extension B ideographs: supported by the script gate, unavailable from any glyph
+        // endpoint. Nothing is requested, nothing lays out, and the loss is reported through the
+        // count that already means "wanted glyphs the atlas does not cover".
+        val vectorTile = placeNameVectorTile("\uD840\uDC00\uD840\uDC01")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        var glyphRequests = 0
+        val glyphRequestsMutex = Mutex()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) {
+                    glyphRequestsMutex.withLock { glyphRequests += 1 }
+                    TransportResponse(200, glyphs)
+                } else {
+                    TransportResponse(200, vectorTile)
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            assertTrue(batch.candidates.isEmpty())
+            assertEquals(0, glyphRequestsMutex.withLock { glyphRequests })
+            val diagnostic = batch.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
+            assertEquals("1", diagnostic.details["candidateFeatures"])
+            assertEquals("1", diagnostic.details["skippedNoGlyphs"])
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun anUnsupportedTextLayoutPropertyExcludesTheProgramAndKeepsTheDescriptor() = runTest {
+        // text-variable-anchor with text-radial-offset was read as neither, so the label came out
+        // centred on its anchor with no offset - Rentile appearing to misposition text rather than
+        // declining a construct. UNSUPPORTED_TEXT_CONSTRUCT already promises to cover this.
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        extraTextLayout = """"text-variable-anchor":["top","bottom"],"text-radial-offset":1.2""",
+                    ),
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+            // The raw-MVT escape hatch that predates label candidates is unaffected.
+            assertEquals(1, rasterizer.labelLayerDescriptors(style).size)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun anUnsupportedTextPaintPropertyExcludesTheProgram() = runTest {
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(extraTextPaint = """"text-translate":[4,4]""")),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aKnownTextLayoutPropertyIsStillAccepted() = runTest {
+        // The allowlist must not be so tight that it rejects what this profile does implement, and
+        // symbol-* placement keys stay accepted because placement belongs to the consumer.
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        extraTextLayout = """"text-max-width":8,"text-letter-spacing":0.1,"symbol-z-order":"viewport-y"""",
+                    ),
+                ),
+            )
+
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aLineCenterPlacedPlaceLayerIsExcludedLikeALinePlacedOne() = runTest {
+        // "line-center" is line placement that picks the line's midpoint. Treating only "line" as
+        // line-placed laid it out as point-anchored text, the wrong output this exclusion exists
+        // to prevent.
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(extraTextLayout = """"symbol-placement":"line-center""""),
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun theLabelCandidateRequestKeyDistinguishesWorldCopies() = runTest {
+        // acquireLabelCandidates emits requestedTile verbatim, so the two copies yield different
+        // batches; a key that folded them together handed a consumer panning the antimeridian the
+        // other copy's candidates, tagged for tiles it was not drawing.
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val west = rasterizer.labelCandidateRequestKey(style, listOf(TileId(1, -1, 0)))
+            val east = rasterizer.labelCandidateRequestKey(style, listOf(TileId(1, 1, 0)))
+
+            assertNotEquals(west, east)
+            // Order and repetition still must not matter.
+            assertEquals(
+                rasterizer.labelCandidateRequestKey(style, listOf(TileId(1, -1, 0), TileId(1, 1, 0))),
+                rasterizer.labelCandidateRequestKey(style, listOf(TileId(1, 1, 0), TileId(1, -1, 0), TileId(1, 1, 0))),
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun tooManyGlyphRangesExceedsItsLimit() = runTest {
         // 70 codepoints, each from a different 256-block of CJK Unified Ideographs, so the
         // name needs 70 glyph ranges. CJK is chosen because it is supported by layout, so
@@ -3819,6 +3999,8 @@ class RentileRuntimeTest {
         textField: String = """["get","name"]""",
         textSize: String = "14",
         sourceMaxZoom: Int = 14,
+        extraTextLayout: String? = null,
+        extraTextPaint: String? = null,
     ): String = buildString {
         append("""{"version":8""")
         if (glyphs != null) append(""","glyphs":"$glyphs"""")
@@ -3831,8 +4013,13 @@ class RentileRuntimeTest {
         if (iconAnchor != null) append(""","icon-anchor":"$iconAnchor"""")
         if (iconSize != null) append(""","icon-size":$iconSize""")
         if (iconOffset != null) append(""","icon-offset":$iconOffset""")
+        if (extraTextLayout != null) append(",$extraTextLayout")
         append("""}""")
-        if (iconTranslate != null) append(""","paint":{"icon-translate":$iconTranslate}""")
+        val paintEntries = listOfNotNull(
+            iconTranslate?.let { """"icon-translate":$it""" },
+            extraTextPaint,
+        )
+        if (paintEntries.isNotEmpty()) append(""","paint":{${paintEntries.joinToString(",")}}""")
         append("""}]}""")
     }
 

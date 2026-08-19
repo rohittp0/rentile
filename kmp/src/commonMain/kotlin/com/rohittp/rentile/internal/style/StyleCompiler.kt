@@ -213,7 +213,13 @@ internal class StyleCompiler(
                             val placement =
                                 layout["symbol-placement"]?.asPrimitive()?.takeIf { it.isString }?.content
                                     ?: "point"
-                            val textProgram = if (placement == "line") {
+                            // "line-center" is line placement that picks one anchor at the line's
+                            // midpoint rather than repeating along it. Either way the text follows
+                            // a line, which this profile's layout does not implement, so treating
+                            // only "line" as line-placed would have laid a line-centered label out
+                            // as point-anchored text - the exact wrong output this exclusion exists
+                            // to avoid.
+                            val textProgram = if (placement == "line" || placement == "line-center") {
                                 // Place-name source layers are point geometry, so line placement
                                 // means the style is doing something this profile's label layout
                                 // does not implement. Only the text program is excluded here - the
@@ -1016,6 +1022,7 @@ internal class StyleCompiler(
         layerId: String,
     ): CompiledLabelTextProgram {
         val paint = objectOrEmpty(layer, "paint", index, layerId)
+        validateLabelTextKeys(layout, paint, index, layerId)
         val anchor = iconAnchorOrNull(layout["text-anchor"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center")
             ?: failRetained(index, layerId, "text-anchor is invalid")
         val justify = when (layout["text-justify"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center") {
@@ -1101,7 +1108,72 @@ internal class StyleCompiler(
     }
 
     /**
-     * Compiles `text-font`, which - unlike every other property [compileLabelLayer] hands to
+     * Rejects any text layout or paint property this profile does not implement, mirroring what
+     * [compileIconLayer] does for its own keys.
+     *
+     * Reading the known properties and ignoring the rest silently produced wrong output rather
+     * than no output, which is the one thing this compatibility profile does not do:
+     * `text-variable-anchor` with `text-radial-offset` yielded a label centred on its anchor with
+     * no offset at all, and `text-writing-mode: ["vertical"]` yielded horizontal CJK. Both look
+     * like Rentile mispositioning text rather than like a construct it declined, and the frozen
+     * `UNSUPPORTED_TEXT_CONSTRUCT` documentation already promises to cover exactly this.
+     *
+     * `icon-` prefixed keys are skipped rather than rejected, the mirror image of
+     * [compileIconLayer] skipping `text-` prefixed ones: a place-name symbol layer can carry both,
+     * and each compiler validates its own half.
+     *
+     * The `symbol-` keys are allowed and not honoured, deliberately. Every one of them -
+     * avoid-edges, spacing, z-order - is a placement or draw-order instruction, and under this
+     * profile placement belongs entirely to the consumer (ADR 0024). Rejecting a layer for
+     * carrying one would remove real labels over a property that could not have applied.
+     */
+    private fun validateLabelTextKeys(
+        layout: JsonObject,
+        paint: JsonObject,
+        index: Int,
+        layerId: String,
+    ) {
+        val supportedLayout = setOf(
+            "visibility",
+            "symbol-avoid-edges",
+            "symbol-placement",
+            "symbol-sort-key",
+            "symbol-spacing",
+            "symbol-z-order",
+            "text-allow-overlap",
+            "text-anchor",
+            "text-field",
+            "text-font",
+            "text-ignore-placement",
+            "text-justify",
+            "text-letter-spacing",
+            "text-line-height",
+            "text-max-width",
+            "text-offset",
+            "text-optional",
+            "text-padding",
+            "text-size",
+            "text-transform",
+        )
+        val unsupportedLayout = layout.keys.filter { key ->
+            key !in supportedLayout && !key.startsWith("icon-")
+        }
+        if (unsupportedLayout.isNotEmpty()) failRetained(index, layerId, "a text layout property is unsupported")
+        val supportedPaint = setOf(
+            "text-color",
+            "text-halo-blur",
+            "text-halo-color",
+            "text-halo-width",
+            "text-opacity",
+        )
+        val unsupportedPaint = paint.keys.filter { key ->
+            key !in supportedPaint && !key.startsWith("icon-")
+        }
+        if (unsupportedPaint.isNotEmpty()) failRetained(index, layerId, "a text paint property is unsupported")
+    }
+
+    /**
+     * Compiles `text-font`, which - unlike every other property [compileLabelTextProgram] hands to
      * [compileProperty]/[compilePropertyWithDefault] - is ordinarily a literal array of font-stack
      * names such as `["Open Sans Regular", "Arial Unicode MS Regular"]`. The general
      * [StylePropertyCompiler.compile] dispatch treats any JSON array whose first element is a
