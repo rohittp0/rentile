@@ -2383,6 +2383,241 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun cacheSubstituteThenNetworkUsesCachedAncestorBeforeRequestingExactTile() = runTest {
+        val sourcePng = renderSyntheticPng(256)
+        val store = InMemoryRawResourceStore()
+        val requestedUrls = mutableListOf<String>()
+        val requestedUrlsMutex = Mutex()
+        var warmingAncestor = true
+        var exactNetworkAvailable = false
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { request ->
+                    requestedUrlsMutex.withLock { requestedUrls += request.url }
+                    when {
+                        warmingAncestor && request.url.contains("/0/0/0.png") ->
+                            TransportResponse(200, sourcePng)
+                        exactNetworkAvailable && request.url.contains("/1/0/0.png") ->
+                            TransportResponse(200, sourcePng)
+                        else -> error("Unexpected transport request ${request.url}")
+                    }
+                },
+                rawResourceStore = store,
+            ),
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle("secret"))
+            rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(TileId(0, 0, 0)),
+                options = RenderOptions(256),
+            ).close()
+            warmingAncestor = false
+            requestedUrlsMutex.withLock { requestedUrls.clear() }
+
+            val tile = TileId(1, 0, 0)
+            val batch = rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(tile),
+                options = RenderOptions(256),
+                resourceAccess = ResourceAccessMode.CACHE_SUBSTITUTE_THEN_NETWORK,
+                substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+            )
+            try {
+                val substitution = batch.substitutions.getValue(tile).single()
+                assertEquals(TileSubstitutionStrategy.ANCESTOR, substitution.strategy)
+                assertEquals(listOf(TileId(0, 0, 0)), substitution.sourceTiles)
+                assertTrue(rasterizer.render(batch).tiles.single().pngBytes.startsWithPngSignature())
+                assertTrue(requestedUrlsMutex.withLock { requestedUrls.isEmpty() })
+
+                exactNetworkAvailable = true
+                val recovery = rasterizer.retryExact(batch)
+
+                assertEquals(setOf(tile), recovery.upgradedTiles)
+                assertTrue(recovery.remainingSubstitutedTiles.isEmpty())
+                assertEquals(
+                    1,
+                    requestedUrlsMutex.withLock {
+                        requestedUrls.count { it.contains("/1/0/0.png") }
+                    },
+                )
+            } finally {
+                batch.close()
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun cacheSubstituteThenNetworkUsesCachedVectorAncestorBeforeExactRetry() = runTest {
+        val vectorTile = overzoomVectorTile()
+        val store = InMemoryRawResourceStore()
+        val requestedUrls = mutableListOf<String>()
+        val requestedUrlsMutex = Mutex()
+        var warmingAncestor = true
+        var exactNetworkAvailable = false
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { request ->
+                    requestedUrlsMutex.withLock { requestedUrls += request.url }
+                    when {
+                        warmingAncestor && request.url.contains("/0/0/0.pbf") ->
+                            TransportResponse(200, vectorTile)
+                        exactNetworkAvailable && request.url.contains("/1/0/0.pbf") ->
+                            TransportResponse(200, vectorTile)
+                        else -> error("Unexpected transport request ${request.url}")
+                    }
+                },
+                rawResourceStore = store,
+            ),
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"land","type":"fill","source":"v","source-layer":"land","paint":{"fill-color":"#00ff00"}}]}""",
+                ),
+            )
+            rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(TileId(0, 0, 0)),
+                options = RenderOptions(256),
+            ).close()
+            warmingAncestor = false
+            requestedUrlsMutex.withLock { requestedUrls.clear() }
+
+            val tile = TileId(1, 0, 0)
+            val batch = rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(tile),
+                options = RenderOptions(256),
+                resourceAccess = ResourceAccessMode.CACHE_SUBSTITUTE_THEN_NETWORK,
+                substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+            )
+            try {
+                val substitution = batch.substitutions.getValue(tile).single()
+                assertEquals(ResourceClass.VECTOR_TILE, substitution.resourceClass)
+                assertEquals(TileSubstitutionStrategy.ANCESTOR, substitution.strategy)
+                assertEquals(listOf(TileId(0, 0, 0)), substitution.sourceTiles)
+                assertTrue(rasterizer.render(batch).tiles.single().pngBytes.startsWithPngSignature())
+                assertTrue(requestedUrlsMutex.withLock { requestedUrls.isEmpty() })
+
+                exactNetworkAvailable = true
+                val recovery = rasterizer.retryExact(batch)
+
+                assertEquals(setOf(tile), recovery.upgradedTiles)
+                assertTrue(recovery.remainingSubstitutedTiles.isEmpty())
+                assertEquals(
+                    listOf("https://tiles.example.test/1/0/0.pbf"),
+                    requestedUrlsMutex.withLock { requestedUrls.toList() },
+                )
+            } finally {
+                batch.close()
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun cacheSubstituteThenNetworkSpendsTheBudgetInCallerOrderThenFetchesExactTiles() = runTest {
+        val sourcePng = renderSyntheticPng(256)
+        val store = InMemoryRawResourceStore()
+        val requestedUrls = mutableListOf<String>()
+        val requestedUrlsMutex = Mutex()
+        var warmingAncestor = true
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { request ->
+                    requestedUrlsMutex.withLock { requestedUrls += request.url }
+                    when {
+                        warmingAncestor && request.url.contains("/0/0/0.png") ->
+                            TransportResponse(200, sourcePng)
+                        !warmingAncestor && request.url.contains("/1/1/0.png") ->
+                            TransportResponse(200, sourcePng)
+                        else -> error("Unexpected transport request ${request.url}")
+                    }
+                },
+                rawResourceStore = store,
+            ),
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle("secret"))
+            rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(TileId(0, 0, 0)),
+                options = RenderOptions(256),
+            ).close()
+            warmingAncestor = false
+            requestedUrlsMutex.withLock { requestedUrls.clear() }
+
+            val substituted = TileId(1, 0, 0)
+            val exact = TileId(1, 1, 0)
+            val batch = rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(substituted, exact),
+                options = RenderOptions(256),
+                resourceAccess = ResourceAccessMode.CACHE_SUBSTITUTE_THEN_NETWORK,
+                substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+            )
+            try {
+                assertEquals(setOf(substituted), batch.substitutions.keys)
+                assertEquals(
+                    listOf("https://tiles.example.test/1/1/0.png?key=secret"),
+                    requestedUrlsMutex.withLock { requestedUrls.toList() },
+                )
+            } finally {
+                batch.close()
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun cacheSubstituteThenNetworkFallsThroughToExactNetworkWhenCacheCannotSynthesize() = runTest {
+        val sourcePng = renderSyntheticPng(256)
+        val requestedUrls = mutableListOf<String>()
+        val requestedUrlsMutex = Mutex()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                requestedUrlsMutex.withLock { requestedUrls += request.url }
+                if (request.url.contains("/1/0/0.png")) {
+                    TransportResponse(200, sourcePng)
+                } else {
+                    error("Substitute cache probing must not use transport: ${request.url}")
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle("secret"))
+            val tile = TileId(1, 0, 0)
+            val batch = rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(tile),
+                options = RenderOptions(256),
+                resourceAccess = ResourceAccessMode.CACHE_SUBSTITUTE_THEN_NETWORK,
+                substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+            )
+            try {
+                assertTrue(batch.substitutions.isEmpty())
+                assertEquals(
+                    listOf("https://tiles.example.test/1/0/0.png?key=secret"),
+                    requestedUrlsMutex.withLock { requestedUrls.toList() },
+                )
+            } finally {
+                batch.close()
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun vectorChildSubstitutionMergesAllFourResourcesIntoOneRenderableTile() = runTest {
         val vectorTile = overzoomVectorTile()
         val rasterizer = testRasterizer(

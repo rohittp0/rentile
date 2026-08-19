@@ -707,6 +707,7 @@ public final class com/rohittp/rentile/RentileMetric {
 
 public final class com/rohittp/rentile/ResourceAccessMode : java/lang/Enum {
 	public static final field CACHE_ONLY Lcom/rohittp/rentile/ResourceAccessMode;
+	public static final field CACHE_SUBSTITUTE_THEN_NETWORK Lcom/rohittp/rentile/ResourceAccessMode;
 	public static final field NORMAL Lcom/rohittp/rentile/ResourceAccessMode;
 	public static final field RELOAD Lcom/rohittp/rentile/ResourceAccessMode;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;

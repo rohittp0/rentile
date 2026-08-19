@@ -111,6 +111,7 @@ final enum class com.rohittp.rentile/RentileErrorCode : kotlin/Enum<com.rohittp.
 
 final enum class com.rohittp.rentile/ResourceAccessMode : kotlin/Enum<com.rohittp.rentile/ResourceAccessMode> { // com.rohittp.rentile/ResourceAccessMode|null[0]
     enum entry CACHE_ONLY // com.rohittp.rentile/ResourceAccessMode.CACHE_ONLY|null[0]
+    enum entry CACHE_SUBSTITUTE_THEN_NETWORK // com.rohittp.rentile/ResourceAccessMode.CACHE_SUBSTITUTE_THEN_NETWORK|null[0]
     enum entry NORMAL // com.rohittp.rentile/ResourceAccessMode.NORMAL|null[0]
     enum entry RELOAD // com.rohittp.rentile/ResourceAccessMode.RELOAD|null[0]
 

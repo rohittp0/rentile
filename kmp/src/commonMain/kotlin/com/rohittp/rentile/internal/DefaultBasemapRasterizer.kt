@@ -260,18 +260,12 @@ private class DefaultBasemapRasterizer(
         stableTiles.forEach { validateTile(it, compiledStyle.policy) }
         val duplicate = stableTiles.groupingBy { it }.eachCount().entries.firstOrNull { it.value > 1 }?.key
         if (duplicate != null) throw InvalidTileIdException(duplicate, "Prepared batch contains a duplicate tile")
-        val (rasterPlan, vectorPlan) = supervisorScope {
-            val raster = async { planRasterResources(compiledStyle, stableTiles, resourceAccess) }
-            val vector = async { planVectorResources(compiledStyle, stableTiles, resourceAccess) }
-            raster.await() to vector.await()
-        }
-        validateSubstitutionAllowance(rasterPlan, vectorPlan, substitutionPolicy)
-        val preparedResources = supervisorScope {
-            val raster = async { resolveRasterResources(rasterPlan, resourceAccess) }
-            val vector = async { resolveVectorResources(vectorPlan, resourceAccess) }
-            val resolvedVector = vector.await()
-            PreparedResources(raster.await(), resolvedVector.resources, resolvedVector.diagnostics)
-        }
+        val preparedResources = prepareBatchResources(
+            style = compiledStyle,
+            tiles = stableTiles,
+            resourceAccess = resourceAccess,
+            substitutionPolicy = substitutionPolicy,
+        )
         val state = buildPreparedBatchState(compiledStyle, stableTiles, options, preparedResources)
         state.diagnostics.filter { it.code == DiagnosticCode.TILE_RESOURCE_SUBSTITUTED }
             .forEach(configuration.diagnosticSink::recordSafely)
@@ -295,6 +289,140 @@ private class DefaultBasemapRasterizer(
             initialState = state,
         )
     }
+
+    private suspend fun prepareBatchResources(
+        style: CompiledPreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode,
+        substitutionPolicy: TileSubstitutionPolicy,
+    ): PreparedResources = if (
+        resourceAccess == ResourceAccessMode.CACHE_SUBSTITUTE_THEN_NETWORK
+    ) {
+        prepareCacheSubstituteThenNetwork(style, tiles, substitutionPolicy)
+    } else {
+        prepareResources(style, tiles, resourceAccess, substitutionPolicy)
+    }
+
+    private suspend fun prepareResources(
+        style: CompiledPreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode,
+        substitutionPolicy: TileSubstitutionPolicy,
+    ): PreparedResources {
+        val (rasterPlan, vectorPlan) = planResources(style, tiles, resourceAccess)
+        validateSubstitutionAllowance(rasterPlan, vectorPlan, substitutionPolicy)
+        return resolveResources(rasterPlan, vectorPlan, resourceAccess)
+    }
+
+    /**
+     * Gives the caller a drawable cached result without making exact transport latency part of
+     * initial preparation. The substitution allowance is assigned deterministically in caller
+     * tile order; once it is exhausted, remaining misses use the existing NORMAL path.
+     */
+    private suspend fun prepareCacheSubstituteThenNetwork(
+        style: CompiledPreparedStyle,
+        tiles: List<TileId>,
+        substitutionPolicy: TileSubstitutionPolicy,
+    ): PreparedResources {
+        val (cachedRaster, cachedVector) = planResources(
+            style,
+            tiles,
+            ResourceAccessMode.CACHE_ONLY,
+        )
+        val cacheFailures = cachedRaster.failures() + cachedVector.failures()
+        val ineligible = cacheFailures.filterNot { isSubstitutionEligible(it.error) }
+        if (ineligible.isNotEmpty()) {
+            throwAcquisitionFailures(ineligible.map { AcquisitionOutcome.Failure(it.error) })
+        }
+
+        val missedTiles = cacheFailures.mapTo(mutableSetOf()) { it.tile }
+        if (missedTiles.isEmpty()) {
+            return resolveResources(cachedRaster, cachedVector, ResourceAccessMode.CACHE_ONLY)
+        }
+
+        val prepared = mutableListOf<PreparedResources>()
+        val exactCacheHits = tiles.filterNot(missedTiles::contains)
+        if (exactCacheHits.isNotEmpty()) {
+            prepared += resolveResources(
+                cachedRaster.onlyTiles(exactCacheHits),
+                cachedVector.onlyTiles(exactCacheHits),
+                ResourceAccessMode.CACHE_ONLY,
+            )
+        }
+
+        var remainingSubstitutedTiles = substitutionPolicy.maximumSubstitutedTiles
+        val networkTiles = mutableListOf<TileId>()
+        tiles.filter(missedTiles::contains).forEach { tile ->
+            if (remainingSubstitutedTiles == 0) {
+                networkTiles += tile
+                return@forEach
+            }
+            val raster = cachedRaster.onlyTiles(listOf(tile))
+            val vector = cachedVector.onlyTiles(listOf(tile))
+            val cachedSubstitute = try {
+                validateSubstitutionAllowance(
+                    raster,
+                    vector,
+                    TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+                )
+                resolveResources(raster, vector, ResourceAccessMode.CACHE_ONLY)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: TileSubstitutionException) {
+                null
+            }
+            if (cachedSubstitute == null) {
+                networkTiles += tile
+            } else {
+                prepared += cachedSubstitute
+                remainingSubstitutedTiles -= 1
+            }
+        }
+
+        if (networkTiles.isNotEmpty()) {
+            prepared += prepareResources(
+                style = style,
+                tiles = networkTiles,
+                resourceAccess = ResourceAccessMode.NORMAL,
+                substitutionPolicy = TileSubstitutionPolicy(remainingSubstitutedTiles),
+            )
+        }
+        return mergePreparedResources(tiles, prepared)
+    }
+
+    private suspend fun planResources(
+        style: CompiledPreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode,
+    ): Pair<RasterAcquisitionPlan, VectorAcquisitionPlan> = supervisorScope {
+        val raster = async { planRasterResources(style, tiles, resourceAccess) }
+        val vector = async { planVectorResources(style, tiles, resourceAccess) }
+        raster.await() to vector.await()
+    }
+
+    private suspend fun resolveResources(
+        rasterPlan: RasterAcquisitionPlan,
+        vectorPlan: VectorAcquisitionPlan,
+        resourceAccess: ResourceAccessMode,
+    ): PreparedResources = supervisorScope {
+        val raster = async { resolveRasterResources(rasterPlan, resourceAccess) }
+        val vector = async { resolveVectorResources(vectorPlan, resourceAccess) }
+        val resolvedVector = vector.await()
+        PreparedResources(raster.await(), resolvedVector.resources, resolvedVector.diagnostics)
+    }
+
+    private fun mergePreparedResources(
+        tiles: List<TileId>,
+        parts: List<PreparedResources>,
+    ): PreparedResources = PreparedResources(
+        raster = tiles.associateWith { tile ->
+            parts.firstNotNullOfOrNull { it.raster[tile] }.orEmpty()
+        },
+        vector = tiles.associateWith { tile ->
+            parts.firstNotNullOfOrNull { it.vector[tile] }.orEmpty()
+        },
+        acquisitionDiagnostics = parts.flatMap { it.acquisitionDiagnostics },
+    )
 
     override suspend fun retryExact(batch: PreparedBatch): ExactRecoveryResult = operation {
         val prepared = requireOwnedBatch(batch)
@@ -2687,6 +2815,10 @@ private data class RasterAcquisitionPlan(
     val samplesByTile: Map<TileId, List<RasterSample>>,
     val outcomesByIdentity: Map<String, AcquisitionOutcome<RasterResource>>,
 ) {
+    fun onlyTiles(tiles: Collection<TileId>): RasterAcquisitionPlan = copy(
+        samplesByTile = samplesByTile.filterKeys(tiles::contains),
+    )
+
     fun failures(): List<TileAcquisitionFailure> = samplesByTile.flatMap { (tile, samples) ->
         samples.mapNotNull { sample ->
             (outcomesByIdentity.getValue(sample.identity) as? AcquisitionOutcome.Failure)?.let {
@@ -2706,6 +2838,13 @@ private data class VectorAcquisitionPlan(
      */
     val bestEffortSourceDigestsByZoom: Map<Int, Set<String>> = emptyMap(),
 ) {
+    fun onlyTiles(tiles: Collection<TileId>): VectorAcquisitionPlan = copy(
+        samplesByTile = samplesByTile.filterKeys(tiles::contains),
+        bestEffortSourceDigestsByZoom = bestEffortSourceDigestsByZoom.filterKeys { zoom ->
+            tiles.any { it.z == zoom }
+        },
+    )
+
     /**
      * A best-effort failure is not a batch failure. Excluding it here is what keeps it out of
      * `validateSubstitutionAllowance` - so it neither fails the batch under the default

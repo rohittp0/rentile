@@ -64,9 +64,23 @@ public class CompatibilityPolicy private constructor(
 
 /** Controls how an operation may access the injected raw-resource store and transport. */
 public enum class ResourceAccessMode {
+    /** Uses fresh cached resources and revalidates stale resources before transport acquisition. */
     NORMAL,
+
+    /** Uses any integrity-valid cached resource without transport access. */
     CACHE_ONLY,
+
+    /** Acquires every resource from transport, replacing cached entries only after validation. */
     RELOAD,
+
+    /**
+     * For substitution-enabled output-tile preparation, tries the exact raw cache, then a
+     * cache-only child or ancestor substitute, and only then normal exact acquisition.
+     *
+     * Cached substitutes remain subject to [TileSubstitutionPolicy]. Operations that do not
+     * support substitution treat this mode as [NORMAL].
+     */
+    CACHE_SUBSTITUTE_THEN_NETWORK,
 }
 
 /** Content-affecting controls for output-tile creation. */
