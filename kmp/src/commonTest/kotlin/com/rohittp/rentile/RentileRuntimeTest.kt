@@ -2485,6 +2485,46 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun preparationResolvesTheGlyphsTemplateAndKeepsTheLabelDescriptor() = runTest {
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"glyphs":"https://glyphs.example.test/{fontstack}/{range}.pbf?key=secret","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","layout":{"text-field":["get","name"],"text-font":["Open Sans Regular"],"text-size":14}}]}""",
+                ),
+            )
+
+            val descriptors = rasterizer.labelLayerDescriptors(style)
+
+            assertEquals(1, descriptors.size)
+            assertEquals("place", descriptors.single().sourceLayer)
+            // The glyphs template is credential-bearing and must not surface anywhere public.
+            assertTrue(style.diagnostics.none { it.details.values.any { value -> value.contains("secret") } })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aLinePlacedPlaceLayerIsExcludedWithADiagnostic() = runTest {
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"glyphs":"https://glyphs.example.test/{fontstack}/{range}.pbf","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","layout":{"text-field":["get","name"],"symbol-placement":"line"}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED })
+            assertEquals(0, rasterizer.labelLayerDescriptors(style).size)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun preparedStyleExposesEveryPlaceNameSourceLayerAcrossBothTileSchemas() = runTest {
         val vectorTile = overzoomVectorTile()
         val rasterizer = testRasterizer(

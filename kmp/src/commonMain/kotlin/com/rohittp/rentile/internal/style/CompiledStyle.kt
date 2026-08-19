@@ -238,6 +238,18 @@ internal enum class IconAnchor {
     BOTTOM_RIGHT,
 }
 
+internal enum class TextTransform {
+    NONE,
+    UPPERCASE,
+    LOWERCASE,
+}
+
+internal enum class TextJustify {
+    LEFT,
+    CENTER,
+    RIGHT,
+}
+
 internal data class LineDrawLayer(
     override val source: CompiledVectorSource,
     override val sourceLayer: String,
@@ -299,6 +311,29 @@ internal data class IconDrawLayer(
 internal data class CompiledLabelLayer(
     val descriptor: LabelLayerDescriptor,
     val source: CompiledVectorSource,
+    val layerOrder: Int,
+    val filter: CompiledStyleFilter,
+    val text: CompiledStyleProperty,
+    val font: CompiledStyleProperty,
+    val size: CompiledStyleProperty,
+    val anchor: IconAnchor,
+    val offset: CompiledStyleProperty,
+    val justify: TextJustify,
+    val maxWidth: CompiledStyleProperty,
+    val letterSpacing: CompiledStyleProperty,
+    val lineHeight: CompiledStyleProperty,
+    val transform: TextTransform,
+    val padding: Double,
+    val allowOverlap: Boolean,
+    val ignorePlacement: Boolean,
+    val sortKey: CompiledStyleProperty?,
+    val color: CompiledStyleProperty,
+    val haloColor: CompiledStyleProperty,
+    val haloWidth: CompiledStyleProperty,
+    val haloBlur: CompiledStyleProperty,
+    val opacity: CompiledStyleProperty,
+    val minZoom: Double,
+    val maxZoom: Double,
 )
 
 internal class CompiledPreparedStyle(
@@ -311,5 +346,13 @@ internal class CompiledPreparedStyle(
     val terrainSource: CompiledRasterSource?,
     val groundRadiance: GroundRadianceDescriptor?,
     val spriteAtlas: CompiledSpriteAtlas?,
+    /**
+     * The style's `glyphs` URL template, resolved against the style base URI and with any
+     * embedded credential extracted into [secretContext], or null when the style declares no
+     * `glyphs` key or the reference could not be resolved. Label-candidate preparation (a
+     * separate, opt-in API) turns a null template into an empty batch and a diagnostic instead of
+     * failing, so a consumer that never asks for labels is never failed by this field.
+     */
+    val glyphsTemplate: String?,
     val secretContext: SecretContext,
 ) : PreparedStyle

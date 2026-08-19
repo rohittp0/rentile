@@ -131,6 +131,24 @@ internal class StyleCompiler(
             else -> SpriteAtlasResolution()
         }
         val spriteAtlas = spriteResolution.atlas
+        // The glyphs URL template names a remote resource that is fetched only when label
+        // candidates are requested (a separate, opt-in API) - never during preparation itself.
+        // Unlike the sprite atlas, nothing is acquired here, so there is no required/optional
+        // split: an absent key, a non-string value, or a relative reference with no base URI to
+        // resolve against all degrade to null exactly like resolveOptionalSpriteAtlas's offline
+        // shapes, rather than failing preparation. A style that has never declared glyphs (or a
+        // style whose consumer never asks for labels) must keep preparing exactly as before; the
+        // label-candidate API turns a null template into an empty batch and a diagnostic instead
+        // of failing that request.
+        val glyphsReference = root["glyphs"]?.asPrimitive()?.takeIf { it.isString }?.content
+        val glyphsTemplate = glyphsReference?.let { reference ->
+            val resolved = when {
+                reference.startsWith("https://") || reference.startsWith("http://") -> reference
+                baseUri != null -> resolveHttpReference(baseUri, reference)
+                else -> null
+            }
+            resolved?.let { secretContext.protectUrl(it).resolve() }
+        }
         val compiledRasterSources = mutableMapOf<String, CompiledRasterSource>()
         val compiledVectorSources = mutableMapOf<String, CompiledVectorSource>()
         val layerIds = mutableSetOf<String>()
@@ -177,17 +195,59 @@ internal class StyleCompiler(
                         )
                         if (source.geoJson == null) {
                             val sourceLayer = sourceLayerFor(layer, source, index, layerId)
-                            labelLayers += CompiledLabelLayer(
-                                descriptor = LabelLayerDescriptor(
-                                    id = layerId,
-                                    sourceId = source.idDigest,
-                                    sourceLayer = sourceLayer,
-                                    sourceMinimumZoom = source.minZoom,
-                                    sourceMaximumZoom = source.maxZoom,
-                                    layerJson = sanitizedLabelLayerJson(layer),
-                                ),
-                                source = source,
-                            )
+                            val placement =
+                                layout["symbol-placement"]?.asPrimitive()?.takeIf { it.isString }?.content
+                                    ?: "point"
+                            if (placement == "line") {
+                                // Place-name source layers are point geometry, so line placement
+                                // means the style is doing something this profile's label layout
+                                // does not implement. The layer is excluded entirely rather than
+                                // laid out as point-anchored text.
+                                diagnostics += diagnostic(
+                                    code = DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED,
+                                    severity = DiagnosticSeverity.INFO,
+                                    message = "A line-placed place-name label layer is excluded by the compatibility profile",
+                                    details = identity,
+                                )
+                            } else {
+                                try {
+                                    labelLayers += compileLabelLayer(
+                                        layer = layer,
+                                        layout = layout,
+                                        descriptor = LabelLayerDescriptor(
+                                            id = layerId,
+                                            sourceId = source.idDigest,
+                                            sourceLayer = sourceLayer,
+                                            sourceMinimumZoom = source.minZoom,
+                                            sourceMaximumZoom = source.maxZoom,
+                                            layerJson = sanitizedLabelLayerJson(layer),
+                                        ),
+                                        source = source,
+                                        index = index,
+                                        layerId = layerId,
+                                    )
+                                } catch (error: CancellationException) {
+                                    // Cancellation is control flow, not a Rentile failure (ADR
+                                    // 0011): it propagates unwrapped and must never be degraded
+                                    // into an exclusion.
+                                    throw error
+                                } catch (error: StylePreparationException) {
+                                    // text-field and every layout/paint property compiled here are
+                                    // newly reachable: this layer never held a compiled text
+                                    // program before this compatibility profile grew this feature.
+                                    // ADR 0026's governing rule applies exactly as it does to a
+                                    // text-coupled icon layer - no style which prepared
+                                    // successfully before may fail to prepare after - so a
+                                    // rejected construct excludes this one layer's labels instead
+                                    // of failing the whole style.
+                                    diagnostics += diagnostic(
+                                        code = DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT,
+                                        severity = DiagnosticSeverity.INFO,
+                                        message = "A place-name label layer uses an unsupported text construct and is excluded",
+                                        details = identity,
+                                    )
+                                }
+                            }
                         }
                     }
                     val classification = classifySymbol(layout, hidden, identity)
@@ -442,6 +502,7 @@ internal class StyleCompiler(
             terrainSource = terrainSource,
             groundRadiance = groundRadiance,
             spriteAtlas = spriteAtlas,
+            glyphsTemplate = glyphsTemplate,
             secretContext = secretContext,
         )
     }
@@ -934,6 +995,153 @@ internal class StyleCompiler(
             maxZoom = layer["maxzoom"]?.asPrimitive()?.doubleOrNull ?: 31.0,
         )
     }
+
+    /**
+     * Compiles a place-name symbol layer's text program: `text-field` and every text layout and
+     * paint property, using the same [compileProperty]/[compilePropertyWithDefault]/
+     * [compileColorPropertyWithDefault] helpers [compileIconLayer] uses for its own properties.
+     * [source] and [descriptor] are already resolved by the caller, which also gates out
+     * `symbol-placement: line` before calling this. Any rejected construct - an unsupported
+     * expression, an invalid enum value, an out-of-range constant - throws
+     * [StylePreparationException] via [failRetained] or [compileProperty]; the caller catches
+     * that and excludes this layer with `UNSUPPORTED_TEXT_CONSTRUCT` rather than failing the
+     * whole style, per ADR 0026.
+     */
+    private fun compileLabelLayer(
+        layer: JsonObject,
+        layout: JsonObject,
+        descriptor: LabelLayerDescriptor,
+        source: CompiledVectorSource,
+        index: Int,
+        layerId: String,
+    ): CompiledLabelLayer {
+        val paint = objectOrEmpty(layer, "paint", index, layerId)
+        val anchor = when (layout["text-anchor"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center") {
+            "center" -> IconAnchor.CENTER
+            "left" -> IconAnchor.LEFT
+            "right" -> IconAnchor.RIGHT
+            "top" -> IconAnchor.TOP
+            "bottom" -> IconAnchor.BOTTOM
+            "top-left" -> IconAnchor.TOP_LEFT
+            "top-right" -> IconAnchor.TOP_RIGHT
+            "bottom-left" -> IconAnchor.BOTTOM_LEFT
+            "bottom-right" -> IconAnchor.BOTTOM_RIGHT
+            else -> failRetained(index, layerId, "text-anchor is invalid")
+        }
+        val justify = when (layout["text-justify"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center") {
+            "left" -> TextJustify.LEFT
+            "center" -> TextJustify.CENTER
+            "right" -> TextJustify.RIGHT
+            else -> failRetained(index, layerId, "text-justify is unsupported")
+        }
+        val transform = when (layout["text-transform"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "none") {
+            "none" -> TextTransform.NONE
+            "uppercase" -> TextTransform.UPPERCASE
+            "lowercase" -> TextTransform.LOWERCASE
+            else -> failRetained(index, layerId, "text-transform is unsupported")
+        }
+        val padding = layout["text-padding"]?.asPrimitive()?.doubleOrNull ?: 2.0
+        if (!padding.isFinite() || padding < 0.0) failRetained(index, layerId, "text-padding must be non-negative")
+        val allowOverlap = layout["text-allow-overlap"]?.let { value ->
+            value.asPrimitive()?.booleanOrNull
+                ?: failRetained(index, layerId, "text-allow-overlap must be a boolean constant")
+        } ?: false
+        val ignorePlacement = layout["text-ignore-placement"]?.let { value ->
+            value.asPrimitive()?.booleanOrNull
+                ?: failRetained(index, layerId, "text-ignore-placement must be a boolean constant")
+        } ?: false
+
+        return CompiledLabelLayer(
+            descriptor = descriptor,
+            source = source,
+            layerOrder = index,
+            filter = compileFilter(layer["filter"], index, layerId),
+            text = compileProperty(layout.getValue("text-field"), StyleType.VALUE, index, layerId, "text-field"),
+            font = compileFontProperty(layout["text-font"], index, layerId),
+            size = compilePropertyWithDefault(
+                layout["text-size"], JsonPrimitive(16.0), StyleType.NUMBER, index, layerId, "text-size",
+            ),
+            anchor = anchor,
+            offset = compilePropertyWithDefault(
+                layout["text-offset"],
+                JsonArray(listOf(JsonPrimitive(0.0), JsonPrimitive(0.0))),
+                StyleType.ARRAY,
+                index,
+                layerId,
+                "text-offset",
+            ),
+            justify = justify,
+            maxWidth = compilePropertyWithDefault(
+                layout["text-max-width"], JsonPrimitive(10.0), StyleType.NUMBER, index, layerId, "text-max-width",
+            ),
+            letterSpacing = compilePropertyWithDefault(
+                layout["text-letter-spacing"],
+                JsonPrimitive(0.0),
+                StyleType.NUMBER,
+                index,
+                layerId,
+                "text-letter-spacing",
+            ),
+            lineHeight = compilePropertyWithDefault(
+                layout["text-line-height"], JsonPrimitive(1.2), StyleType.NUMBER, index, layerId, "text-line-height",
+            ),
+            transform = transform,
+            padding = padding,
+            allowOverlap = allowOverlap,
+            ignorePlacement = ignorePlacement,
+            sortKey = layout["symbol-sort-key"]?.let {
+                compileProperty(it, StyleType.NUMBER, index, layerId, "symbol-sort-key")
+            },
+            color = compileColorPropertyWithDefault(
+                paint["text-color"], JsonPrimitive("#000000"), index, layerId, "text-color",
+            ),
+            haloColor = compileColorPropertyWithDefault(
+                paint["text-halo-color"], JsonPrimitive("rgba(0,0,0,0)"), index, layerId, "text-halo-color",
+            ),
+            haloWidth = compilePropertyWithDefault(
+                paint["text-halo-width"], JsonPrimitive(0.0), StyleType.NUMBER, index, layerId, "text-halo-width",
+            ),
+            haloBlur = compilePropertyWithDefault(
+                paint["text-halo-blur"], JsonPrimitive(0.0), StyleType.NUMBER, index, layerId, "text-halo-blur",
+            ),
+            opacity = compilePropertyWithDefault(
+                paint["text-opacity"], JsonPrimitive(1.0), StyleType.NUMBER, index, layerId, "text-opacity",
+            ),
+            minZoom = layer["minzoom"]?.asPrimitive()?.doubleOrNull ?: 0.0,
+            maxZoom = layer["maxzoom"]?.asPrimitive()?.doubleOrNull ?: 31.0,
+        )
+    }
+
+    /**
+     * Compiles `text-font`, which - unlike every other property [compileLabelLayer] hands to
+     * [compileProperty]/[compilePropertyWithDefault] - is ordinarily a literal array of font-stack
+     * names such as `["Open Sans Regular", "Arial Unicode MS Regular"]`. The general
+     * [StylePropertyCompiler.compile] dispatch treats any JSON array whose first element is a
+     * string as an expression call, because that is exactly the shape of a Mapbox expression
+     * (`["operator", ...args]`); handed a plain font-name array it would try and fail to compile
+     * "Open Sans Regular" as an operator. A literal array of strings therefore goes straight to
+     * [StylePropertyCompiler.compileConstant] here, and only a JSON array that is not a plain
+     * string list (for example a `["get", ...]` expression) is compiled as an expression.
+     */
+    private fun compileFontProperty(element: JsonElement?, index: Int, layerId: String): CompiledStyleProperty {
+        val default = JsonArray(listOf(JsonPrimitive("Open Sans Regular"), JsonPrimitive("Arial Unicode MS Regular")))
+        val compiled = compileFontElement(element ?: default, index, layerId)
+        val fallback = StylePropertyCompiler.compileConstant(default, StyleType.ARRAY)
+        return CompiledStyleProperty { context ->
+            compiled.evaluate(context).takeUnless { it == StyleValue.Null } ?: fallback.evaluate(context)
+        }
+    }
+
+    private fun compileFontElement(element: JsonElement, index: Int, layerId: String): CompiledStyleProperty =
+        if (element is JsonArray && element.all { entry -> entry is JsonPrimitive && entry.isString }) {
+            try {
+                StylePropertyCompiler.compileConstant(element, StyleType.ARRAY)
+            } catch (error: StyleExpressionCompilationException) {
+                failRetained(index, layerId, "text-font is unsupported: ${error.message}")
+            }
+        } else {
+            compileProperty(element, StyleType.ARRAY, index, layerId, "text-font")
+        }
 
     private fun validateVectorLayerKeys(layer: JsonObject, index: Int, layerId: String) {
         val supported = setOf("id", "type", "source", "source-layer", "minzoom", "maxzoom", "filter", "layout", "paint", "metadata")
