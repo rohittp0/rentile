@@ -2972,7 +2972,8 @@ private class FailingReadRawResourceStore(private val failingClass: ResourceClas
     override suspend fun remove(key: RawResourceKey) = delegate.remove(key)
 }
 
-private class InMemoryRawResourceStore : RawResourceStore {
+/** Shared across test files in this module; see [com.rohittp.rentile.internal.glyph.GlyphResourceAcquirerTest]. */
+internal class InMemoryRawResourceStore : RawResourceStore {
     private val mutex = Mutex()
     private val entries = mutableMapOf<RawResourceKey, StoredRawResource>()
     val firstWrite = CompletableDeferred<Unit>()

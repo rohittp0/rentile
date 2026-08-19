@@ -9,16 +9,18 @@ import com.rohittp.rentile.RentileMetric
 import com.rohittp.rentile.ResourceAcquisitionException
 import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.ResourceDecodeException
-import com.rohittp.rentile.ResourceStoreException
 import com.rohittp.rentile.SafetyLimitException
 import com.rohittp.rentile.StoredRawResource
 import com.rohittp.rentile.TransportRequest
 import com.rohittp.rentile.TransportRequestMetadata
 import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.SingleFlight
+import com.rohittp.rentile.internal.readStore
 import com.rohittp.rentile.internal.recordSafely
+import com.rohittp.rentile.internal.removeStore
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
+import com.rohittp.rentile.internal.writeStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -89,13 +91,13 @@ internal class SpriteResourceAcquirer(
     ): ByteArray {
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
         val key = RawResourceKey(sanitizedId, resourceClass)
-        val cached = readStore(key)
+        val cached = configuration.rawResourceStore.readStore(key, "Raw sprite cache read failed")
         if (cached != null) {
             if (cached.bytes.size.toLong() <= limit && cached.bytes.sha256Hex() == cached.contentDigest) {
                 configuration.metricsSink.recordSafely(RentileMetric(MetricName.RAW_CACHE_HIT, resourceClass = resourceClass))
                 return cached.bytes
             }
-            removeStore(key)
+            configuration.rawResourceStore.removeStore(key, "Corrupt sprite cache removal failed")
         }
         configuration.metricsSink.recordSafely(RentileMetric(MetricName.RAW_CACHE_MISS, resourceClass = resourceClass))
         val response = workCoordinator.exchange(url) {
@@ -139,7 +141,7 @@ internal class SpriteResourceAcquirer(
             )
         }
         val digest = bytes.sha256Hex()
-        writeStore(
+        configuration.rawResourceStore.writeStore(
             key,
             StoredRawResource(
                 bytes = bytes,
@@ -152,6 +154,7 @@ internal class SpriteResourceAcquirer(
                     storedAtEpochMillis = configuration.clock.nowEpochMillis(),
                 ),
             ),
+            "Raw sprite cache write failed",
         )
         configuration.metricsSink.recordSafely(
             RentileMetric(
@@ -241,34 +244,6 @@ internal class SpriteResourceAcquirer(
         resourceClass = ResourceClass.SPRITE_JSON,
         sanitizedResourceId = sanitizedId,
     )
-
-    private suspend fun readStore(key: RawResourceKey): StoredRawResource? = try {
-        configuration.rawResourceStore.read(key)
-    } catch (error: CancellationException) {
-        throw error
-    } catch (_: Throwable) {
-        throw ResourceStoreException("Raw sprite cache read failed")
-    }
-
-    private suspend fun writeStore(key: RawResourceKey, resource: StoredRawResource) {
-        try {
-            configuration.rawResourceStore.write(key, resource)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Throwable) {
-            throw ResourceStoreException("Raw sprite cache write failed")
-        }
-    }
-
-    private suspend fun removeStore(key: RawResourceKey) {
-        try {
-            configuration.rawResourceStore.remove(key)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Throwable) {
-            throw ResourceStoreException("Corrupt sprite cache removal failed")
-        }
-    }
 
     private companion object {
         const val MAX_SPRITE_ENTRIES = 100_000
