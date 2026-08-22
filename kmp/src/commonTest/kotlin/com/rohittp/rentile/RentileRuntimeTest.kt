@@ -4080,6 +4080,108 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun aDuplicateCallerTileAgreesBetweenThePlanAndTheBatchDiagnostic() = runTest {
+        // glyphRangeUnavailable sorts but does not de-duplicate, so a caller-supplied duplicate
+        // tile must survive into affectedTiles the same way on the plan and on the batch that
+        // acquireLabelCandidates(plan) returns for it.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val rasterizer = testRasterizer(transport = ResourceTransport { TransportResponse(200, vectorTile) })
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson(glyphs = null)))
+            val duplicateTiles = listOf(TileId(2, 1, 1), TileId(2, 1, 1))
+
+            rasterizer.planLabelCandidates(style, duplicateTiles).use { plan ->
+                val planDiagnostic =
+                    plan.diagnostics.single { it.code == DiagnosticCode.GLYPH_RANGE_UNAVAILABLE }
+                val batch = rasterizer.acquireLabelCandidates(plan)
+                val batchDiagnostic =
+                    batch.diagnostics.single { it.code == DiagnosticCode.GLYPH_RANGE_UNAVAILABLE }
+                assertEquals(planDiagnostic.affectedTiles, batchDiagnostic.affectedTiles)
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun glyphUrlsRejectAMismatchedTemplateAndAcceptACredentialDifference() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val template = "https://glyphs.example.test/{fontstack}/{range}.pbf?key=SECRET"
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(glyphs = template)),
+            )
+            rasterizer.planLabelCandidates(style, listOf(TileId(2, 1, 1))).use { plan ->
+                // Same template: fine.
+                assertTrue(plan.glyphUrls(template).isNotEmpty())
+                // Differs only by credential value: redaction makes them agree.
+                assertTrue(
+                    plan.glyphUrls("https://glyphs.example.test/{fontstack}/{range}.pbf?key=OTHER")
+                        .isNotEmpty(),
+                )
+                // A relative reference passed unresolved: the case this check exists for.
+                assertFailsWith<GlyphTemplateMismatchException> { plan.glyphUrls("/{fontstack}/{range}.pbf") }
+                // Another host entirely.
+                assertFailsWith<GlyphTemplateMismatchException> {
+                    plan.glyphUrls("https://elsewhere.example.test/{fontstack}/{range}.pbf?key=SECRET")
+                }
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun glyphUrlsEncodeAFontStackExactlyAsTheFetchDoes() = runTest {
+        // A data-driven text-font puts decoded feature-property bytes into the stack, so the
+        // encoding has to survive a space, a fragment marker, a query marker, path traversal
+        // and non-Latin bytes. Any divergence between this and resolveUrl fails closed.
+        val hostileStack = "Noto Sans #1?a/../b 日本"
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange(hostileStack, 0)
+        val requested = mutableListOf<String>()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) {
+                    requested += request.url
+                    TransportResponse(200, glyphs)
+                } else {
+                    TransportResponse(200, vectorTile)
+                }
+            },
+        )
+        try {
+            val template = "https://glyphs.example.test/{fontstack}/{range}.pbf"
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(textFont = """["$hostileStack"]""")),
+            )
+            rasterizer.planLabelCandidates(style, listOf(TileId(2, 1, 1))).use { plan ->
+                val predicted = plan.glyphUrls(template)
+                rasterizer.acquireLabelCandidates(plan)
+                assertEquals(predicted.toSet(), requested.toSet())
+                // single(): "Tokyo" lives entirely in block 0, so the closure holds one entry.
+                // The hostile bytes are escaped rather than passed through.
+                assertTrue(predicted.single().contains("%20"))
+                assertTrue(predicted.single().contains("%23"))
+                assertTrue(predicted.single().contains("%3F"))
+                assertFalse(predicted.single().contains("../"))
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun aClosedOrForeignPlanIsRejected() = runTest {
         val vectorTile = placeNameVectorTile("Tokyo")
         val glyphs = testGlyphRange("Open Sans Regular", 0)
@@ -4595,6 +4697,7 @@ class RentileRuntimeTest {
         iconOffset: String? = null,
         iconTranslate: String? = null,
         textField: String = """["get","name"]""",
+        textFont: String = """["Open Sans Regular"]""",
         textSize: String = "14",
         sourceMaxZoom: Int = 14,
         extraTextLayout: String? = null,
@@ -4606,7 +4709,7 @@ class RentileRuntimeTest {
         append(""","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],""")
         append(""""maxzoom":$sourceMaxZoom}}""")
         append(""","layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place",""")
-        append(""""layout":{"text-field":$textField,"text-font":["Open Sans Regular"],"text-size":$textSize""")
+        append(""""layout":{"text-field":$textField,"text-font":$textFont,"text-size":$textSize""")
         if (iconImage != null) append(""","icon-image":"$iconImage"""")
         if (iconAnchor != null) append(""","icon-anchor":"$iconAnchor"""")
         if (iconSize != null) append(""","icon-size":$iconSize""")

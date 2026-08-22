@@ -3124,7 +3124,7 @@ private class DefaultLabelCandidatePlan(
 
     override val diagnostics: List<RenderDiagnostic> =
         if (assembly == null) {
-            style.diagnostics + LabelCandidateAssembler.glyphRangeUnavailable(tiles)
+            style.diagnostics + LabelCandidateAssembler.glyphRangeUnavailable(callerTiles)
         } else {
             style.diagnostics
         }
