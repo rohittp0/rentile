@@ -4212,6 +4212,52 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun theGlyphRangeCeilingThrowsFromPlanningNotAcquisition() = runTest {
+        // Text spanning more 256-codepoint blocks than the ceiling allows. Deliberately CJK:
+        // a naive ramp like (it * 256) + 65 walks through the Arabic block at it = 6, and
+        // ScriptSupport.requiresComplexShaping would exclude the whole label, leaving zero
+        // ranges rather than 71. CJK needs many codepoints and no reordering (ADR 0025).
+        val wide = buildString { (0..70).forEach { append((0x4E00 + it * 256).toChar()) } }
+        val vectorTile = placeNameVectorTile(wide)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { TransportResponse(200, vectorTile) },
+            resourceLimits = ResourceLimits(maxGlyphRangesPerBatch = 8),
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+            val error = assertFailsWith<SafetyLimitException> {
+                rasterizer.planLabelCandidates(style, listOf(TileId(2, 1, 1)))
+            }
+            assertEquals("maxGlyphRangesPerBatch", error.limitName)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun cacheOnlyPlanningFailsBeforeAnyGlyphIsConsidered() = runTest {
+        val requested = mutableListOf<ResourceClass>()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                requested += request.resourceClass
+                TransportResponse(200, ByteArray(0))
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+            requested.clear()
+            assertFailsWith<ResourceAcquisitionException> {
+                rasterizer.planLabelCandidates(style, listOf(TileId(2, 1, 1)), ResourceAccessMode.CACHE_ONLY)
+            }
+            assertTrue(requested.isEmpty())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun theLabelRequestKeyIsStableTileOrderIndependentAndCredentialFree() = runTest {
         val rasterizer = testRasterizer()
         try {
@@ -4473,11 +4519,13 @@ class RentileRuntimeTest {
     private fun testRasterizer(
         transport: ResourceTransport = ResourceTransport { error("Unexpected transport request") },
         diagnosticSink: DiagnosticSink = DiagnosticSink.None,
+        resourceLimits: ResourceLimits = ResourceLimits(),
     ): BasemapRasterizer = Rentile.create(
         RentileConfiguration(
             transport = transport,
             rawResourceStore = InMemoryRawResourceStore(),
             diagnosticSink = diagnosticSink,
+            resourceLimits = resourceLimits,
         ),
     )
 
