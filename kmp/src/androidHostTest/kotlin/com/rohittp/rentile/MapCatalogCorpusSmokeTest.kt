@@ -2,6 +2,7 @@ package com.rohittp.rentile
 
 import com.rohittp.rentile.internal.glyph.ScriptSupport
 import com.rohittp.rentile.internal.metadata.resolveHttpReference
+import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -265,7 +266,19 @@ class MapCatalogCorpusSmokeTest {
             // thrown: rendersPublicCatalogCoverageThroughPublicInterface has no catch around its
             // style loop, so a thrown assertion here would discard the Corpus Report - the HTML
             // and TSV - for every style already rendered, not just this one.
-            val unpredictedGlyphUrls = transport.recordedGlyphUrls.toSet() - predictedGlyphUrls
+            // Redacted on both sides before the difference, not just for display after: this
+            // gate's own recorded URL and the plan's predicted URL both still carry the provider
+            // credential at this point, and unpredictedGlyphUrls flows straight into this case's
+            // diagnostics below, then into the published Corpus Report (results.tsv, index.html)
+            // that CONTEXT.md requires to be "credential-free" and docs/error-model.md forbids
+            // carrying "full signed URLs, unrestricted query strings" in. Redaction is
+            // deterministic, so a URL differing from its counterpart only by credential redacts
+            // to the same string on both sides and still cancels out of the difference - the
+            // template-agreement check in DefaultBasemapRasterizer's glyphUrls() already treats a
+            // credential-only difference as agreement, so this costs the check nothing.
+            val unpredictedGlyphUrls = transport.recordedGlyphUrls
+                .mapTo(mutableSetOf()) { it.withRedactedAuthenticationQuery() } -
+                predictedGlyphUrls.mapTo(mutableSetOf()) { it.withRedactedAuthenticationQuery() }
             acquireLabelCaseSmokeResult(rasterizer, prepared, caseId, tile, batch, unpredictedGlyphUrls)
         }
     }
