@@ -2963,11 +2963,17 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun assemblingTwiceFromOneAssemblyDoesNotInflateLossCounts() = runTest {
+    fun repeatedOneShotAcquisitionsProduceEqualLossDiagnostics() = runTest {
         // A wholly-astral name: glyph endpoints stop at the BMP, so it requests no range,
         // lays out to nothing, and is counted as skippedNoGlyphs during assembly - which is
         // the only path that mutates the tallies. Verified not complex-script: U+1F600 is in
         // none of ScriptSupport.UNSUPPORTED_RANGES, so it is not excluded before layout.
+        //
+        // This calls the one-shot acquireLabelCandidates(style, tiles) twice, and each call
+        // builds its own fresh LabelAssembly, so this pins one-shot determinism of the loss-count
+        // diagnostic only - it does not exercise, and cannot detect, tally mutation from sharing
+        // one LabelAssembly across two acquisitions. That guard is aPlanIsReusableAndYieldsEqualBatches,
+        // which acquires twice from ONE plan instead.
         val vectorTile = placeNameVectorTile("😀")
         val glyphs = testGlyphRange("Open Sans Regular", 0)
         val rasterizer = testRasterizer(
@@ -4050,6 +4056,70 @@ class RentileRuntimeTest {
 
             assertEquals(first, second)
             assertEquals(first.size, first.toSet().size)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun everyClosureFontStackDigestAppearsAmongTheAtlasEntries() = runTest {
+        // GlyphRangeRef.fontStackDigest is documented to match LabelGlyphEntry.fontStackDigest;
+        // this pins that correlation, which nothing else asserts. testGlyphRange gives every
+        // non-space codepoint a real bitmap, so every range this fixture's closure requests is
+        // guaranteed to decode to at least one atlas entry - a real provider may legitimately
+        // serve back an empty range, in which case this assertion would not hold in general, but
+        // this fixture is deliberately scoped to avoid that case.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            rasterizer.planLabelCandidates(style, listOf(TileId(2, 1, 1))).use { plan ->
+                assertTrue(plan.glyphClosure.isNotEmpty())
+                val batch = rasterizer.acquireLabelCandidates(plan)
+                val atlasDigests = batch.atlas.entries.map { it.fontStackDigest }.toSet()
+                plan.glyphClosure.forEach { range ->
+                    assertTrue(
+                        range.fontStackDigest in atlasDigests,
+                        "closure digest ${range.fontStackDigest} is missing from the atlas entries",
+                    )
+                }
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun planTilesAreDeduplicatedAndSortedByZxy() = runTest {
+        // LabelCandidatePlan.tiles is documented as the de-duplicated caller tile set, in
+        // (z, x, y) order; nothing else pins either property. The caller list below is
+        // deliberately unsorted and carries one duplicate.
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val rasterizer = testRasterizer(transport = ResourceTransport { TransportResponse(200, vectorTile) })
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson(glyphs = null)))
+            val callerTiles = listOf(
+                TileId(2, 2, 1),
+                TileId(1, 0, 0),
+                TileId(2, 1, 1),
+                TileId(2, 1, 1),
+            )
+
+            rasterizer.planLabelCandidates(style, callerTiles).use { plan ->
+                assertEquals(
+                    listOf(TileId(1, 0, 0), TileId(2, 1, 1), TileId(2, 2, 1)),
+                    plan.tiles,
+                )
+            }
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
