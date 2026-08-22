@@ -140,4 +140,22 @@ class ApiContractTest {
         assertEquals(one.hashCode(), two.hashCode())
         assertFalse(one.toString().contains("1, 2, 3"))
     }
+
+    @Test
+    fun labelCandidatePlanExceptionsCarryLifecycleCodes() {
+        assertEquals(RentileErrorCode.FOREIGN_LABEL_CANDIDATE_PLAN, ForeignLabelCandidatePlanException().code)
+        assertEquals(PipelineStage.LIFECYCLE, ForeignLabelCandidatePlanException().stage)
+        assertEquals(RentileErrorCode.LABEL_CANDIDATE_PLAN_CLOSED, LabelCandidatePlanClosedException().code)
+        assertEquals(PipelineStage.LIFECYCLE, LabelCandidatePlanClosedException().stage)
+        assertEquals(RentileErrorCode.GLYPH_TEMPLATE_MISMATCH, GlyphTemplateMismatchException().code)
+        assertEquals(PipelineStage.RESOURCE_ACQUISITION, GlyphTemplateMismatchException().stage)
+    }
+
+    @Test
+    fun glyphTemplateMismatchNeverEchoesATemplate() {
+        // The message is a fact, not a diff: echoing either template could print a credential.
+        val message = GlyphTemplateMismatchException().message.orEmpty()
+        assertFalse(message.contains("http"))
+        assertFalse(message.contains("{fontstack}"))
+    }
 }

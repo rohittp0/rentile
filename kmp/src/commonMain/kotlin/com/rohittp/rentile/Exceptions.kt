@@ -18,6 +18,9 @@ public enum class RentileErrorCode {
     TILE_SUBSTITUTION_LIMIT_EXCEEDED,
     TILE_SUBSTITUTION_FAILED,
     BATCH_RENDER_FAILED,
+    FOREIGN_LABEL_CANDIDATE_PLAN,
+    LABEL_CANDIDATE_PLAN_CLOSED,
+    GLYPH_TEMPLATE_MISMATCH,
 }
 
 public sealed class RentileException(
@@ -160,6 +163,38 @@ public class ForeignPreparedBatchException(
 ) : RentileException(
     code = RentileErrorCode.FOREIGN_PREPARED_BATCH,
     stage = PipelineStage.LIFECYCLE,
+    message = message,
+)
+
+public class ForeignLabelCandidatePlanException(
+    message: String = "Label candidate plan belongs to another rasterizer",
+) : RentileException(
+    code = RentileErrorCode.FOREIGN_LABEL_CANDIDATE_PLAN,
+    stage = PipelineStage.LIFECYCLE,
+    message = message,
+)
+
+public class LabelCandidatePlanClosedException(
+    message: String = "Label candidate plan is closed",
+) : RentileException(
+    code = RentileErrorCode.LABEL_CANDIDATE_PLAN_CLOSED,
+    stage = PipelineStage.LIFECYCLE,
+    message = message,
+)
+
+/**
+ * The template passed to [LabelCandidatePlan.glyphUrls] is not the one this style resolves.
+ *
+ * Neither template appears in the message. Both can carry the provider credential, and a caller
+ * that reached this exception already holds its own copy, so echoing them would leak a secret to
+ * buy nothing. The usual cause is passing the style document's `glyphs` value unresolved when it
+ * is a relative reference.
+ */
+public class GlyphTemplateMismatchException(
+    message: String = "Glyph template does not match the one this style resolves",
+) : RentileException(
+    code = RentileErrorCode.GLYPH_TEMPLATE_MISMATCH,
+    stage = PipelineStage.RESOURCE_ACQUISITION,
     message = message,
 )
 
