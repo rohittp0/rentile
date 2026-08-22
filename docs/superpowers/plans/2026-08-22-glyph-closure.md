@@ -35,16 +35,18 @@
 - Consumes: nothing.
 - Produces: `internal class LabelAssembly` (renamed from `internal class LabelCandidatePlan`), same constructor parameters, same `val requiredRanges: List<GlyphRangeRequest>`, same `suspend fun assemble(ranges: List<AcquiredGlyphRange>, record: (RenderDiagnostic) -> Unit): LabelCandidateBatch`. `LabelCandidateAssembler.plan(...)` now returns `LabelAssembly`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the regression test** (it passes today; Step 2 proves it has teeth)
 
 Add to `RentileRuntimeTest.kt`, beside the other label tests (near line 2960):
 
 ```kotlin
 @Test
 fun assemblingTwiceFromOneAssemblyDoesNotInflateLossCounts() = runTest {
-    // Two features: one lays out, one is entirely astral so it requests no range and
-    // lays out to nothing, which is what increments skippedNoGlyphs during assembly.
-    val vectorTile = placeNameVectorTile("Tokyo", secondName = "😀")
+    // A wholly-astral name: glyph endpoints stop at the BMP, so it requests no range,
+    // lays out to nothing, and is counted as skippedNoGlyphs during assembly - which is
+    // the only path that mutates the tallies. Verified not complex-script: U+1F600 is in
+    // none of ScriptSupport.UNSUPPORTED_RANGES, so it is not excluded before layout.
+    val vectorTile = placeNameVectorTile("😀")
     val glyphs = testGlyphRange("Open Sans Regular", 0)
     val rasterizer = testRasterizer(
         transport = ResourceTransport { request ->
@@ -70,21 +72,12 @@ fun assemblingTwiceFromOneAssemblyDoesNotInflateLossCounts() = runTest {
 }
 ```
 
-`placeNameVectorTile` at `:4290` currently takes one name. Add an optional second feature to it:
+No helper change is needed: `placeNameVectorTile` at `:4290` already takes the name, and this
+test needs no second feature.
 
-```kotlin
-private fun placeNameVectorTile(
-    name: String,
-    secondName: String? = null,
-): ByteArray {
-    // ... existing body, then emit a second point feature carrying `secondName`
-    // at a distinct in-tile coordinate when it is non-null.
-}
-```
-
-Read the existing body at `:4290` before editing; mirror exactly how it builds the first feature's tags and geometry, placing the second point at a different in-tile coordinate so both fall inside `[0, extent)`.
-
-**Note:** this test passes today, because each `acquireLabelCandidates` call builds a fresh assembly. It is the guard that Task 3's *reusable* plan cannot regress. Write it now so the pure-assembly refactor below is covered before it lands.
+**Note:** this test passes today, because each `acquireLabelCandidates` call builds a fresh
+assembly. It is the guard that Task 3's *reusable* plan cannot regress. Write it now so the
+pure-assembly refactor below is covered before it lands.
 
 - [ ] **Step 2: Run the test to see it pass, then prove it can fail**
 
@@ -408,7 +401,8 @@ fun theOneShotPathMatchesTheTwoPhasePath() = runTest {
 
 @Test
 fun aPlanIsReusableAndYieldsEqualBatches() = runTest {
-    val vectorTile = placeNameVectorTile("Tokyo", secondName = "😀")
+    // Astral name: exercises the assembly path that used to mutate the shared tallies.
+    val vectorTile = placeNameVectorTile("😀")
     val glyphs = testGlyphRange("Open Sans Regular", 0)
     val rasterizer = testRasterizer(
         transport = ResourceTransport { request ->
