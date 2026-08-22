@@ -296,7 +296,7 @@ existing style selection
 
 Keep Rentile's raw cache and Travel Animator's output PNG cache in distinct namespaces. Keep the current remote-rendered path available as a separately keyed fallback during rollout.
 
-Rentile does not draw labels and never will, but it does prepare place-name label candidates: a host that wants them calls `acquireLabelCandidates` and does its own placement and rendering on top. Do not route atmosphere, route overlays, vehicles, globe/plane mapping, or UI camera state through Rentile.
+Rentile does not draw labels and never will, but it does prepare place-name label candidates: a host that wants them calls `acquireLabelCandidates` and does its own placement and rendering on top. A host that must know its glyph URLs before they are fetched calls `planLabelCandidates` first and reads them from the plan. Do not route atmosphere, route overlays, vehicles, globe/plane mapping, or UI camera state through Rentile.
 
 ## 10. Local consumer verification
 

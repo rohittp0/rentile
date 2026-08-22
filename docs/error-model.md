@@ -27,6 +27,15 @@ Rentile owns failure detection and diagnosis. The caller owns recovery.
 - `PreparedBatchClosedException` — a caller attempted to start rendering from a prepared batch after closing it.
 - `RasterizerClosedException` — a caller attempted to start work after closing the owning rasterizer.
 - `ForeignPreparedStyleException` — a prepared-style handle was passed to a rasterizer instance that did not create it.
+- `ForeignPreparedBatchException` — a prepared-batch handle was passed to a rasterizer instance that did not create it.
+- `ForeignLabelCandidatePlanException` — a label-candidate-plan handle was passed to a rasterizer instance that did not create it.
+- `LabelCandidatePlanClosedException` — a caller attempted acquisition from a label candidate plan after closing it.
+- `GlyphTemplateMismatchException` — the glyphs template passed to `LabelCandidatePlan.glyphUrls` is not the one the prepared style resolves.
+- `InvalidTileIdException` — a tile identity fell outside the supported XYZ range or the profile's output zooms.
+- `TileNotInPreparedBatchException` — a render was requested for a tile the prepared batch does not carry.
+- `TileSubstitutionLimitException` — more output tiles needed substitutes than the substitution policy allows.
+- `TileSubstitutionException` — a substitute could not be resolved for an output tile that required one.
+- `BatchRenderException` — one or more output tiles in a caller-defined render failed.
 
 Specific error codes are stable API. Exception messages are for humans and are not machine contracts.
 
