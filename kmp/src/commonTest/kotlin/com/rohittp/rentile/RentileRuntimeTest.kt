@@ -2986,7 +2986,7 @@ class RentileRuntimeTest {
             val firstSkips = first.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
             val secondSkips = second.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
             assertEquals("1", firstSkips.details["skippedNoGlyphs"])
-            assertEquals(firstSkips.details, secondSkips.details)
+            assertEquals(firstSkips, secondSkips)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
