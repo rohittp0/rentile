@@ -1,11 +1,15 @@
 package com.rohittp.rentile
 
 import com.rohittp.rentile.internal.glyph.ScriptSupport
+import com.rohittp.rentile.internal.metadata.resolveHttpReference
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.jetbrains.skia.Color
 import org.jetbrains.skia.EncodedImageFormat
 import org.jetbrains.skia.Image
@@ -36,7 +40,7 @@ class MapCatalogCorpusSmokeTest {
             ?: Path.of("build", "reports", "rentile-corpus")
         Files.createDirectories(outputDirectory)
 
-        val transport = smokeTransport()
+        val transport = GlyphClosureRecordingTransport(smokeTransport())
         val styles = loadMapCatalog(transport, PUBLIC_MAP_CATALOG_URL)
         val coverage = loadCoverageManifest(coveragePath)
         validateInputs(styles, coverage)
@@ -56,7 +60,7 @@ class MapCatalogCorpusSmokeTest {
         val results = try {
             selectedStyles
                 .sortedBy { style -> style.id.toInt() }
-                .map { style -> renderStyle(rasterizer, style, coverage, outputDirectory) }
+                .map { style -> renderStyle(rasterizer, style, transport, coverage, outputDirectory) }
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -78,6 +82,7 @@ class MapCatalogCorpusSmokeTest {
     private suspend fun renderStyle(
         rasterizer: BasemapRasterizer,
         style: CatalogStyleEntry,
+        transport: GlyphClosureRecordingTransport,
         coverage: CoverageManifest,
         outputDirectory: Path,
     ): StyleSmokeResult {
@@ -110,7 +115,7 @@ class MapCatalogCorpusSmokeTest {
             renderTile(rasterizer, prepared, style.id, tile, outputDirectory)
         }
         val mosaics = createMosaics(style.id, coverage, outcomes, outputDirectory)
-        val labelResults = acquireLabelSmoke(rasterizer, prepared, coverage)
+        val labelResults = acquireLabelSmoke(rasterizer, prepared, style, transport, coverage)
         return StyleSmokeResult(
             styleId = style.id,
             styleName = style.name,
@@ -135,13 +140,38 @@ class MapCatalogCorpusSmokeTest {
     private suspend fun acquireLabelSmoke(
         rasterizer: BasemapRasterizer,
         prepared: PreparedStyle,
+        style: CatalogStyleEntry,
+        transport: GlyphClosureRecordingTransport,
         coverage: CoverageManifest,
-    ): List<LabelCaseSmokeResult> =
-        LABEL_SMOKE_CASE_IDS.map { caseId ->
+    ): List<LabelCaseSmokeResult> {
+        val styleJson = catalogJson.parseToJsonElement(transport.styleBody(style.url).decodeToString()).jsonObject
+        // Cleared per style, not per case: the same font stack and range legitimately repeats
+        // across this style's label-smoke cases (e.g. a shared Latin fallback), and the raw
+        // resource store then serves the second case from cache rather than the transport. The
+        // exactness check below is therefore a style-wide union across all of this style's cases,
+        // not a per-case one - a per-case comparison would flag that legitimate cache reuse as a
+        // closure violation it is not.
+        transport.recordedGlyphUrls.clear()
+        val predictedGlyphUrls = mutableSetOf<String>()
+        val results = LABEL_SMOKE_CASE_IDS.map { caseId ->
             val case = coverage.cases.first { it.id == caseId }
             val tile = case.tiles.minBy(CoverageTile::z).asTileId()
-            acquireLabelCaseSmoke(rasterizer, prepared, caseId, tile)
+            acquireLabelCaseSmoke(rasterizer, prepared, caseId, tile, style.url, styleJson, predictedGlyphUrls)
         }
+        // Equality, not containment: a superset would hide a route that is never fetched, and an
+        // under-approximation is exactly what fails closed behind an exact-URL firewall. Asserted
+        // here, unconditionally and without a soft errorCode, because that is the property this
+        // task exists to pin: a caller that preregistered predictedGlyphUrls must never see a
+        // request outside that set, and every request it promised must actually be made.
+        assertEquals(
+            predictedGlyphUrls,
+            transport.recordedGlyphUrls.toSet(),
+            "Style ${style.id} (${style.name}): the glyph-range URLs planLabelCandidates predicted " +
+                "for its label-smoke cases do not exactly match the URLs acquireLabelCandidates " +
+                "actually requested",
+        )
+        return results
+    }
 
     /**
      * Mirrors [renderTile]'s architecture deliberately: a failed invariant becomes an
@@ -150,15 +180,24 @@ class MapCatalogCorpusSmokeTest {
      * [writeReports] would otherwise never reach. The one final `assertEquals` in
      * [rendersPublicCatalogCoverageThroughPublicInterface] still fails the gate when any style
      * carries a non-null error code here - acquisition throwing included.
+     *
+     * One exception to that soft-fail architecture, deliberately: [LabelCandidatePlan.glyphUrls]
+     * is called uncaught, so a [GlyphTemplateMismatchException] - this gate's own template
+     * resolution disagreeing with the style's - aborts the run loudly instead of hiding as one
+     * more error code. See [acquireLabelSmoke]'s closure-exactness assertion, which this plan's
+     * predicted URLs feed into.
      */
     private suspend fun acquireLabelCaseSmoke(
         rasterizer: BasemapRasterizer,
         prepared: PreparedStyle,
         caseId: String,
         tile: TileId,
+        styleUrl: String,
+        styleJson: JsonObject,
+        predictedGlyphUrls: MutableSet<String>,
     ): LabelCaseSmokeResult {
-        val batch = try {
-            rasterizer.acquireLabelCandidates(prepared, listOf(tile))
+        val plan = try {
+            rasterizer.planLabelCandidates(prepared, listOf(tile))
         } catch (error: RentileException) {
             return LabelCaseSmokeResult(
                 caseId = caseId,
@@ -182,7 +221,50 @@ class MapCatalogCorpusSmokeTest {
                 diagnostics = emptyList(),
             )
         }
+        return plan.use { activePlan ->
+            // Deliberately outside any catch for RentileException: GlyphTemplateMismatchException
+            // firing here means this test's own template resolution disagrees with what the style
+            // actually resolved, which is a bug in this gate, not a flaky acquisition outcome - it
+            // must fail loudly rather than fold into a soft errorCode like the acquisition below.
+            val template = glyphsTemplateFor(styleJson, styleUrl) ?: NO_GLYPHS_TEMPLATE_PLACEHOLDER
+            predictedGlyphUrls += activePlan.glyphUrls(template)
 
+            val batch = try {
+                rasterizer.acquireLabelCandidates(activePlan)
+            } catch (error: RentileException) {
+                return@use LabelCaseSmokeResult(
+                    caseId = caseId,
+                    tile = tile,
+                    errorCode = error.code.name,
+                    candidateCount = 0,
+                    atlasWidth = 0,
+                    atlasHeight = 0,
+                    glyphRangeCount = 0,
+                    diagnostics = error.redactedDiagnosticSummaries(),
+                )
+            } catch (error: Throwable) {
+                return@use LabelCaseSmokeResult(
+                    caseId = caseId,
+                    tile = tile,
+                    errorCode = error::class.simpleName ?: "UNKNOWN_FAILURE",
+                    candidateCount = 0,
+                    atlasWidth = 0,
+                    atlasHeight = 0,
+                    glyphRangeCount = 0,
+                    diagnostics = emptyList(),
+                )
+            }
+            acquireLabelCaseSmokeResult(rasterizer, prepared, caseId, tile, batch)
+        }
+    }
+
+    private fun acquireLabelCaseSmokeResult(
+        rasterizer: BasemapRasterizer,
+        prepared: PreparedStyle,
+        caseId: String,
+        tile: TileId,
+        batch: LabelCandidateBatch,
+    ): LabelCaseSmokeResult {
         // Distinct (font stack, 256-codepoint block) pairs: what `maxGlyphRangesPerBatch` counts.
         val glyphRangeCount = batch.atlas.entries
             .map { entry -> entry.fontStackDigest to entry.codepoint / GLYPH_RANGE_SIZE }
@@ -732,6 +814,63 @@ class MapCatalogCorpusSmokeTest {
         }
     }
 
+    /**
+     * Resolves the style document's `glyphs` value against [styleUrl], mirroring
+     * `StyleCompiler.kt:146-156` exactly: an absolute `http://` or `https://` reference passes
+     * through unchanged, anything else resolves against the style's base URI - which for a
+     * [StyleInput.Remote] style is always the style URL itself, never a redirect target, since
+     * [smokeTransport] never follows redirects and [DefaultBasemapRasterizer] passes the
+     * caller-supplied URL straight through as `baseUri`. [resolveHttpReference] is the very
+     * function `StyleCompiler` calls, reused rather than reimplemented, so this cannot drift from
+     * it.
+     *
+     * Returns null when the style has no string `glyphs` value at all: such a style's closure is
+     * empty, and [LabelCandidatePlan.glyphUrls] does not check the template it is given in that
+     * case, so the caller substitutes [NO_GLYPHS_TEMPLATE_PLACEHOLDER] rather than treating this
+     * as an error.
+     */
+    private fun glyphsTemplateFor(styleJson: JsonObject, styleUrl: String): String? {
+        val reference = (styleJson["glyphs"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            ?: return null
+        return if (reference.startsWith("https://") || reference.startsWith("http://")) {
+            reference
+        } else {
+            resolveHttpReference(styleUrl, reference)
+        }
+    }
+
+    /**
+     * Wraps the gate's real transport, unconditionally delegating every exchange to it, purely to
+     * observe two things the closure-exactness assertion in [acquireLabelSmoke] needs and that no
+     * existing recording already captures:
+     *
+     * - [recordedGlyphUrls]: exactly the URLs [BasemapRasterizer.acquireLabelCandidates] requests
+     *   with [ResourceClass.GLYPH_RANGE], so they can be compared against what
+     *   [LabelCandidatePlan.glyphUrls] predicted.
+     * - The raw bytes of each [ResourceClass.STYLE] response, so [glyphsTemplateFor] can read the
+     *   same `glyphs` value [StyleCompiler] resolved without a second network round trip to the
+     *   catalog - [styleBody] reads back the bytes [BasemapRasterizer.prepare] already fetched.
+     */
+    private class GlyphClosureRecordingTransport(
+        private val delegate: ResourceTransport,
+    ) : ResourceTransport {
+        val recordedGlyphUrls: MutableSet<String> = ConcurrentHashMap.newKeySet()
+        private val styleBodies = ConcurrentHashMap<String, ByteArray>()
+
+        override suspend fun execute(request: TransportRequest): TransportResponse {
+            val response = delegate.execute(request)
+            when (request.resourceClass) {
+                ResourceClass.GLYPH_RANGE -> recordedGlyphUrls += request.url
+                ResourceClass.STYLE -> styleBodies[request.url] = response.body
+                else -> Unit
+            }
+            return response
+        }
+
+        fun styleBody(url: String): ByteArray =
+            styleBodies[url] ?: error("No STYLE response was recorded for this style's URL")
+    }
+
     private fun RentileException.redactedDiagnosticSummaries(): List<String> =
         (listOfNotNull(message) + diagnostics.map { "${it.code}: ${it.message}" }).distinct()
 
@@ -892,6 +1031,14 @@ class MapCatalogCorpusSmokeTest {
 
         /** Glyph endpoints always serve 256-codepoint blocks; the `{range}` template is `N-(N+255)`. */
         const val GLYPH_RANGE_SIZE = 256
+
+        /**
+         * Passed to [LabelCandidatePlan.glyphUrls] for a style with no `glyphs` value at all.
+         * Never checked in that case - the closure is empty, so [glyphUrls] returns an empty list
+         * without inspecting the template - so any string is safe here; this one just documents
+         * why it is unused rather than looking like a real endpoint.
+         */
+        const val NO_GLYPHS_TEMPLATE_PLACEHOLDER = "https://style-declares-no-glyphs.invalid/{fontstack}/{range}"
 
         /** The ceiling `acquireLabelCandidates` enforces under the default [ResourceLimits] this gate uses. */
         val MAX_GLYPH_RANGES_PER_BATCH: Int = ResourceLimits().maxGlyphRangesPerBatch
