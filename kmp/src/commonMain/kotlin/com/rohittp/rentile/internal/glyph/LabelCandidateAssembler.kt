@@ -71,6 +71,34 @@ internal class LabelFeatureSkips(val layerId: String) {
     )
 }
 
+/** One layer's layout-time losses for a single assembly, kept out of the shared tallies. */
+private class LayoutLoss {
+    var noGlyphs: Int = 0
+    val tiles: MutableSet<TileId> = mutableSetOf()
+
+    fun record(tile: TileId) {
+        noGlyphs += 1
+        tiles += tile
+    }
+}
+
+// A member function would have to be declared at least as visible as LabelFeatureSkips itself
+// (effectively internal), which Kotlin forbids from taking a private-in-file LayoutLoss parameter.
+// A private top-level extension matches LayoutLoss's own visibility instead, while staying
+// callable from LabelAssembly further down in this same file.
+/** A copy carrying [loss] folded in, so the receiver is never mutated by an assembly. */
+private fun LabelFeatureSkips.mergedWith(loss: LayoutLoss?): LabelFeatureSkips {
+    if (loss == null) return this
+    val merged = LabelFeatureSkips(layerId)
+    merged.candidates = candidates
+    merged.skipped = skipped
+    merged.nonPointGeometry = nonPointGeometry
+    merged.noGlyphs = noGlyphs + loss.noGlyphs
+    merged.tiles += tiles
+    merged.tiles += loss.tiles
+    return merged
+}
+
 /** Per-layer tally behind `COMPLEX_SCRIPT_LABEL_EXCLUDED`, in the same unit as [LabelFeatureSkips]. */
 internal class ComplexScriptExclusion(val layerId: String) {
     var features: Int = 0
@@ -132,10 +160,10 @@ internal data class PendingLabel(
 )
 
 /**
- * The result of decoding and evaluating a batch's features: the labels that survived, the Glyph
- * Ranges they need, and the diagnostics that decision produced.
+ * Everything one Label acquisition decided before its glyphs exist: the labels that survived, the
+ * Glyph Ranges they need, and the diagnostics that decision produced.
  */
-internal class LabelCandidatePlan internal constructor(
+internal class LabelAssembly internal constructor(
     private val pending: List<PendingLabel>,
     val requiredRanges: List<GlyphRangeRequest>,
     private val complexScript: Map<Int, ComplexScriptExclusion>,
@@ -165,6 +193,12 @@ internal class LabelCandidatePlan internal constructor(
         val layerStyles = mutableListOf<LabelLayerStyle>()
         val layerStyleIndex = mutableMapOf<Pair<String, Int>, Int>()
         val candidates = mutableListOf<LabelCandidate>()
+        // Layout losses are accumulated locally rather than into featureSkips, which this
+        // assembly does not own alone: a reusable LabelCandidatePlan can assemble more than
+        // once, and mutating the shared tallies would double-count skippedNoGlyphs on the
+        // second pass, breaking ADR 0026's rule that the three loss counts are subsets of
+        // candidateFeatures.
+        val layoutLosses = mutableMapOf<Int, LayoutLoss>()
 
         for ((index, label) in pending.withIndex()) {
             if (index and CANCELLATION_CHECK_MASK == 0) currentCoroutineContext().ensureActive()
@@ -174,9 +208,9 @@ internal class LabelCandidatePlan internal constructor(
                 // nothing. Counted rather than dropped in silence: 0.2.0 shipped an icon layer
                 // that emitted nothing at all when every feature named a sprite the atlas lacked,
                 // and a whole-layer loss reported as no signal whatsoever was a real defect.
-                featureSkips[label.program.layerOrder]?.let {
-                    it.noGlyphs += 1
-                    it.tiles += label.requestedTile
+                if (featureSkips.containsKey(label.program.layerOrder)) {
+                    layoutLosses.getOrPut(label.program.layerOrder) { LayoutLoss() }
+                        .record(label.requestedTile)
                 }
                 continue
             }
@@ -227,16 +261,17 @@ internal class LabelCandidatePlan internal constructor(
             // the reasons a layer the caller can see in labelLayerDescriptors contributed no
             // candidates, so a caller reading only this batch would otherwise have no way to
             // tell an excluded layer from an empty one.
-            diagnostics = style.diagnostics + labelDiagnostics().onEach(record),
+            diagnostics = style.diagnostics + labelDiagnostics(layoutLosses).onEach(record),
         )
     }
 
     /** One entry per layer per code, in layer order, so the list is identical between runs. */
-    private fun labelDiagnostics(): List<RenderDiagnostic> =
+    private fun labelDiagnostics(layoutLosses: Map<Int, LayoutLoss>): List<RenderDiagnostic> =
         (complexScript.keys + featureSkips.keys).sorted().flatMap { layerOrder ->
+            val merged = featureSkips[layerOrder]?.mergedWith(layoutLosses[layerOrder])
             listOfNotNull(
                 complexScript[layerOrder]?.toDiagnostic(layerOrder),
-                featureSkips[layerOrder]?.takeIf { it.reportable }?.toDiagnostic(layerOrder),
+                merged?.takeIf { it.reportable }?.toDiagnostic(layerOrder),
             )
         }
 
@@ -272,7 +307,7 @@ internal class LabelCandidatePlan internal constructor(
  * ownership checks, concurrency and lifecycle, while decode-evaluate-clip-layout lives here. The
  * split is also what keeps acquisition ordering honest: [plan] decides which Glyph Ranges the
  * batch needs without fetching anything, the caller acquires them, and
- * [LabelCandidatePlan.assemble] finishes. Glyph needs are not knowable before features are
+ * [LabelAssembly.assemble] finishes. Glyph needs are not knowable before features are
  * decoded, which is the whole reason labels cannot join `prepareBatch`.
  */
 internal object LabelCandidateAssembler {
@@ -291,7 +326,7 @@ internal object LabelCandidateAssembler {
         resources: Map<Pair<String, TileId>, VectorResource>,
         limits: ResourceLimits,
         iconImageNameOf: (StyleValue, DecodedVectorFeature) -> String?,
-    ): LabelCandidatePlan {
+    ): LabelAssembly {
         val pending = mutableListOf<PendingLabel>()
         val ranges = mutableSetOf<GlyphRangeRequest>()
         val complexScript = mutableMapOf<Int, ComplexScriptExclusion>()
@@ -496,7 +531,7 @@ internal object LabelCandidateAssembler {
             )
         }
 
-        return LabelCandidatePlan(
+        return LabelAssembly(
             pending = pending.sortedWith(PENDING_ORDER),
             requiredRanges = required,
             complexScript = complexScript,

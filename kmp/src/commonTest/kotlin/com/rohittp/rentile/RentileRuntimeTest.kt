@@ -2963,6 +2963,37 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun assemblingTwiceFromOneAssemblyDoesNotInflateLossCounts() = runTest {
+        // A wholly-astral name: glyph endpoints stop at the BMP, so it requests no range,
+        // lays out to nothing, and is counted as skippedNoGlyphs during assembly - which is
+        // the only path that mutates the tallies. Verified not complex-script: U+1F600 is in
+        // none of ScriptSupport.UNSUPPORTED_RANGES, so it is not excluded before layout.
+        val vectorTile = placeNameVectorTile("😀")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+            val tiles = listOf(TileId(2, 1, 1))
+
+            val first = rasterizer.acquireLabelCandidates(style, tiles)
+            val second = rasterizer.acquireLabelCandidates(style, tiles)
+
+            val firstSkips = first.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
+            val secondSkips = second.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
+            assertEquals("1", firstSkips.details["skippedNoGlyphs"])
+            assertEquals(firstSkips.details, secondSkips.details)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun aStyleWithoutGlyphsYieldsAnEmptyBatchNotAFailure() = runTest {
         val vectorTile = placeNameVectorTile("Tokyo")
         val rasterizer = testRasterizer(transport = ResourceTransport { TransportResponse(200, vectorTile) })
