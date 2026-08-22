@@ -299,8 +299,19 @@ Around it:
   produce the same `contentKey` and the same candidate list.
 
 The corpus gate already records the distinct glyph-range count per style
-(`compatibility/README.md:19`), so extending it to assert closure exactness across the rolling
-corpus is nearly free and proves the property against 34 real styles rather than fixtures.
+(`compatibility/README.md:19`), so extending it to assert the closure property across the rolling
+corpus is nearly free and proves it against 34 real styles rather than fixtures.
+
+The corpus assertion is one-directional where the fixture ones are not, and deliberately so. The
+gate drives every style through a single rasterizer with one never-evicted raw store, and glyph
+cache keys hash the credential-redacted URL - so two styles sharing a font stack and glyph
+endpoint collide on one entry, and whichever style acquires that range first is the only one whose
+run reaches the transport for it. A later style's plan can therefore legitimately predict a URL its
+own run never re-requests. The gate asserts only that every URL actually requested was predicted,
+which is the fail-closed direction and the one a firewall refuses on; a warm cache can only shrink
+what is requested, never add to it. Exact two-way equality stays pinned by the fixture tests above,
+which build a fresh store per rasterizer and so have no warm-cache confound. Both halves of the
+property are covered; they are covered where each can actually be proven.
 
 ## Documentation
 
