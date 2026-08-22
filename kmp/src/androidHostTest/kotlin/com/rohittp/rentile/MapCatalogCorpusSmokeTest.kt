@@ -25,7 +25,6 @@ import java.nio.file.StandardOpenOption
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 /**
  * Opt-in smoke test for the rolling public map catalog.
@@ -146,46 +145,11 @@ class MapCatalogCorpusSmokeTest {
         coverage: CoverageManifest,
     ): List<LabelCaseSmokeResult> {
         val styleJson = catalogJson.parseToJsonElement(transport.styleBody(style.url).decodeToString()).jsonObject
-        // Cleared per style, not per case, and aggregated across this style's three label-smoke
-        // cases before the check below runs: [predictedGlyphUrls] is a style-wide union rather
-        // than one set per case, so a range one case predicted and a later case's cache hit
-        // happens to serve does not read as that later case missing a request.
-        transport.recordedGlyphUrls.clear()
-        val predictedGlyphUrls = mutableSetOf<String>()
-        val results = LABEL_SMOKE_CASE_IDS.map { caseId ->
+        return LABEL_SMOKE_CASE_IDS.map { caseId ->
             val case = coverage.cases.first { it.id == caseId }
             val tile = case.tiles.minBy(CoverageTile::z).asTileId()
-            acquireLabelCaseSmoke(rasterizer, prepared, caseId, tile, style.url, styleJson, predictedGlyphUrls)
+            acquireLabelCaseSmoke(rasterizer, prepared, caseId, tile, style.url, styleJson, transport)
         }
-        // Only the fail-closed direction is asserted here: every URL actually requested must have
-        // been predicted (recorded subset-of predicted), never the reverse. That is deliberate,
-        // not a weaker stand-in for equality - this gate's SmokeRawResourceStore is one plain,
-        // never-evicted ConcurrentHashMap shared by every style in the run (constructed once,
-        // above, before the style loop), and GlyphResourceAcquirer.acquireRaw's cache key redacts
-        // the credential before hashing the URL. Two different styles from the same font-glyph
-        // provider using the same font stack and 256-codepoint block - the common case, since
-        // most corpus styles end their stack in the same Latin/Noto Sans fallback - therefore
-        // collide on one cache entry: whichever style acquires that range first is the only one
-        // that ever reaches the transport for it, so a later style's predicted set can legitimately
-        // contain a URL its own run never (re)requests. Asserting full equality here would make
-        // that ordinary warm-cache behavior read as a closure defect.
-        //
-        // The other direction - that the closure never *under*-predicts what gets requested - is
-        // still pinned, just against fixtures rather than the live corpus: RentileRuntimeTest's
-        // theGlyphClosureIsExactlyWhatTheAcquisitionRequests and
-        // glyphUrlsEncodeAFontStackExactlyAsTheFetchDoes each build a fresh InMemoryRawResourceStore
-        // per rasterizer, so they have no warm-cache confound and assert both directions as true
-        // equality. Between the two suites, both halves of the property are covered.
-        val recordedGlyphUrls = transport.recordedGlyphUrls.toSet()
-        val unpredictedUrls = recordedGlyphUrls - predictedGlyphUrls
-        assertTrue(
-            unpredictedUrls.isEmpty(),
-            "Style ${style.id} (${style.name}): acquireLabelCandidates requested glyph-range " +
-                "URL(s) planLabelCandidates never predicted for this style's label-smoke cases - " +
-                "an exact-URL firewall preregistered from the plan would have refused these: " +
-                unpredictedUrls.joinToString(", "),
-        )
-        return results
     }
 
     /**
@@ -199,8 +163,10 @@ class MapCatalogCorpusSmokeTest {
      * One exception to that soft-fail architecture, deliberately: [LabelCandidatePlan.glyphUrls]
      * is called uncaught, so a [GlyphTemplateMismatchException] - this gate's own template
      * resolution disagreeing with the style's - aborts the run loudly instead of hiding as one
-     * more error code. See [acquireLabelSmoke]'s closure-exactness assertion, which this plan's
-     * predicted URLs feed into.
+     * more error code. The closure-exactness check that follows it, in contrast, *is* folded into
+     * this case's [LabelCaseSmokeResult.errorCode] rather than thrown - see the comment at
+     * `unpredictedGlyphUrls` below for why, and for why a thrown assertion here would be the wrong
+     * choice for this particular property.
      */
     private suspend fun acquireLabelCaseSmoke(
         rasterizer: BasemapRasterizer,
@@ -209,8 +175,11 @@ class MapCatalogCorpusSmokeTest {
         tile: TileId,
         styleUrl: String,
         styleJson: JsonObject,
-        predictedGlyphUrls: MutableSet<String>,
+        transport: GlyphClosureRecordingTransport,
     ): LabelCaseSmokeResult {
+        // Cleared per case: [unpredictedGlyphUrls] below must reflect only what this case's own
+        // acquisition requests, not leftovers from a previous case or style.
+        transport.recordedGlyphUrls.clear()
         val plan = try {
             rasterizer.planLabelCandidates(prepared, listOf(tile))
         } catch (error: RentileException) {
@@ -242,7 +211,7 @@ class MapCatalogCorpusSmokeTest {
             // actually resolved, which is a bug in this gate, not a flaky acquisition outcome - it
             // must fail loudly rather than fold into a soft errorCode like the acquisition below.
             val template = glyphsTemplateFor(styleJson, styleUrl) ?: NO_GLYPHS_TEMPLATE_PLACEHOLDER
-            predictedGlyphUrls += activePlan.glyphUrls(template)
+            val predictedGlyphUrls = activePlan.glyphUrls(template).toSet()
 
             val batch = try {
                 rasterizer.acquireLabelCandidates(activePlan)
@@ -269,7 +238,35 @@ class MapCatalogCorpusSmokeTest {
                     diagnostics = emptyList(),
                 )
             }
-            acquireLabelCaseSmokeResult(rasterizer, prepared, caseId, tile, batch)
+            // This case's acquisition can only ever request URLs derived from this same plan's
+            // frozen closure and the template just validated above, so
+            // `unpredictedGlyphUrls` should always be empty by construction - it exists to catch
+            // the case where that invariant breaks. It is deliberately a subset check
+            // (`recorded - predicted`, not a two-way `assertEquals`): this gate's raw resource
+            // store (`SmokeRawResourceStore`) is one plain, never-evicted `ConcurrentHashMap`
+            // shared by every case and every style in the run, and
+            // `GlyphResourceAcquirer.acquireRaw`'s cache key redacts the credential before
+            // hashing the URL - so a range this case's plan predicts can already be warm from an
+            // earlier case or style using the same glyph provider, font stack, and 256-codepoint
+            // block (common: most corpus styles end their stack in the same Latin/Noto Sans
+            // fallback). A warm cache only ever makes what this case actually requests smaller
+            // than what it predicted, never larger, so it can only ever shrink `recorded` - a
+            // subset check tolerates that by construction, where a two-way equality would not.
+            // The reverse direction - that the closure never *under*-predicts what a fresh
+            // acquisition requests - is still pinned as true equality, just against fixtures
+            // rather than the live corpus: RentileRuntimeTest's
+            // theGlyphClosureIsExactlyWhatTheAcquisitionRequests and
+            // glyphUrlsEncodeAFontStackExactlyAsTheFetchDoes each build a fresh
+            // InMemoryRawResourceStore per rasterizer, so they have no warm-cache confound.
+            // Between the two suites, both halves of the property are covered - do not tighten
+            // this one back to equality, or a legitimate warm cache will fail the gate.
+            //
+            // A violation is folded into this case's errorCode/diagnostics below rather than
+            // thrown: rendersPublicCatalogCoverageThroughPublicInterface has no catch around its
+            // style loop, so a thrown assertion here would discard the Corpus Report - the HTML
+            // and TSV - for every style already rendered, not just this one.
+            val unpredictedGlyphUrls = transport.recordedGlyphUrls.toSet() - predictedGlyphUrls
+            acquireLabelCaseSmokeResult(rasterizer, prepared, caseId, tile, batch, unpredictedGlyphUrls)
         }
     }
 
@@ -279,6 +276,7 @@ class MapCatalogCorpusSmokeTest {
         caseId: String,
         tile: TileId,
         batch: LabelCandidateBatch,
+        unpredictedGlyphUrls: Set<String>,
     ): LabelCaseSmokeResult {
         // Distinct (font stack, 256-codepoint block) pairs: what `maxGlyphRangesPerBatch` counts.
         val glyphRangeCount = batch.atlas.entries
@@ -288,11 +286,18 @@ class MapCatalogCorpusSmokeTest {
         val diagnostics = batch.diagnostics.map { "${it.code}: ${it.message}" }.distinct().toMutableList()
 
         var errorCode: String? = null
+        if (unpredictedGlyphUrls.isNotEmpty()) {
+            errorCode = "GLYPH_CLOSURE_UNDERPREDICTED"
+            diagnostics += "$errorCode: acquireLabelCandidates requested glyph-range URL(s) " +
+                "planLabelCandidates never predicted for this case - an exact-URL firewall " +
+                "preregistered from the plan would have refused these: " +
+                unpredictedGlyphUrls.joinToString(", ")
+        }
         if (glyphRangeCount > MAX_GLYPH_RANGES_PER_BATCH) {
-            errorCode = "GLYPH_RANGE_LIMIT_EXCEEDED"
-            diagnostics += "$errorCode: acquired $glyphRangeCount glyph ranges, over the " +
-                "$MAX_GLYPH_RANGES_PER_BATCH maxGlyphRangesPerBatch ceiling acquireLabelCandidates " +
-                "is supposed to enforce"
+            errorCode = errorCode ?: "GLYPH_RANGE_LIMIT_EXCEEDED"
+            diagnostics += "GLYPH_RANGE_LIMIT_EXCEEDED: acquired $glyphRangeCount glyph ranges, " +
+                "over the $MAX_GLYPH_RANGES_PER_BATCH maxGlyphRangesPerBatch ceiling " +
+                "acquireLabelCandidates is supposed to enforce"
         }
         if (caseId == CAIRO_CASE_ID) {
             when (val outcome = classifyCairoOutcome(rasterizer, prepared, batch)) {
