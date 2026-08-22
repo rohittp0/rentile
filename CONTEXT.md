@@ -14,7 +14,7 @@ _Avoid_: Rendered provider tile
 
 **Source Tile**:
 A vector, raster, or elevation tile consumed as input while producing one or more output tiles.
-_Avoid_: Output tile
+_Avoid_: Output tile, Label Tile
 
 **Raw Resource**:
 The exact encoded style, source metadata, source tile, sprite, glyph range, or GeoJSON bytes acquired before compilation or decoding.
@@ -48,13 +48,25 @@ _Avoid_: Map text, annotation, caption, road or point-of-interest text
 A Label decoded, style-evaluated and laid out into glyph geometry, but not positioned on screen and not resolved against any other Label.
 _Avoid_: Label primitive, prepared label, placed label, label descriptor
 
+**Label Tile**:
+A vector tile consumed as input while producing Label Candidates rather than an Output Tile.
+_Avoid_: Source Tile, label candidate
+
 **Glyph Range**:
 One block of 256 consecutive Unicode codepoints of a font stack, acquired as signed-distance-field glyph bitmaps and their metrics.
 _Avoid_: Font file, glyph page, character set
 
 **Label Candidate Batch**:
 The immutable result of one Label acquisition: its Label Candidates, the glyph atlas they reference, and the content key identifying the acquired glyph and vector bytes.
-_Avoid_: Prepared Batch, render result, label tile
+_Avoid_: Prepared Batch, Label Candidate Plan, render result, Label Tile
+
+**Glyph Closure**:
+The complete set of Glyph Range identities one Label Candidate Plan will acquire.
+_Avoid_: Resource Closure, glyph atlas, request queue
+
+**Label Candidate Plan**:
+The frozen Glyph Closure and evaluated label content for one tile set, held between Label Tile acquisition and Glyph Range acquisition.
+_Avoid_: Prepared Batch, Label Candidate Batch, resource closure
 
 **Repaired Layer**:
 A symbol layer retained only because the compatibility profile removed its text and its icon's geometry does not depend on that text, as opposed to one the style author declared as an icon layer.
@@ -96,7 +108,7 @@ Public documentation and the Maven POM project URL use `https://rohittp.com/rent
 
 - "Label" was used to mean both any map text and a place name specifically. Resolved: **Label** is narrow — only place names, only the place-name source layers that OpenMapTiles v3 and MapTiler Planet v4 use for settlement, admin, island and continent naming. Road, point-of-interest, water, terrain and protected-area naming is not a Label and Rentile does not prepare it.
 - Widening **Label** past place names is a deliberate future option, not an oversight. It would mean admitting source layers a v3 host never drew, and line-placed text needs layout that point-placed place names do not, so it is a scope decision to take explicitly rather than a gap to close incidentally.
-- A **Label Candidate Batch** is not a **Prepared Batch**. Which Glyph Ranges a tile set needs depends on decoded feature properties, so its closure cannot be frozen before acquisition and it does not satisfy **Resource Closure** as defined above. Labels therefore cannot be folded into `prepareBatch`, and the inconsistency is deliberate rather than an omission to repair.
+- A **Label Candidate Batch** is not a **Prepared Batch**, and labels still cannot be folded into `prepareBatch`. The reason was once stated too strongly: which Glyph Ranges a tile set needs depends on decoded feature properties, so a **Glyph Closure** cannot be frozen before **Label Tile** acquisition — but it can be frozen after it, which is what a **Label Candidate Plan** holds. The closure is therefore frozen in two stages rather than not at all. A Glyph Closure is still not a **Resource Closure**: it is complete and immutable in the same way, but it is what one Label Candidate Batch needs, not what a batch of Output Tiles needs. See [ADR 0028](docs/adr/0028-freeze-the-glyph-closure-in-a-label-candidate-plan.md).
 - Three keys serve three distinct questions and none substitutes for another: a request key answers "must I fetch?" before any network, a **Label Candidate Batch** content key answers "are my cached candidates still valid?" after acquisition, and the glyph atlas content key answers "must I re-upload the texture?".
 - A **Repaired Layer** and an author-declared icon layer look alike in a style document but do not fail alike: the first degrades with a diagnostic, the second fails loudly. `text-optional: true` marks the author's intent and therefore selects the strict path. See [ADR 0026](docs/adr/0026-repaired-layers-degrade-and-author-intended-layers-fail.md).
 - `instructions.md` tells Travel Animator not to route labels through Rentile. That predates the place-name seam Rentile now ships and is narrower than current behaviour; the guidance means Rentile does not *draw* labels, not that it prepares nothing.

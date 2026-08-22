@@ -55,53 +55,69 @@ Against the code, not against the request.
   credential, its `toString` is redacted, and it is cleared on rasterizer close. No public API
   re-emits it. The current corpus happens to carry no query string on glyph URLs
   (2026-08-18 measurement), but the design must not depend on that.
-- **A `LabelPlan` is cheap to hold.** The internal `LabelCandidatePlan`
+- **A plan is cheap to hold.** The internal `LabelCandidatePlan`
   (`LabelCandidateAssembler.kt:135`) retains `pending`, `requiredRanges`, the diagnostic tallies,
   `contentDigests` and `requestedTiles`. It does **not** retain the decoded `VectorResource`s;
   they are dropped when `plan()` returns. Heap cost is proportional to surviving label count, not
   to tile bytes.
+- **`assemble` mutates plan state.** `featureSkips` is a plan field (`:142`) holding mutable
+  tallies, and `:178-179` does `it.noGlyphs += 1; it.tiles += label.requestedTile` during layout.
+  A second successful assembly over one plan would emit `LABEL_FEATURE_SKIPPED` with
+  `skippedNoGlyphs` inflated, breaking ADR 0026's invariant that the loss counts are subsets of
+  `candidateFeatures`. Retry after a *failed* glyph fetch is already safe, because
+  `throwAcquisitionFailures` runs before `assemble`.
+- **`ProtectedResourceUrl.canonicalUrl` is the redacted template** (`SecretContext.kt:31`), and
+  `withRedactedAuthenticationQuery` (`ContentIdentity.kt:37`) replaces authentication query
+  *values* while preserving names and everything else. So two copies of one template that differ
+  only by credential compare equal, and a relative-versus-resolved difference compares unequal.
+- **`docs/error-model.md` is six exception families behind.** It lists 11; `Exceptions.kt`
+  declares 17. `BatchRenderException`, which `render()` throws, is among the missing.
 
 ## Locked decisions
 
 1. **A two-phase handle, not a stateless second call.** The closure and the acquisition read the
    same frozen `requiredRanges` list, so they cannot diverge for any reason, including upstream
-   tile churn. This mirrors the existing `prepareBatch` -> `render(batch)` grain.
-2. **Identity, never URLs.** A closure entry carries a digest and the already-encoded
-   `{fontstack}` substitution. Rentile never emits the glyphs template or a composed URL.
-3. **Exact, not over-approximated.** The request offered to accept a superset; it does not need
+   tile churn. This mirrors the existing `prepareBatch` -> `render(batch)` grain. ADR 0028.
+2. **The handle is a Label Candidate Plan**, pairing with **Label Candidate Batch** so the domain
+   relationship is legible from the names. The existing internal `LabelCandidatePlan` is renamed
+   `LabelAssembly`, which describes what it actually holds.
+3. **Rentile composes the URLs; the caller supplies the template.** No credential is emitted, and
+   percent-encoding, `{range}` formatting and substitution stay in one implementation shared with
+   the fetch path. The template the caller passes is verified against Rentile's own.
+4. **Exact, not over-approximated.** The request offered to accept a superset; it does not need
    one, and a superset would weaken the regression guard in the Coverage section.
-4. **The one-shot signature survives unchanged.** `acquireLabelCandidates(style, tiles, mode)`
+5. **The plan is reusable, and `assemble` becomes pure.** Handles are reusable in this codebase -
+   `render(batch, tiles)` takes a tile subset precisely so one batch can be rendered from
+   repeatedly - so the mutation found above is removed rather than specified around.
+6. **The one-shot signature survives unchanged.** `acquireLabelCandidates(style, tiles, mode)`
    keeps today's behaviour byte-for-byte, reimplemented over the two-phase pair.
-5. **No lease machinery.** Per the memory finding above, a `LabelPlan` needs an owner identity and
-   a closed flag, not `DefaultPreparedBatch`'s lease counting and `releaseResourcesIfUnused`.
+7. **No lease machinery.** Per the memory finding above, a plan needs an owner identity and a
+   closed flag, not `DefaultPreparedBatch`'s lease counting and `releaseResourcesIfUnused`.
 
 ## Public API
 
 Added to `Api.kt`, beside `LabelCandidateBatch`.
 
 ```kotlin
-/** One Glyph Range a [LabelPlan] will acquire. Identity only: no URL, no credential. */
+/** One Glyph Range a [LabelCandidatePlan] will acquire. Identity only: no URL, no credential. */
 public data class GlyphRangeRef(
     /**
      * Matches [LabelGlyphAtlasEntry.fontStackDigest], so a ref correlates with the atlas entries
-     * it eventually produces. The raw font stack is deliberately not exposed: `text-font` may be
+     * it eventually produces. The raw font stack is deliberately absent: `text-font` may be
      * data-driven, so it can carry decoded feature-property bytes.
      */
     public val fontStackDigest: String,
-    /**
-     * The exact `{fontstack}` substitution Rentile will use, already percent-encoded. Substitute
-     * it verbatim; do not re-derive the encoding from a font stack.
-     */
-    public val urlFontStack: String,
-    /** The `{range}` block start. The substitution is `"$rangeStart-${rangeStart + 255}"`. */
+    /** The `{range}` block start. */
     public val rangeStart: Int,
 )
 
 /**
- * A frozen Glyph Closure for one tile set, computed after Source Tile acquisition and before any
- * Glyph Range is acquired. Not a Prepared Batch; see CONTEXT.md.
+ * A frozen Glyph Closure for one tile set, held between Label Tile acquisition and Glyph Range
+ * acquisition. Not a Prepared Batch; see CONTEXT.md.
+ *
+ * Reusable: acquiring from one plan repeatedly yields identical batches.
  */
-public interface LabelPlan : AutoCloseable {
+public interface LabelCandidatePlan : AutoCloseable {
     /** The de-duplicated tile set the plan was computed over, in (z, x, y) order. */
     public val tiles: List<TileId>
 
@@ -111,6 +127,22 @@ public interface LabelPlan : AutoCloseable {
      * de-duplicated across every layer and tile in the batch, and stable across runs.
      */
     public val glyphClosure: List<GlyphRangeRef>
+
+    /**
+     * The URL of every entry in [glyphClosure], in the same order, composed by Rentile's own
+     * substitution so a caller never re-derives it.
+     *
+     * [template] is the caller's copy of the style's `glyphs` value, resolved against the style's
+     * base URI. Rentile holds its own copy but will not emit it, because that copy can carry the
+     * provider credential. Instead it verifies the two agree and throws
+     * [GlyphTemplateMismatchException] when they do not, so a relative reference passed
+     * unresolved, a stale template, or another style's template fails here rather than as labels
+     * that silently stop drawing.
+     *
+     * Returns an empty list, without verifying [template], when the style resolves no `glyphs`
+     * template - such a plan will fetch nothing.
+     */
+    public fun glyphUrls(template: String): List<String>
 
     public val diagnostics: List<RenderDiagnostic>
 
@@ -123,21 +155,21 @@ On `BasemapRasterizer`, beside the existing label methods:
 
 ```kotlin
 /**
- * Acquires this tile set's label vector tiles, decodes and evaluates them, and freezes the Glyph
- * Ranges the batch will need - without acquiring any of them.
+ * Acquires this tile set's Label Tiles, decodes and evaluates them, and freezes the Glyph Ranges
+ * the batch will need - without acquiring any of them.
  *
- * A caller that must know its glyph URLs before they are fetched preregisters from
- * [LabelPlan.glyphClosure] and then passes this same plan to [acquireLabelCandidates]. The two
- * read one frozen list, so the closure cannot under-approximate the acquisition that follows it.
+ * A caller that must know its glyph URLs before they are fetched reads them from
+ * [LabelCandidatePlan.glyphUrls] and then passes that same plan to [acquireLabelCandidates]. The
+ * two read one frozen list, so the closure cannot under-approximate the acquisition that follows.
  */
 public suspend fun planLabelCandidates(
     style: PreparedStyle,
     tiles: List<TileId>,
     resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
-): LabelPlan
+): LabelCandidatePlan
 
-/** Acquires [LabelPlan.glyphClosure] and assembles the batch. Reuses the plan's access mode. */
-public suspend fun acquireLabelCandidates(plan: LabelPlan): LabelCandidateBatch
+/** Acquires the plan's Glyph Closure and assembles the batch. Reuses the plan's access mode. */
+public suspend fun acquireLabelCandidates(plan: LabelCandidatePlan): LabelCandidateBatch
 ```
 
 `acquireLabelCandidates(style, tiles, resourceAccess)` remains, reimplemented as plan, acquire,
@@ -148,39 +180,51 @@ Consumer shape:
 
 ```kotlin
 rasterizer.planLabelCandidates(style, tiles).use { plan ->
-    registry.preregister(plan.glyphClosure.map { ref ->
-        glyphsTemplate
-            .replace("{fontstack}", ref.urlFontStack)
-            .replace("{range}", "${ref.rangeStart}-${ref.rangeStart + 255}")
-    })
+    registry.preregister(plan.glyphUrls(glyphsTemplate))
     val batch = rasterizer.acquireLabelCandidates(plan)
 }
 ```
 
-## One encoder, not two
+## One composer, not two
 
-`percentEncodeFontStack` is currently `private` inside `GlyphResourceAcquirer`'s companion. It is
-promoted to an internal `urlFontStackFor(fontStack: String): String`, and `resolveUrl` is changed
-to call it. That leaves exactly one implementation of the encoding, shared by the token Rentile
-publishes and the URL Rentile fetches, so the two cannot drift. A second copy - in Rentile or in a
-consumer - is the failure this API exists to prevent, and it fails closed and silently.
+`resolveUrl` and its `private` `percentEncodeFontStack` stay the single implementation of glyph URL
+composition; `glyphUrls` calls `resolveUrl` per closure entry with the caller's template. Nothing
+about the composition is re-stated in `Api.kt`, exposed as a token, or left to the caller as
+arithmetic. A second copy of that encoding - in Rentile or in a consumer - is the failure this API
+exists to prevent, and it fails closed and silently.
 
-The `{range}` substitution is left to the caller as arithmetic on `rangeStart`, because
-`"start-(start+255)"` carries no encoding risk. `GlyphResourceAcquirer.rangeLabelFor` remains the
-single formatter on Rentile's side.
+The template check is the other half. `ProtectedResourceUrl.canonicalUrl` is already the redacted
+template, so `glyphUrls` compares `template.withRedactedAuthenticationQuery()` against it and
+throws on mismatch. Neither template appears in the exception; a mismatch is reported as a fact,
+not by echoing credential-bearing strings.
+
+## Assembly becomes pure
+
+`LabelCandidatePlan.assemble` currently mutates the tallies it was constructed with
+(`LabelCandidateAssembler.kt:178-179`), so a second assembly over one plan double-counts
+`skippedNoGlyphs`. Layout losses move into a local map inside `assemble`, merged with the
+immutable tallies when diagnostics are built. That makes `assemble` a pure function of its inputs
+and the public plan safely reusable, which is what `PreparedBatch` already promises for its own
+handle.
+
+The internal `LabelCandidatePlan` is renamed `LabelAssembly` to free the name for the public type.
 
 ## Lifecycle
 
-`private class DefaultLabelPlan(owner, style, tiles, resourceAccess, plan)` implements `LabelPlan`
-with an owner identity and an `AtomicBoolean` closed flag. `acquireLabelCandidates(plan)` resolves
-ownership through a new `requireOwnedLabelPlan`, calls `ensureOpen()`, and reads the internal plan
-into a local before doing anything else, so a concurrent `close()` cannot pull state out from under
-an acquisition in flight.
+`private class DefaultLabelCandidatePlan(owner, style, tiles, resourceAccess, assembly)` implements
+`LabelCandidatePlan` with an owner identity and an `AtomicBoolean` closed flag.
+`acquireLabelCandidates(plan)` resolves ownership through a new `requireOwnedLabelCandidatePlan`,
+calls `ensureOpen()`, and reads the internal assembly into a local before doing anything else, so a
+concurrent `close()` cannot pull state out from under an acquisition in flight.
 
-Two new exceptions in `Exceptions.kt`, matching the per-handle pair already there at `:134-165`:
+Three new exceptions in `Exceptions.kt`, matching the per-handle pattern already there at
+`:134-165`:
 
-- `ForeignLabelPlanException` - a plan handle was passed to a rasterizer that did not create it.
-- `LabelPlanClosedException` - a caller attempted acquisition from a plan after closing it.
+- `ForeignLabelCandidatePlanException` - a plan handle was passed to a rasterizer that did not
+  create it.
+- `LabelCandidatePlanClosedException` - a caller attempted acquisition from a plan after closing it.
+- `GlyphTemplateMismatchException` - the template passed to `glyphUrls` is not the one this style
+  resolves.
 
 Rasterizer close is already handled: `planLabelCandidates` and `acquireLabelCandidates` both run
 inside `operation { }`, which throws `RasterizerClosedException` once `closing` is set, and
@@ -199,8 +243,9 @@ de-duplicated, atlas packing canonicalises on `(fontStackDigest, codepoint)`, an
 key sorts the digests it folds in.
 
 Public ordering is `requiredRanges` order, whose sort key is the raw font stack - which the public
-fields deliberately do not expose. Callers get a stable order they cannot re-derive. That is
-adequate for preregistration and is documented rather than repaired; changing the internal sort to
+type deliberately does not expose. Callers get a stable order they cannot re-derive, and
+`glyphUrls` returns its list in that same order so the two can be zipped. That is adequate for
+preregistration and is documented rather than repaired; changing the internal sort to
 `(fontStackDigest, rangeStart)` would churn a working path for no gain, since nothing downstream
 depends on the order.
 
@@ -220,7 +265,7 @@ with an empty `glyphClosure` and the diagnostic recorded to the sink once, and
 (`LABEL_FEATURE_SKIPPED`, `COMPLEX_SCRIPT_LABEL_EXCLUDED`) stay in `assemble`, because
 `skippedNoGlyphs` is not knowable until layout runs.
 
-So `LabelPlan.diagnostics` is the style's diagnostics plus `GLYPH_RANGE_UNAVAILABLE` where
+So `LabelCandidatePlan.diagnostics` is the style's diagnostics plus `GLYPH_RANGE_UNAVAILABLE` where
 applicable, and `LabelCandidateBatch.diagnostics` is byte-identical to today for both the one-shot
 and two-phase paths.
 
@@ -236,8 +281,12 @@ fallback-stack or notdef fetch from silently breaking a consumer's firewall.
 Around it:
 
 - **Encoding fidelity.** A data-driven `text-font` resolving to stacks containing a space, `#`,
-  `?`, `../` and non-Latin bytes; assert substituting `urlFontStack` reproduces `resolveUrl`
-  exactly.
+  `?`, `../` and non-Latin bytes; assert `glyphUrls` reproduces `resolveUrl` exactly for each.
+- **Template mismatch.** A relative `glyphs` reference passed unresolved, a template from another
+  style, and a template differing only by credential value: the first two throw
+  `GlyphTemplateMismatchException`, the third does not.
+- **Reuse purity.** Acquire twice from one plan; assert both batches are equal, including every
+  diagnostic count. This is the regression guard for the `assemble` mutation.
 - **Dedup and order.** Two tiles sharing a range yield one entry; order is stable across runs.
 - **Digest correlation.** Over a fixture whose every requested range decodes to at least one
   glyph, each `GlyphRangeRef.fontStackDigest` appears in the resulting `LabelGlyphAtlas.entries`.
@@ -255,16 +304,21 @@ corpus is nearly free and proves the property against 34 real styles rather than
 
 ## Documentation
 
-- **ADR 0028 - "Freeze the glyph closure in a label plan."** The substantive part is that this
-  amends a documented position. CONTEXT.md's flagged ambiguity currently states that a Label
-  Candidate Batch "cannot freeze its closure before acquisition and it does not satisfy Resource
-  Closure". That stays true of Source Tile acquisition and becomes false of Glyph Range
-  acquisition: labels have a two-stage closure, frozen between the two. Still not a Prepared Batch,
-  still not foldable into `prepareBatch`. ADR 0024's closing paragraph needs the same
-  qualification.
-- **CONTEXT.md** gains **Label Plan** and **Glyph Closure**, and the flagged-ambiguity bullet is
-  rewritten rather than deleted - its original reasoning is still half right.
-- **docs/error-model.md** gains `ForeignLabelPlanException` and `LabelPlanClosedException`.
+Already written, during the grill:
+
+- **ADR 0028** - freeze the glyph closure in a label candidate plan.
+- **CONTEXT.md** gained **Label Tile**, **Glyph Closure** and **Label Candidate Plan**, and the
+  flagged ambiguity was rewritten rather than deleted: its conclusion holds, and only its middle
+  clause was too strong. **Source Tile** now avoids **Label Tile** reciprocally.
+
+Still to write, during implementation:
+
+- **docs/error-model.md** gains this design's three exceptions, and backfills the six that have
+  shipped undocumented - `ForeignPreparedBatchException`, `InvalidTileIdException`,
+  `TileNotInPreparedBatchException`, `TileSubstitutionLimitException`, `TileSubstitutionException`
+  and `BatchRenderException`. The doc presents itself as enumerating the families, so a consumer
+  building error handling from it today does not know `render()` throws `BatchRenderException`.
+- **ADR 0024**'s closing paragraph needs the same qualification CONTEXT.md's ambiguity got.
 - The published site (`docs/rendering.html`, `docs/kmp.html`, `docs/index.html`) documents no label
   API today and needs no change.
 
@@ -295,7 +349,12 @@ Distribution section.
   many viewports without closing them accumulates `PendingLabel` lists. `AutoCloseable` and the
   `use { }` idiom in the KDoc are the mitigation; no limit is imposed, consistent with how
   `PreparedBatch` is treated.
-- **Ordering is stable but not re-derivable** from the exposed fields. Accepted, documented.
+- **Ordering is stable but not re-derivable** from the exposed type. Accepted, documented; the
+  `glyphUrls` list is order-aligned with `glyphClosure`, which is what callers actually need.
+- **The template check assumes the caller resolved relative references the same way Rentile did.**
+  It proves the two strings agree, not that either is right. A caller that resolves a relative
+  `glyphs` against a different base URI than the style's own gets a clean mismatch error rather
+  than a wrong URL, which is the intended outcome.
 
 ## References
 
