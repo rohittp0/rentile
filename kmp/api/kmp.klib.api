@@ -86,9 +86,12 @@ final enum class com.rohittp.rentile/PipelineStage : kotlin/Enum<com.rohittp.ren
 
 final enum class com.rohittp.rentile/RentileErrorCode : kotlin/Enum<com.rohittp.rentile/RentileErrorCode> { // com.rohittp.rentile/RentileErrorCode|null[0]
     enum entry BATCH_RENDER_FAILED // com.rohittp.rentile/RentileErrorCode.BATCH_RENDER_FAILED|null[0]
+    enum entry FOREIGN_LABEL_CANDIDATE_PLAN // com.rohittp.rentile/RentileErrorCode.FOREIGN_LABEL_CANDIDATE_PLAN|null[0]
     enum entry FOREIGN_PREPARED_BATCH // com.rohittp.rentile/RentileErrorCode.FOREIGN_PREPARED_BATCH|null[0]
     enum entry FOREIGN_PREPARED_STYLE // com.rohittp.rentile/RentileErrorCode.FOREIGN_PREPARED_STYLE|null[0]
+    enum entry GLYPH_TEMPLATE_MISMATCH // com.rohittp.rentile/RentileErrorCode.GLYPH_TEMPLATE_MISMATCH|null[0]
     enum entry INVALID_TILE_ID // com.rohittp.rentile/RentileErrorCode.INVALID_TILE_ID|null[0]
+    enum entry LABEL_CANDIDATE_PLAN_CLOSED // com.rohittp.rentile/RentileErrorCode.LABEL_CANDIDATE_PLAN_CLOSED|null[0]
     enum entry PNG_ENCODING_FAILED // com.rohittp.rentile/RentileErrorCode.PNG_ENCODING_FAILED|null[0]
     enum entry PREPARED_BATCH_CLOSED // com.rohittp.rentile/RentileErrorCode.PREPARED_BATCH_CLOSED|null[0]
     enum entry RASTERIZATION_FAILED // com.rohittp.rentile/RentileErrorCode.RASTERIZATION_FAILED|null[0]
@@ -218,15 +221,29 @@ abstract interface com.rohittp.rentile/BasemapRasterizer : kotlin/AutoCloseable 
     abstract fun labelLayerDescriptors(com.rohittp.rentile/PreparedStyle): kotlin.collections/List<com.rohittp.rentile/LabelLayerDescriptor> // com.rohittp.rentile/BasemapRasterizer.labelLayerDescriptors|labelLayerDescriptors(com.rohittp.rentile.PreparedStyle){}[0]
     abstract fun outputRequestKey(com.rohittp.rentile/PreparedStyle, com.rohittp.rentile/TileId, com.rohittp.rentile/RenderOptions = ...): kotlin/String // com.rohittp.rentile/BasemapRasterizer.outputRequestKey|outputRequestKey(com.rohittp.rentile.PreparedStyle;com.rohittp.rentile.TileId;com.rohittp.rentile.RenderOptions){}[0]
     abstract fun terrainSourceDescriptor(com.rohittp.rentile/PreparedStyle): com.rohittp.rentile/TerrainSourceDescriptor? // com.rohittp.rentile/BasemapRasterizer.terrainSourceDescriptor|terrainSourceDescriptor(com.rohittp.rentile.PreparedStyle){}[0]
+    abstract suspend fun acquireLabelCandidates(com.rohittp.rentile/LabelCandidatePlan): com.rohittp.rentile/LabelCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireLabelCandidates|acquireLabelCandidates(com.rohittp.rentile.LabelCandidatePlan){}[0]
     abstract suspend fun acquireLabelCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/LabelCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireLabelCandidates|acquireLabelCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ResourceAccessMode){}[0]
     abstract suspend fun acquireLabelTiles(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ResourceAccessMode = ...): kotlin.collections/List<com.rohittp.rentile/ValidatedMvtTile> // com.rohittp.rentile/BasemapRasterizer.acquireLabelTiles|acquireLabelTiles(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ResourceAccessMode){}[0]
     abstract suspend fun acquireTerrainTiles(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ResourceAccessMode = ...): kotlin.collections/List<com.rohittp.rentile/ValidatedDemTile> // com.rohittp.rentile/BasemapRasterizer.acquireTerrainTiles|acquireTerrainTiles(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ResourceAccessMode){}[0]
     abstract suspend fun awaitClosed() // com.rohittp.rentile/BasemapRasterizer.awaitClosed|awaitClosed(){}[0]
+    abstract suspend fun planLabelCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/LabelCandidatePlan // com.rohittp.rentile/BasemapRasterizer.planLabelCandidates|planLabelCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ResourceAccessMode){}[0]
     abstract suspend fun prepare(com.rohittp.rentile/StyleInput, com.rohittp.rentile/CompatibilityPolicy = ...): com.rohittp.rentile/PreparedStyle // com.rohittp.rentile/BasemapRasterizer.prepare|prepare(com.rohittp.rentile.StyleInput;com.rohittp.rentile.CompatibilityPolicy){}[0]
     abstract suspend fun prepareBatch(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ..., com.rohittp.rentile/TileSubstitutionPolicy = ...): com.rohittp.rentile/PreparedBatch // com.rohittp.rentile/BasemapRasterizer.prepareBatch|prepareBatch(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode;com.rohittp.rentile.TileSubstitutionPolicy){}[0]
     abstract suspend fun render(com.rohittp.rentile/PreparedBatch, kotlin.collections/List<com.rohittp.rentile/TileId> = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedBatch;kotlin.collections.List<com.rohittp.rentile.TileId>){}[0]
     abstract suspend fun render(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ..., com.rohittp.rentile/TileSubstitutionPolicy = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode;com.rohittp.rentile.TileSubstitutionPolicy){}[0]
     abstract suspend fun retryExact(com.rohittp.rentile/PreparedBatch): com.rohittp.rentile/ExactRecoveryResult // com.rohittp.rentile/BasemapRasterizer.retryExact|retryExact(com.rohittp.rentile.PreparedBatch){}[0]
+}
+
+abstract interface com.rohittp.rentile/LabelCandidatePlan : kotlin/AutoCloseable { // com.rohittp.rentile/LabelCandidatePlan|null[0]
+    abstract val diagnostics // com.rohittp.rentile/LabelCandidatePlan.diagnostics|{}diagnostics[0]
+        abstract fun <get-diagnostics>(): kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> // com.rohittp.rentile/LabelCandidatePlan.diagnostics.<get-diagnostics>|<get-diagnostics>(){}[0]
+    abstract val glyphClosure // com.rohittp.rentile/LabelCandidatePlan.glyphClosure|{}glyphClosure[0]
+        abstract fun <get-glyphClosure>(): kotlin.collections/List<com.rohittp.rentile/GlyphRangeRef> // com.rohittp.rentile/LabelCandidatePlan.glyphClosure.<get-glyphClosure>|<get-glyphClosure>(){}[0]
+    abstract val tiles // com.rohittp.rentile/LabelCandidatePlan.tiles|{}tiles[0]
+        abstract fun <get-tiles>(): kotlin.collections/List<com.rohittp.rentile/TileId> // com.rohittp.rentile/LabelCandidatePlan.tiles.<get-tiles>|<get-tiles>(){}[0]
+
+    abstract fun close() // com.rohittp.rentile/LabelCandidatePlan.close|close(){}[0]
+    abstract fun glyphUrls(kotlin/String): kotlin.collections/List<kotlin/String> // com.rohittp.rentile/LabelCandidatePlan.glyphUrls|glyphUrls(kotlin.String){}[0]
 }
 
 abstract interface com.rohittp.rentile/PreparedBatch : kotlin/AutoCloseable { // com.rohittp.rentile/PreparedBatch|null[0]
@@ -565,12 +582,36 @@ final class com.rohittp.rentile/ExecutionPolicy { // com.rohittp.rentile/Executi
     final fun toString(): kotlin/String // com.rohittp.rentile/ExecutionPolicy.toString|toString(){}[0]
 }
 
+final class com.rohittp.rentile/ForeignLabelCandidatePlanException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/ForeignLabelCandidatePlanException|null[0]
+    constructor <init>(kotlin/String = ...) // com.rohittp.rentile/ForeignLabelCandidatePlanException.<init>|<init>(kotlin.String){}[0]
+}
+
 final class com.rohittp.rentile/ForeignPreparedBatchException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/ForeignPreparedBatchException|null[0]
     constructor <init>(kotlin/String = ...) // com.rohittp.rentile/ForeignPreparedBatchException.<init>|<init>(kotlin.String){}[0]
 }
 
 final class com.rohittp.rentile/ForeignPreparedStyleException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/ForeignPreparedStyleException|null[0]
     constructor <init>(kotlin/String = ...) // com.rohittp.rentile/ForeignPreparedStyleException.<init>|<init>(kotlin.String){}[0]
+}
+
+final class com.rohittp.rentile/GlyphRangeRef { // com.rohittp.rentile/GlyphRangeRef|null[0]
+    constructor <init>(kotlin/String, kotlin/Int) // com.rohittp.rentile/GlyphRangeRef.<init>|<init>(kotlin.String;kotlin.Int){}[0]
+
+    final val fontStackDigest // com.rohittp.rentile/GlyphRangeRef.fontStackDigest|{}fontStackDigest[0]
+        final fun <get-fontStackDigest>(): kotlin/String // com.rohittp.rentile/GlyphRangeRef.fontStackDigest.<get-fontStackDigest>|<get-fontStackDigest>(){}[0]
+    final val rangeStart // com.rohittp.rentile/GlyphRangeRef.rangeStart|{}rangeStart[0]
+        final fun <get-rangeStart>(): kotlin/Int // com.rohittp.rentile/GlyphRangeRef.rangeStart.<get-rangeStart>|<get-rangeStart>(){}[0]
+
+    final fun component1(): kotlin/String // com.rohittp.rentile/GlyphRangeRef.component1|component1(){}[0]
+    final fun component2(): kotlin/Int // com.rohittp.rentile/GlyphRangeRef.component2|component2(){}[0]
+    final fun copy(kotlin/String = ..., kotlin/Int = ...): com.rohittp.rentile/GlyphRangeRef // com.rohittp.rentile/GlyphRangeRef.copy|copy(kotlin.String;kotlin.Int){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/GlyphRangeRef.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/GlyphRangeRef.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/GlyphRangeRef.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/GlyphTemplateMismatchException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/GlyphTemplateMismatchException|null[0]
+    constructor <init>(kotlin/String = ...) // com.rohittp.rentile/GlyphTemplateMismatchException.<init>|<init>(kotlin.String){}[0]
 }
 
 final class com.rohittp.rentile/GroundRadianceDescriptor { // com.rohittp.rentile/GroundRadianceDescriptor|null[0]
@@ -705,6 +746,10 @@ final class com.rohittp.rentile/LabelCandidateBatch { // com.rohittp.rentile/Lab
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelCandidateBatch.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelCandidateBatch.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/LabelCandidateBatch.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/LabelCandidatePlanClosedException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/LabelCandidatePlanClosedException|null[0]
+    constructor <init>(kotlin/String = ...) // com.rohittp.rentile/LabelCandidatePlanClosedException.<init>|<init>(kotlin.String){}[0]
 }
 
 final class com.rohittp.rentile/LabelGlyphAtlas { // com.rohittp.rentile/LabelGlyphAtlas|null[0]
