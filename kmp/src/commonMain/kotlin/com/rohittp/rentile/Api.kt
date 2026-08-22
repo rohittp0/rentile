@@ -411,6 +411,13 @@ public data class GlyphRangeRef(
  * query could, because tile bytes can legitimately change between two acquisitions.
  *
  * Reusable: acquiring from one plan repeatedly yields equal batches.
+ *
+ * [close] frees this plan's internal acquisition state eagerly rather than waiting for the plan to
+ * become unreachable. [tiles], [glyphClosure] and [diagnostics] are computed at construction and
+ * remain readable afterwards, but [glyphUrls] is not: it throws [LabelCandidatePlanClosedException]
+ * once this plan is closed. That asymmetry is deliberate - the three properties need neither that
+ * state nor the style once computed, while composing a URL is cheap enough that there is no reason
+ * to let a caller do it against a plan whose acquisition can no longer happen.
  */
 public interface LabelCandidatePlan : AutoCloseable {
     /** The de-duplicated tile set this plan was computed over, in (z, x, y) order. */
@@ -444,6 +451,9 @@ public interface LabelCandidatePlan : AutoCloseable {
      *
      * Returns an empty list, without checking [template], when the style resolves no `glyphs`
      * template: such a plan will fetch nothing.
+     *
+     * Throws [LabelCandidatePlanClosedException] once this plan has been [close]d - unlike
+     * [tiles], [glyphClosure] and [diagnostics], which remain readable after close.
      */
     public fun glyphUrls(template: String): List<String>
 

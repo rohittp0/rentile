@@ -29,7 +29,7 @@ Rentile owns failure detection and diagnosis. The caller owns recovery.
 - `ForeignPreparedStyleException` — a prepared-style handle was passed to a rasterizer instance that did not create it.
 - `ForeignPreparedBatchException` — a prepared-batch handle was passed to a rasterizer instance that did not create it.
 - `ForeignLabelCandidatePlanException` — a label-candidate-plan handle was passed to a rasterizer instance that did not create it.
-- `LabelCandidatePlanClosedException` — a caller attempted acquisition from a label candidate plan after closing it.
+- `LabelCandidatePlanClosedException` — a caller attempted acquisition, or called `LabelCandidatePlan.glyphUrls`, on a label candidate plan after closing it.
 - `GlyphTemplateMismatchException` — the glyphs template passed to `LabelCandidatePlan.glyphUrls` is not the one the prepared style resolves.
 - `InvalidTileIdException` — a tile identity fell outside the supported XYZ range or the profile's output zooms.
 - `TileNotInPreparedBatchException` — a render was requested for a tile the prepared batch does not carry.
