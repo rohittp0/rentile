@@ -392,7 +392,7 @@ public data class LabelCandidateBatch(
  *
  * The raw font stack is deliberately absent. `text-font` may be a data-driven expression, so a
  * resolved stack can carry bytes from a decoded feature property; [fontStackDigest] identifies it
- * without republishing it, and matches [LabelGlyphAtlasEntry.fontStackDigest] so a closure entry
+ * without republishing it, and matches [LabelGlyphEntry.fontStackDigest] so a closure entry
  * correlates with the atlas entries it eventually produces.
  */
 public data class GlyphRangeRef(
@@ -435,6 +435,12 @@ public interface LabelCandidatePlan : AutoCloseable {
      * [GlyphTemplateMismatchException] when they do not, so a relative reference passed
      * unresolved, a stale template, or another style's template fails here rather than as labels
      * that silently stop drawing.
+     *
+     * That agreement check compares only the redacted form of both templates, so it cannot catch
+     * every mistake: the authentication value substituted into the URLs returned here is the
+     * caller's own [template], not Rentile's, and it is never verified against what acquisition
+     * will actually use. A caller that passes a stale or already-redacted credential gets back a
+     * plausible, non-empty list whose every URL is wrong for that reason alone.
      *
      * Returns an empty list, without checking [template], when the style resolves no `glyphs`
      * template: such a plan will fetch nothing.

@@ -555,6 +555,7 @@ private class DefaultBasemapRasterizer(
                 owner = owner,
                 style = compiledStyle,
                 tiles = stableTiles.distinct().sortedWith(LABEL_TILE_ORDER),
+                callerTiles = stableTiles,
                 resourceAccess = resourceAccess,
                 assembly = null,
                 limits = configuration.resourceLimits,
@@ -587,6 +588,7 @@ private class DefaultBasemapRasterizer(
             owner = owner,
             style = compiledStyle,
             tiles = stableTiles.distinct().sortedWith(LABEL_TILE_ORDER),
+            callerTiles = stableTiles,
             resourceAccess = resourceAccess,
             assembly = assembly,
             limits = configuration.resourceLimits,
@@ -599,10 +601,10 @@ private class DefaultBasemapRasterizer(
         // to pull state out from under an acquisition already in flight.
         val state = owned.stateForAcquisition()
         val assembly = state.assembly
-            ?: return@operation LabelCandidateAssembler.emptyBatch(state.style, state.tiles, state.limits)
+            ?: return@operation LabelCandidateAssembler.emptyBatch(state.style, state.callerTiles, state.limits)
 
         val glyphsTemplate = state.style.glyphsTemplate
-            ?: return@operation LabelCandidateAssembler.emptyBatch(state.style, state.tiles, state.limits)
+            ?: return@operation LabelCandidateAssembler.emptyBatch(state.style, state.callerTiles, state.limits)
         val rangeOutcomes = supervisorScope {
             assembly.requiredRanges.map { request ->
                 async {
@@ -3074,10 +3076,20 @@ private class PreparedBatchLease(
     }
 }
 
-/** Everything one acquisition reads off a plan, captured atomically so close() cannot race it. */
+/**
+ * Everything one acquisition reads off a plan.
+ *
+ * [callerTiles] is the caller's raw, unfiltered tile list - not [tiles], which is de-duplicated
+ * and sorted for the public [LabelCandidatePlan.tiles] property. `emptyBatch` must be handed
+ * [callerTiles] so the diagnostic it embeds in the returned batch matches the one already
+ * recorded to the sink during planning, and matches what the one-shot path emitted before this
+ * plan existed: [LabelCandidateAssembler.glyphRangeUnavailable] sorts but does not de-duplicate,
+ * so a caller-supplied duplicate tile must survive into `affectedTiles` exactly as it did before.
+ */
 private class LabelCandidatePlanState(
     val style: CompiledPreparedStyle,
     val tiles: List<TileId>,
+    val callerTiles: List<TileId>,
     val resourceAccess: ResourceAccessMode,
     val assembly: LabelAssembly?,
     val limits: ResourceLimits,
@@ -3088,15 +3100,22 @@ private class DefaultLabelCandidatePlan(
     val owner: Any,
     style: CompiledPreparedStyle,
     override val tiles: List<TileId>,
+    callerTiles: List<TileId>,
     resourceAccess: ResourceAccessMode,
     assembly: LabelAssembly?,
     limits: ResourceLimits,
 ) : LabelCandidatePlan {
-    private val closed = AtomicBoolean(false)
-    private val state = LabelCandidatePlanState(style, tiles, resourceAccess, assembly, limits)
+    // Null once closed, so close() can drop the LabelAssembly - and every PendingLabel it holds -
+    // rather than keeping it reachable for as long as the caller holds this plan. AutoCloseable
+    // implies release, and a reusable plan is exactly the object a caller is likely to hold onto.
+    private val state = AtomicReference<LabelCandidatePlanState?>(
+        LabelCandidatePlanState(style, tiles, callerTiles, resourceAccess, assembly, limits),
+    )
 
+    // Computed once at construction, not read through `state`, so both keep working after
+    // close() clears it: neither needs the assembly or the style beyond this point.
     override val glyphClosure: List<GlyphRangeRef> =
-        state.assembly?.requiredRanges.orEmpty().map { request ->
+        assembly?.requiredRanges.orEmpty().map { request ->
             GlyphRangeRef(
                 fontStackDigest = request.fontStack.sha256Hex(),
                 rangeStart = request.rangeStart,
@@ -3104,33 +3123,36 @@ private class DefaultLabelCandidatePlan(
         }
 
     override val diagnostics: List<RenderDiagnostic> =
-        if (state.assembly == null) {
+        if (assembly == null) {
             style.diagnostics + LabelCandidateAssembler.glyphRangeUnavailable(tiles)
         } else {
             style.diagnostics
         }
 
     override fun glyphUrls(template: String): List<String> {
-        val resolved = state.style.glyphsTemplate ?: return emptyList()
-        if (state.assembly == null) return emptyList()
+        val current = requireOpenState()
+        val resolved = current.style.glyphsTemplate ?: return emptyList()
+        val assembly = current.assembly ?: return emptyList()
         // Compared in redacted form, so two copies of one template that differ only by credential
         // agree, and neither side has to reveal its own. A relative reference passed unresolved
         // does not agree, which is the case worth catching: it would compose URLs that look right
-        // and are never the ones fetched.
+        // and are never the ones fetched. Because the comparison is redacted, the authentication
+        // value actually substituted into the returned URLs is the caller's own [template], never
+        // verified against what acquisition will use - see this method's KDoc.
         if (template.withRedactedAuthenticationQuery() != resolved.canonicalUrl) {
             throw GlyphTemplateMismatchException()
         }
-        return state.assembly.requiredRanges.map { request ->
+        return assembly.requiredRanges.map { request ->
             GlyphResourceAcquirer.resolveUrl(template, request.fontStack, request.rangeStart)
         }
     }
 
     override fun close() {
-        closed.store(true)
+        state.store(null)
     }
 
-    fun stateForAcquisition(): LabelCandidatePlanState {
-        if (closed.load()) throw LabelCandidatePlanClosedException()
-        return state
-    }
+    fun stateForAcquisition(): LabelCandidatePlanState = requireOpenState()
+
+    private fun requireOpenState(): LabelCandidatePlanState =
+        state.load() ?: throw LabelCandidatePlanClosedException()
 }

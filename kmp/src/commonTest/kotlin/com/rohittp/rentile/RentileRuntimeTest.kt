@@ -4050,7 +4050,6 @@ class RentileRuntimeTest {
 
             assertEquals(first, second)
             assertEquals(first.size, first.toSet().size)
-            assertEquals(first.sortedWith(compareBy({ it.fontStackDigest }, { it.rangeStart })).size, first.size)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -4099,6 +4098,9 @@ class RentileRuntimeTest {
             plan.close()
             plan.close() // idempotent
             assertFailsWith<LabelCandidatePlanClosedException> { rasterizer.acquireLabelCandidates(plan) }
+            assertFailsWith<LabelCandidatePlanClosedException> {
+                plan.glyphUrls("https://glyphs.example.test/{fontstack}/{range}.pbf")
+            }
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
