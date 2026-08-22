@@ -5,10 +5,15 @@ import com.rohittp.rentile.BatchRenderException
 import com.rohittp.rentile.CompatibilityPolicy
 import com.rohittp.rentile.DiagnosticCode
 import com.rohittp.rentile.DiagnosticSeverity
+import com.rohittp.rentile.ForeignLabelCandidatePlanException
 import com.rohittp.rentile.ForeignPreparedBatchException
 import com.rohittp.rentile.ForeignPreparedStyleException
+import com.rohittp.rentile.GlyphRangeRef
+import com.rohittp.rentile.GlyphTemplateMismatchException
 import com.rohittp.rentile.InvalidTileIdException
 import com.rohittp.rentile.LabelCandidateBatch
+import com.rohittp.rentile.LabelCandidatePlan
+import com.rohittp.rentile.LabelCandidatePlanClosedException
 import com.rohittp.rentile.LabelLayerDescriptor
 import com.rohittp.rentile.MetricName
 import com.rohittp.rentile.PipelineStage
@@ -24,6 +29,7 @@ import com.rohittp.rentile.RenderOptions
 import com.rohittp.rentile.RenderedTile
 import com.rohittp.rentile.ExactRecoveryResult
 import com.rohittp.rentile.ResourceSubstitution
+import com.rohittp.rentile.ResourceLimits
 import com.rohittp.rentile.RentileConfiguration
 import com.rohittp.rentile.RentileMetric
 import com.rohittp.rentile.RentileException
@@ -49,6 +55,8 @@ import com.rohittp.rentile.internal.metadata.TileJsonResourceAcquirer
 import com.rohittp.rentile.internal.geojson.GeoJsonResourceAcquirer
 import com.rohittp.rentile.internal.glyph.AcquiredGlyphRange
 import com.rohittp.rentile.internal.glyph.GlyphResourceAcquirer
+import com.rohittp.rentile.internal.glyph.LABEL_TILE_ORDER
+import com.rohittp.rentile.internal.glyph.LabelAssembly
 import com.rohittp.rentile.internal.glyph.LabelCandidateAssembler
 import com.rohittp.rentile.internal.mvt.DecodedVectorFeature
 import com.rohittp.rentile.internal.mvt.DecodedVectorGeometry
@@ -529,19 +537,28 @@ private class DefaultBasemapRasterizer(
         ).joinToString("|").sha256Hex()
     }
 
-    override suspend fun acquireLabelCandidates(
+    override suspend fun planLabelCandidates(
         style: PreparedStyle,
         tiles: List<TileId>,
         resourceAccess: ResourceAccessMode,
-    ): LabelCandidateBatch = operation {
+    ): LabelCandidatePlan = operation {
         val compiledStyle = requireOwnedStyle(style)
         val stableTiles = tiles.toList()
         stableTiles.forEach { validateTile(it, compiledStyle.policy) }
         // A style with no glyphs template has no text to lay out. That is a legitimate style, and
-        // this API is opt-in, so it reports and returns empty rather than failing (ADR 0026).
-        val glyphsTemplate = compiledStyle.glyphsTemplate ?: run {
+        // this API is opt-in, so it reports and plans an empty closure rather than failing
+        // (ADR 0026). The diagnostic is recorded here rather than at acquisition because it is a
+        // planning fact: nothing about the tiles can change the answer.
+        if (compiledStyle.glyphsTemplate == null) {
             recordDiagnosticSafely(LabelCandidateAssembler.glyphRangeUnavailable(stableTiles))
-            return@operation LabelCandidateAssembler.emptyBatch(compiledStyle, stableTiles, configuration.resourceLimits)
+            return@operation DefaultLabelCandidatePlan(
+                owner = owner,
+                style = compiledStyle,
+                tiles = stableTiles.distinct().sortedWith(LABEL_TILE_ORDER),
+                resourceAccess = resourceAccess,
+                assembly = null,
+                limits = configuration.resourceLimits,
+            )
         }
 
         val samples = compiledStyle.labelLayers
@@ -559,19 +576,43 @@ private class DefaultBasemapRasterizer(
             (sample.source.idDigest to sample.outputTile) to (outcome as AcquisitionOutcome.Success).value
         }
 
-        val plan = LabelCandidateAssembler.plan(
+        val assembly = LabelCandidateAssembler.plan(
             style = compiledStyle,
             tiles = stableTiles.distinct(),
             resources = resources,
             limits = configuration.resourceLimits,
             iconImageNameOf = ::evaluateIconImageName,
         )
-        currentCoroutineContext().ensureActive()
+        DefaultLabelCandidatePlan(
+            owner = owner,
+            style = compiledStyle,
+            tiles = stableTiles.distinct().sortedWith(LABEL_TILE_ORDER),
+            resourceAccess = resourceAccess,
+            assembly = assembly,
+            limits = configuration.resourceLimits,
+        )
+    }
+
+    override suspend fun acquireLabelCandidates(plan: LabelCandidatePlan): LabelCandidateBatch = operation {
+        val owned = requireOwnedLabelCandidatePlan(plan)
+        // Read once, into a local, before any suspension: a concurrent close() must not be able
+        // to pull state out from under an acquisition already in flight.
+        val state = owned.stateForAcquisition()
+        val assembly = state.assembly
+            ?: return@operation LabelCandidateAssembler.emptyBatch(state.style, state.tiles, state.limits)
+
+        val glyphsTemplate = state.style.glyphsTemplate
+            ?: return@operation LabelCandidateAssembler.emptyBatch(state.style, state.tiles, state.limits)
         val rangeOutcomes = supervisorScope {
-            plan.requiredRanges.map { request ->
+            assembly.requiredRanges.map { request ->
                 async {
                     acquireOutcome {
-                        glyphAcquirer.acquire(glyphsTemplate.resolve(), request.fontStack, request.rangeStart, resourceAccess)
+                        glyphAcquirer.acquire(
+                            glyphsTemplate.resolve(),
+                            request.fontStack,
+                            request.rangeStart,
+                            state.resourceAccess,
+                        )
                     }
                 }
             }.awaitAll()
@@ -579,7 +620,20 @@ private class DefaultBasemapRasterizer(
         throwAcquisitionFailures(rangeOutcomes)
         val ranges = rangeOutcomes.map { (it as AcquisitionOutcome.Success<AcquiredGlyphRange>).value }
 
-        plan.assemble(ranges, ::recordDiagnosticSafely)
+        assembly.assemble(ranges, ::recordDiagnosticSafely)
+    }
+
+    override suspend fun acquireLabelCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode,
+    ): LabelCandidateBatch {
+        val plan = planLabelCandidates(style, tiles, resourceAccess)
+        return try {
+            acquireLabelCandidates(plan)
+        } finally {
+            plan.close()
+        }
     }
 
     override fun terrainSourceDescriptor(style: PreparedStyle): TerrainSourceDescriptor? =
@@ -751,6 +805,12 @@ private class DefaultBasemapRasterizer(
         val prepared = batch as? DefaultPreparedBatch ?: throw ForeignPreparedBatchException()
         if (prepared.owner !== owner) throw ForeignPreparedBatchException()
         return prepared
+    }
+
+    private fun requireOwnedLabelCandidatePlan(plan: LabelCandidatePlan): DefaultLabelCandidatePlan {
+        val owned = plan as? DefaultLabelCandidatePlan ?: throw ForeignLabelCandidatePlanException()
+        if (owned.owner !== owner) throw ForeignLabelCandidatePlanException()
+        return owned
     }
 
     private fun validateTile(tile: TileId, policy: CompatibilityPolicy) {
@@ -3011,5 +3071,66 @@ private class PreparedBatchLease(
 
     override fun close() {
         if (closed.compareAndSet(expectedValue = false, newValue = true)) release()
+    }
+}
+
+/** Everything one acquisition reads off a plan, captured atomically so close() cannot race it. */
+private class LabelCandidatePlanState(
+    val style: CompiledPreparedStyle,
+    val tiles: List<TileId>,
+    val resourceAccess: ResourceAccessMode,
+    val assembly: LabelAssembly?,
+    val limits: ResourceLimits,
+)
+
+@OptIn(ExperimentalAtomicApi::class)
+private class DefaultLabelCandidatePlan(
+    val owner: Any,
+    style: CompiledPreparedStyle,
+    override val tiles: List<TileId>,
+    resourceAccess: ResourceAccessMode,
+    assembly: LabelAssembly?,
+    limits: ResourceLimits,
+) : LabelCandidatePlan {
+    private val closed = AtomicBoolean(false)
+    private val state = LabelCandidatePlanState(style, tiles, resourceAccess, assembly, limits)
+
+    override val glyphClosure: List<GlyphRangeRef> =
+        state.assembly?.requiredRanges.orEmpty().map { request ->
+            GlyphRangeRef(
+                fontStackDigest = request.fontStack.sha256Hex(),
+                rangeStart = request.rangeStart,
+            )
+        }
+
+    override val diagnostics: List<RenderDiagnostic> =
+        if (state.assembly == null) {
+            style.diagnostics + LabelCandidateAssembler.glyphRangeUnavailable(tiles)
+        } else {
+            style.diagnostics
+        }
+
+    override fun glyphUrls(template: String): List<String> {
+        val resolved = state.style.glyphsTemplate ?: return emptyList()
+        if (state.assembly == null) return emptyList()
+        // Compared in redacted form, so two copies of one template that differ only by credential
+        // agree, and neither side has to reveal its own. A relative reference passed unresolved
+        // does not agree, which is the case worth catching: it would compose URLs that look right
+        // and are never the ones fetched.
+        if (template.withRedactedAuthenticationQuery() != resolved.canonicalUrl) {
+            throw GlyphTemplateMismatchException()
+        }
+        return state.assembly.requiredRanges.map { request ->
+            GlyphResourceAcquirer.resolveUrl(template, request.fontStack, request.rangeStart)
+        }
+    }
+
+    override fun close() {
+        closed.store(true)
+    }
+
+    fun stateForAcquisition(): LabelCandidatePlanState {
+        if (closed.load()) throw LabelCandidatePlanClosedException()
+        return state
     }
 }

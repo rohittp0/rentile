@@ -3928,6 +3928,186 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun theGlyphClosureIsExactlyWhatTheAcquisitionRequests() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val requested = mutableListOf<String>()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) {
+                    requested += request.url
+                    TransportResponse(200, glyphs)
+                } else {
+                    TransportResponse(200, vectorTile)
+                }
+            },
+        )
+        try {
+            val template = "https://glyphs.example.test/{fontstack}/{range}.pbf"
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val plan = rasterizer.planLabelCandidates(style, listOf(TileId(2, 1, 1)))
+            val predicted = plan.glyphUrls(template)
+
+            // Nothing was fetched to learn the closure.
+            assertTrue(requested.isEmpty())
+            assertTrue(predicted.isNotEmpty())
+
+            rasterizer.acquireLabelCandidates(plan)
+            plan.close()
+
+            // Equality, not containment: a superset would hide a route that is never fetched,
+            // and an under-approximation is what fails closed behind a consumer's firewall.
+            assertEquals(predicted.toSet(), requested.toSet())
+            assertEquals(predicted.size, predicted.toSet().size)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun theOneShotPathMatchesTheTwoPhasePath() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+            val tiles = listOf(TileId(2, 1, 1))
+
+            val oneShot = rasterizer.acquireLabelCandidates(style, tiles)
+            val twoPhase = rasterizer.planLabelCandidates(style, tiles).use { plan ->
+                rasterizer.acquireLabelCandidates(plan)
+            }
+
+            assertEquals(oneShot.contentKey, twoPhase.contentKey)
+            assertEquals(oneShot.candidates, twoPhase.candidates)
+            assertEquals(oneShot.layerStyles, twoPhase.layerStyles)
+            assertEquals(oneShot.atlas.contentKey, twoPhase.atlas.contentKey)
+            assertEquals(oneShot.diagnostics, twoPhase.diagnostics)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aPlanIsReusableAndYieldsEqualBatches() = runTest {
+        // Astral name: exercises the assembly path that used to mutate the shared tallies.
+        val vectorTile = placeNameVectorTile("😀")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            rasterizer.planLabelCandidates(style, listOf(TileId(2, 1, 1))).use { plan ->
+                val first = rasterizer.acquireLabelCandidates(plan)
+                val second = rasterizer.acquireLabelCandidates(plan)
+                assertEquals(first.contentKey, second.contentKey)
+                assertEquals(first.candidates, second.candidates)
+                assertEquals(first.diagnostics, second.diagnostics)
+
+                val firstSkips = first.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
+                val secondSkips = second.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
+                // Whole-object equality covers affectedTiles, which is what the merge unions and
+                // LABEL_TILE_ORDER re-sorts; the absolute value pins it, since two equally-wrong
+                // diagnostics would compare equal to each other.
+                assertEquals(firstSkips, secondSkips)
+                assertEquals("1", firstSkips.details["skippedNoGlyphs"])
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun theClosureDedupesAcrossTilesAndIsStable() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+            val tiles = listOf(TileId(2, 1, 1), TileId(2, 2, 1))
+
+            val first = rasterizer.planLabelCandidates(style, tiles).use { it.glyphClosure }
+            val second = rasterizer.planLabelCandidates(style, tiles).use { it.glyphClosure }
+
+            assertEquals(first, second)
+            assertEquals(first.size, first.toSet().size)
+            assertEquals(first.sortedWith(compareBy({ it.fontStackDigest }, { it.rangeStart })).size, first.size)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aStyleWithoutGlyphsPlansAnEmptyClosure() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val rasterizer = testRasterizer(transport = ResourceTransport { TransportResponse(200, vectorTile) })
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson(glyphs = null)))
+
+            rasterizer.planLabelCandidates(style, listOf(TileId(2, 1, 1))).use { plan ->
+                assertTrue(plan.glyphClosure.isEmpty())
+                // Not verified against any template: this plan will fetch nothing.
+                assertTrue(plan.glyphUrls("https://anything.example.test/{fontstack}/{range}.pbf").isEmpty())
+                assertTrue(plan.diagnostics.any { it.code == DiagnosticCode.GLYPH_RANGE_UNAVAILABLE })
+
+                val batch = rasterizer.acquireLabelCandidates(plan)
+                assertTrue(batch.candidates.isEmpty())
+                assertTrue(batch.diagnostics.any { it.code == DiagnosticCode.GLYPH_RANGE_UNAVAILABLE })
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aClosedOrForeignPlanIsRejected() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val transport = ResourceTransport { request ->
+            if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+            else TransportResponse(200, vectorTile)
+        }
+        val rasterizer = testRasterizer(transport = transport)
+        val other = testRasterizer(transport = transport)
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+            val plan = rasterizer.planLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            assertFailsWith<ForeignLabelCandidatePlanException> { other.acquireLabelCandidates(plan) }
+
+            plan.close()
+            plan.close() // idempotent
+            assertFailsWith<LabelCandidatePlanClosedException> { rasterizer.acquireLabelCandidates(plan) }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+            other.close()
+            other.awaitClosed()
+        }
+    }
+
+    @Test
     fun theLabelRequestKeyIsStableTileOrderIndependentAndCredentialFree() = runTest {
         val rasterizer = testRasterizer()
         try {

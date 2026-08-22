@@ -387,6 +387,66 @@ public data class LabelCandidateBatch(
     public val diagnostics: List<RenderDiagnostic>,
 )
 
+/**
+ * One Glyph Range a [LabelCandidatePlan] will acquire. Identity only: no URL, no credential.
+ *
+ * The raw font stack is deliberately absent. `text-font` may be a data-driven expression, so a
+ * resolved stack can carry bytes from a decoded feature property; [fontStackDigest] identifies it
+ * without republishing it, and matches [LabelGlyphAtlasEntry.fontStackDigest] so a closure entry
+ * correlates with the atlas entries it eventually produces.
+ */
+public data class GlyphRangeRef(
+    public val fontStackDigest: String,
+    /** The first codepoint of the 256-wide block, so `0`, `256`, `512` and so on. */
+    public val rangeStart: Int,
+)
+
+/**
+ * A frozen Glyph Closure for one tile set, held between Label Tile acquisition and Glyph Range
+ * acquisition. Not a Prepared Batch; see CONTEXT.md.
+ *
+ * A caller that must know a glyph URL before it is fetched reads [glyphUrls] and then passes this
+ * same plan to [BasemapRasterizer.acquireLabelCandidates]. Both read one frozen list, so the
+ * closure cannot under-approximate the acquisition that follows it - which a second, independent
+ * query could, because tile bytes can legitimately change between two acquisitions.
+ *
+ * Reusable: acquiring from one plan repeatedly yields equal batches.
+ */
+public interface LabelCandidatePlan : AutoCloseable {
+    /** The de-duplicated tile set this plan was computed over, in (z, x, y) order. */
+    public val tiles: List<TileId>
+
+    /**
+     * Exactly the Glyph Ranges [BasemapRasterizer.acquireLabelCandidates] will request from this
+     * plan - not a superset and not an estimate. Sorted by resolved font stack then
+     * [GlyphRangeRef.rangeStart], de-duplicated across every layer and tile in the batch, and
+     * stable across runs. The sort key is not exposed, so the order is stable but not
+     * re-derivable; [glyphUrls] returns its list in this same order.
+     */
+    public val glyphClosure: List<GlyphRangeRef>
+
+    /**
+     * The URL of every entry in [glyphClosure], in the same order, composed by Rentile's own
+     * substitution so a caller never re-derives it.
+     *
+     * [template] is the caller's copy of the style's `glyphs` value, resolved against the style's
+     * base URI. Rentile holds its own copy but will not emit it, because that copy can carry the
+     * provider credential. Instead it checks the two agree and throws
+     * [GlyphTemplateMismatchException] when they do not, so a relative reference passed
+     * unresolved, a stale template, or another style's template fails here rather than as labels
+     * that silently stop drawing.
+     *
+     * Returns an empty list, without checking [template], when the style resolves no `glyphs`
+     * template: such a plan will fetch nothing.
+     */
+    public fun glyphUrls(template: String): List<String>
+
+    public val diagnostics: List<RenderDiagnostic>
+
+    /** Idempotent, non-blocking, and non-throwing. */
+    override fun close()
+}
+
 public enum class TerrainDemEncoding {
     MAPBOX,
     TERRARIUM,
@@ -596,6 +656,24 @@ public interface BasemapRasterizer : AutoCloseable {
      * must store [LabelCandidateBatch.contentKey] beside whatever it indexes with this value.
      */
     public fun labelCandidateRequestKey(style: PreparedStyle, tiles: List<TileId>): String
+
+    /**
+     * Acquires this tile set's Label Tiles, decodes and evaluates them, and freezes the Glyph
+     * Ranges the batch will need - without acquiring any of them.
+     *
+     * Tile substitution is deliberately not applied, exactly as in [acquireLabelCandidates].
+     */
+    public suspend fun planLabelCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): LabelCandidatePlan
+
+    /**
+     * Acquires [LabelCandidatePlan.glyphClosure] and assembles the batch, reusing the access mode
+     * the plan was made with so one batch cannot disagree with itself about what caching meant.
+     */
+    public suspend fun acquireLabelCandidates(plan: LabelCandidatePlan): LabelCandidateBatch
 
     /**
      * All-or-error validated Label acquisition. Tile substitution is deliberately not applied.
