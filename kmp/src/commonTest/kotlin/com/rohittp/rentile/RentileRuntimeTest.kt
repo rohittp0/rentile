@@ -364,34 +364,27 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun anIconSizedFromTextExtentsStaysExcluded() = runTest {
-        val spritePng = renderSyntheticPng(8)
-        val requestedClasses = mutableListOf<ResourceClass>()
-        val requestedClassesMutex = Mutex()
+    fun anIconSizedFromTextExtentsIsEmittedWithItsLabel() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
         val rasterizer = testRasterizer(
-            transport = ResourceTransport { request ->
-                requestedClassesMutex.withLock { requestedClasses += request.resourceClass }
-                when (request.resourceClass) {
-                    ResourceClass.SPRITE_JSON -> TransportResponse(
-                        200,
-                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
-                    )
-                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
-                    else -> error("Unexpected resource class ${request.resourceClass}")
-                }
-            },
+            transport = spriteAndGlyphTransport(vectorTile, glyphs),
         )
         try {
             val style = rasterizer.prepare(
                 StyleInput.InlineJson(
-                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-text-fit":"width","text-field":["get","name"]}}]}""",
+                    placeNameStyleJson(
+                        iconImage = "marker",
+                        extraTextLayout = """"icon-text-fit":"width"""",
+                    ),
                 ),
             )
 
-            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
-            // This style's only symbol layer is icon-text-fit coupled and therefore excluded; it
-            // must not require the sprite it can never use, so no sprite request should occur.
-            assertEquals(emptySet(), requestedClassesMutex.withLock { requestedClasses.toSet() })
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            val candidate = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+                .candidates.single()
+            assertEquals("marker", candidate.icon?.imageName)
+            assertEquals(IconTextFit.WIDTH, candidate.icon?.textFit)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -399,30 +392,89 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun anExpressionValuedIconTextFitStaysExcluded() = runTest {
-        // icon-text-fit is data-driven in the style spec. An expression value is a JsonArray, not
-        // a JsonPrimitive, so asPrimitive() returns null for it - indistinguishable from an absent
-        // icon-text-fit unless retainsIconIndependentOfText treats a non-primitive as coupled. If
-        // it did not, this layer would be retained and its icon drawn unstretched even though the
-        // expression could resolve to "width" or "both" per feature.
-        val requestedClasses = mutableListOf<ResourceClass>()
-        val requestedClassesMutex = Mutex()
+    fun anExpressionValuedIconTextFitIsEvaluatedPerLabel() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
         val rasterizer = testRasterizer(
-            transport = ResourceTransport { request ->
-                requestedClassesMutex.withLock { requestedClasses += request.resourceClass }
-                error("Unexpected resource class ${request.resourceClass}")
-            },
+            transport = spriteAndGlyphTransport(vectorTile, glyphs),
         )
         try {
             val style = rasterizer.prepare(
                 StyleInput.InlineJson(
-                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-text-fit":["case",["==",["get","kind"],"shield"],"both","none"],"text-field":["get","name"]}}]}""",
+                    placeNameStyleJson(
+                        iconImage = "marker",
+                        extraTextLayout = """"icon-text-fit":["case",["==",["get","name"],"Tokyo"],"both","none"]""",
+                    ),
                 ),
             )
 
-            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
-            // No layer ends up retaining or desiring the sprite, so it must not be requested.
-            assertEquals(emptySet(), requestedClassesMutex.withLock { requestedClasses.toSet() })
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            val candidate = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+                .candidates.single()
+            assertEquals(IconTextFit.BOTH, candidate.icon?.textFit)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aLabelWithAnUnsupportedOrInvalidPairedIconKeepsItsTextAndReportsTheIconLoss() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = spriteAndGlyphTransport(vectorTile, glyphs),
+        )
+        try {
+            val unsupportedLayout = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        iconImage = "marker",
+                        extraTextLayout = """"icon-text-fit":"both","icon-future-layout":true""",
+                    ),
+                ),
+            )
+            val unsupportedPaint = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        iconImage = "marker",
+                        extraTextLayout = """"icon-text-fit":"both"""",
+                        extraTextPaint = """"icon-future-paint":true""",
+                    ),
+                ),
+            )
+            val invalidSize = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        iconImage = "marker",
+                        iconSize = "\"not-a-number\"",
+                    ),
+                ),
+            )
+
+            listOf(unsupportedLayout, unsupportedPaint, invalidSize).forEach { style ->
+                // An icon-only compile failure must not escape through the text program's outer
+                // compatibility catch: preparation retains the text and defers the observable
+                // icon loss to the candidate batch where candidate counts are available.
+                assertTrue(style.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+                assertTrue(style.diagnostics.none { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED })
+                assertEquals(1, rasterizer.labelLayerDescriptors(style).size)
+
+                val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+                assertEquals(1, batch.candidates.size)
+                assertEquals(null, batch.candidates.single().icon)
+                assertTrue(batch.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+                val skipped = batch.diagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED }
+                assertEquals(DiagnosticSeverity.WARNING, skipped.severity)
+                assertEquals(PipelineStage.RESOURCE_DECODING, skipped.stage)
+                assertEquals("0", skipped.details["layerIndex"])
+                assertEquals("1", skipped.details["candidateFeatures"])
+                assertEquals("1", skipped.details["skippedFeatures"])
+                assertEquals("0", skipped.details["skippedMissingSprite"])
+                assertEquals(64, skipped.details.getValue("layerIdDigest").length)
+                assertFalse(skipped.details.values.contains("places"))
+            }
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -446,13 +498,12 @@ class RentileRuntimeTest {
         )
         try {
             // This layer has meaningful text and no icon-text-fit, so classifySymbol retains it and
-            // compileIconLayer runs against it for the first time. Its viewport-aligned line
-            // placement is a construct the compatibility profile rejects; that rejection must fall
-            // back to the pre-existing text-coupled exclusion instead of failing the whole style,
-            // and the sibling background layer must still be usable.
+            // compileIconLayer runs against it. A genuinely unknown icon key must still degrade the
+            // repaired icon only, rather than failing the whole style, while the sibling background
+            // layer remains usable.
             val style = rasterizer.prepare(
                 StyleInput.InlineJson(
-                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"],"symbol-placement":"line","icon-rotation-alignment":"viewport"}}]}""",
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"],"icon-future-layout":true}}]}""",
                 ),
             )
 
@@ -461,7 +512,7 @@ class RentileRuntimeTest {
             // The original failRetained reason must survive into the exclusion diagnostic's
             // details, since it is the only signal about what to fix next in the corpus.
             assertEquals(
-                "viewport-aligned line icons are outside the compatibility profile",
+                "an icon layout property is unsupported",
                 excluded.details["cause"],
             )
             // The construct sentence never doubles as a causeCode; that key is for typed resource
@@ -494,13 +545,13 @@ class RentileRuntimeTest {
         try {
             // This layer has no text at all, so it is author-intended as an icon layer:
             // classifySymbol has always retained it unconditionally and compileIconLayer has
-            // always run against it. Its viewport-aligned line placement must still fail
-            // preparation loudly, exactly as before this change - the new try/catch guarding the
-            // text-present branch must not weaken this contract.
+            // always run against it. A genuinely unknown icon layout key must still fail
+            // preparation loudly; the try/catch guarding the text-present repaired branch must
+            // not weaken this contract.
             val error = assertFailsWith<StylePreparationException> {
                 rasterizer.prepare(
                     StyleInput.InlineJson(
-                        """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","symbol-placement":"line","icon-rotation-alignment":"viewport"}}]}""",
+                        """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-future-layout":true}}]}""",
                     ),
                 )
             }
@@ -514,12 +565,304 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun outputTileIconsEvaluateFunctionalPlacementPropertiesInsteadOfUsingDefaults() = runTest {
+        val spritePng = renderSyntheticPng(8)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(
+                        200,
+                        """{"marker":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":1,"sdf":true}}""".encodeToByteArray(),
+                    )
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                    ResourceClass.VECTOR_TILE -> TransportResponse(200, iconOffsetVectorTile(goodFeatureCount = 1, badFeatureCount = 0))
+                    else -> error("Unexpected resource class ${request.resourceClass}")
+                }
+            },
+        )
+        try {
+            val atZoomZero = """["case",["==",["zoom"],0]"""
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-anchor":$atZoomZero,"left","right"],"icon-overlap":$atZoomZero,"always","never"],"icon-ignore-placement":$atZoomZero,true,false],"icon-keep-upright":$atZoomZero,true,false],"icon-rotation-alignment":$atZoomZero,"viewport","map"],"icon-pitch-alignment":$atZoomZero,"viewport","map"],"symbol-avoid-edges":$atZoomZero,false,true],"symbol-z-order":$atZoomZero,"source","viewport-y"]},"paint":{"icon-color":"#ff0000","icon-translate-anchor":$atZoomZero,"viewport","map"]}}]}""",
+                ),
+            )
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+
+            // The point is at (128,128). Functional icon-anchor resolves to LEFT, putting the
+            // 8px sprite centre at x=132; x=135 is red. The old silent default CENTER ended at
+            // x=132 and left this pixel white.
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 0, 0),
+                actual = output.pngBytes.pixelColor(135, 128),
+                tolerance = 1,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun outputTileViewportYDepthSortsNeverOverlapIconsWhenIgnorePlacementIsFalse() = runTest {
+        // Source order deliberately opposes viewport-y order: red is the first feature but its
+        // symbol anchor sits lower on screen, while blue is second and its anchor sits higher.
+        // Their opposing icon-offsets reverse the icon-centre order, so sorting centerY would put
+        // blue on top. SOURCE also paints blue last. VIEWPORT_Y must instead order projected
+        // anchor.y and paint red last. Both 4px icon footprints are disjoint, so NEVER-overlap and
+        // ignore-placement=false retain both; only their 4px halos overlap. The false ignore flag
+        // is therefore the only VIEWPORT_Y activation condition, pinning MapLibre's polarity.
+        val vectorTile = iconPointVectorTile(
+            Triple(2048, 2112, "#ff0000"), // (128, 132), first in source and lower on screen.
+            Triple(2048, 1984, "#0000ff"), // (128, 124), second in source and higher on screen.
+        )
+        val rasterizer = testRasterizer(
+            transport = iconOutputTransport(vectorTile, spriteWidth = 4, spriteHeight = 4),
+        )
+        try {
+            fun styleJson(zOrder: String) =
+                """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-offset":["case",["==",["get","color"],"#ff0000"],["literal",[0,-8]],["literal",[0,8]]],"icon-padding":0,"icon-overlap":"never","icon-ignore-placement":false,"symbol-z-order":"$zOrder"},"paint":{"icon-color":["get","color"],"icon-halo-color":["get","color"],"icon-halo-width":4}}]}"""
+
+            val sourceStyle = rasterizer.prepare(StyleInput.InlineJson(styleJson("source")))
+            val viewportStyle = rasterizer.prepare(StyleInput.InlineJson(styleJson("viewport-y")))
+            val tile = TileId(0, 0, 0)
+            val source = rasterizer.render(sourceStyle, listOf(tile), RenderOptions(256)).tiles.single()
+            val viewport = rasterizer.render(viewportStyle, listOf(tile), RenderOptions(256)).tiles.single()
+
+            assertColorClose(
+                expected = Color.makeARGB(255, 0, 0, 255),
+                actual = source.pngBytes.pixelColor(128, 128),
+                tolerance = 1,
+            )
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 0, 0),
+                actual = viewport.pngBytes.pixelColor(128, 128),
+                tolerance = 1,
+            )
+            // A red-only halo pixel proves both reversed centres actually took effect; the
+            // overlap assertion is testing anchor draw order, not source/centre ordering.
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 0, 0),
+                actual = viewport.pngBytes.pixelColor(128, 120),
+                tolerance = 1,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun outputTileCooperativeOverlapIsBlockedOnlyByNever() = runTest {
+        // Red is placed first and recorded in the collision index; the incoming blue icon is
+        // COOPERATIVE and occupies exactly the same footprint. MapLibre permits it over an
+        // existing ALWAYS or COOPERATIVE icon, but an existing NEVER icon must reject it.
+        val vectorTile = iconPointVectorTile(
+            Triple(2048, 2048, "#ff0000"),
+            Triple(2048, 2048, "#0000ff"),
+        )
+        val rasterizer = testRasterizer(
+            transport = iconOutputTransport(vectorTile, spriteWidth = 8, spriteHeight = 8),
+        )
+        try {
+            suspend fun overlapColor(existingOverlap: String): Int {
+                val style = rasterizer.prepare(
+                    StyleInput.InlineJson(
+                        """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-padding":0,"icon-overlap":["case",["==",["get","color"],"#ff0000"],"$existingOverlap","cooperative"],"icon-ignore-placement":false,"symbol-z-order":"source"},"paint":{"icon-color":["get","color"]}}]}""",
+                    ),
+                )
+                return rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256))
+                    .tiles.single().pngBytes.centerPixelColor()
+            }
+
+            assertColorClose(
+                expected = Color.makeARGB(255, 0, 0, 255),
+                actual = overlapColor("always"),
+                tolerance = 1,
+            )
+            assertColorClose(
+                expected = Color.makeARGB(255, 0, 0, 255),
+                actual = overlapColor("cooperative"),
+                tolerance = 1,
+            )
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 0, 0),
+                actual = overlapColor("never"),
+                tolerance = 1,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun outputTileAutoZOrderUsesFoldedTextPlacementFlags() = runTest {
+        // The icon half alone does not activate AUTO viewport-y ordering: overlap is NEVER and
+        // ignore-placement is true. Adding meaningful text supplies the default
+        // text-ignore-placement=false, which does activate viewport-y even though Output Tile
+        // placement emits no text collision box. Opposing offsets reverse centerY just as in the
+        // explicit test above, so the overlap pixel distinguishes anchor order from source order.
+        val vectorTile = iconPointVectorTile(
+            Triple(2048, 2112, "#ff0000"),
+            Triple(2048, 1984, "#0000ff"),
+        )
+        val rasterizer = testRasterizer(
+            transport = iconOutputTransport(vectorTile, spriteWidth = 16, spriteHeight = 16),
+        )
+        try {
+            fun styleJson(textLayout: String) =
+                """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{$textLayout"icon-image":"marker","icon-offset":["case",["==",["get","color"],"#ff0000"],["literal",[0,-8]],["literal",[0,8]]],"icon-padding":0,"icon-overlap":"never","icon-ignore-placement":true},"paint":{"icon-color":["get","color"]}}]}"""
+
+            val iconOnly = rasterizer.prepare(StyleInput.InlineJson(styleJson(textLayout = "")))
+            val folded = rasterizer.prepare(
+                StyleInput.InlineJson(styleJson(textLayout = "\"text-field\":\"folded\",")),
+            )
+            val tile = TileId(0, 0, 0)
+            val iconOnlyOutput = rasterizer.render(iconOnly, listOf(tile), RenderOptions(256)).tiles.single()
+            val foldedOutput = rasterizer.render(folded, listOf(tile), RenderOptions(256)).tiles.single()
+
+            assertColorClose(
+                expected = Color.makeARGB(255, 0, 0, 255),
+                actual = iconOnlyOutput.pngBytes.pixelColor(128, 128),
+                tolerance = 1,
+            )
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 0, 0),
+                actual = foldedOutput.pngBytes.pixelColor(128, 128),
+                tolerance = 1,
+            )
+            // Both icons still draw. This red-only pixel would be white if omitted text had been
+            // inserted as collision geometry and caused either candidate to be rejected.
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 0, 0),
+                actual = foldedOutput.pngBytes.pixelColor(128, 120),
+                tolerance = 1,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun outputTileAvoidEdgesUsesTheRotatedNonSquareIconBounds() = runTest {
+        // At x=4 an unrotated 16x4 footprint reaches x=-4 and avoid-edges rejects it. Rotated 90
+        // degrees, its horizontal footprint is only 4px wide (x=2..6), so it belongs in the tile.
+        val vectorTile = iconPointVectorTile(Triple(64, 2048, "#ff0000"))
+        val rasterizer = testRasterizer(
+            transport = iconOutputTransport(vectorTile, spriteWidth = 16, spriteHeight = 4),
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-padding":0,"icon-rotate":90,"icon-keep-upright":false,"icon-rotation-alignment":"viewport","icon-overlap":"always","symbol-avoid-edges":true},"paint":{"icon-color":["get","color"]}}]}""",
+                ),
+            )
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 0, 0),
+                actual = output.pngBytes.pixelColor(4, 128),
+                tolerance = 1,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun outputTileRotatesIconAnchorAndOffsetButNotTranslate() = runTest {
+        val vectorTile = iconPointVectorTile(Triple(2048, 2048, "#ff0000"))
+        val rasterizer = testRasterizer(
+            transport = iconOutputTransport(vectorTile, spriteWidth = 8, spriteHeight = 4),
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-anchor":"left","icon-offset":[2,0],"icon-padding":0,"icon-rotate":90,"icon-keep-upright":false,"icon-rotation-alignment":"viewport","icon-overlap":"always"},"paint":{"icon-color":["get","color"],"icon-translate":[5,0],"icon-translate-anchor":"viewport"}}]}""",
+                ),
+            )
+
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+
+            // LEFT contributes +4 local x and icon-offset contributes +2 local x. A 90-degree
+            // rotation turns that +6 into screen +y, while icon-translate remains screen +5 x:
+            // the sprite centre is therefore (128+5, 128+6) = (133,134).
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 0, 0),
+                actual = output.pngBytes.pixelColor(133, 134),
+                tolerance = 1,
+            )
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 255, 255),
+                actual = output.pngBytes.pixelColor(139, 128),
+                tolerance = 1,
+            )
+            assertColorClose(
+                expected = Color.makeARGB(255, 255, 255, 255),
+                actual = output.pngBytes.pixelColor(128, 139),
+                tolerance = 1,
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun outputTileKeepUprightDoesNotFlipPointViewportIcons() = runTest {
+        val vectorTile = iconPointVectorTile(Triple(2048, 2048, "#ff0000"))
+        val directionalSprite = renderDirectionalPng(width = 12, height = 6)
+        val rasterizer = testRasterizer(
+            transport = iconOutputTransport(
+                vectorTile = vectorTile,
+                spriteWidth = 12,
+                spriteHeight = 6,
+                spritePng = directionalSprite,
+            ),
+        )
+        try {
+            fun styleJson(rotation: Int, keepUpright: Boolean) =
+                """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"poi","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-padding":0,"icon-rotate":$rotation,"icon-keep-upright":$keepUpright,"icon-rotation-alignment":"viewport","icon-overlap":"always"},"paint":{"icon-color":["get","color"]}}]}"""
+
+            val tile = TileId(0, 0, 0)
+            val kept = rasterizer.render(
+                rasterizer.prepare(StyleInput.InlineJson(styleJson(rotation = 170, keepUpright = true))),
+                listOf(tile),
+                RenderOptions(256),
+            ).tiles.single()
+            val authored = rasterizer.render(
+                rasterizer.prepare(StyleInput.InlineJson(styleJson(rotation = 170, keepUpright = false))),
+                listOf(tile),
+                RenderOptions(256),
+            ).tiles.single()
+            val incorrectlyFlipped = rasterizer.render(
+                rasterizer.prepare(StyleInput.InlineJson(styleJson(rotation = -10, keepUpright = false))),
+                listOf(tile),
+                RenderOptions(256),
+            ).tiles.single()
+
+            assertTrue(kept.pngBytes.contentEquals(authored.pngBytes))
+            // The asymmetric alpha mask proves this fixture can see the erroneous 180-degree
+            // flip; a centred rectangular sprite would make 170 and -10 look identical.
+            assertFalse(kept.pngBytes.contentEquals(incorrectlyFlipped.pngBytes))
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun aTextOptionalLayerWithAnUnsupportedConstructStillFailsPreparation() = runTest {
         // text-optional: true is the author declaring that the icon stands alone, so this profile
         // was already retaining this layer and already compiling it through the strict path before
         // it grew the icon-text-fit rule. Folding it into the lenient repaired bucket would
-        // silently exclude it with an INFO and make its icon disappear, so the same viewport-
-        // aligned line placement that the repaired branch degrades must still fail loudly here.
+        // silently exclude it with an INFO and make its icon disappear, so the same genuinely
+        // unknown icon layout key that the repaired branch degrades must still fail loudly here.
         val spritePng = renderSyntheticPng(8)
         val rasterizer = testRasterizer(
             transport = ResourceTransport { request ->
@@ -537,7 +880,7 @@ class RentileRuntimeTest {
             val error = assertFailsWith<StylePreparationException> {
                 rasterizer.prepare(
                     StyleInput.InlineJson(
-                        """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"],"text-optional":true,"symbol-placement":"line","icon-rotation-alignment":"viewport"}}]}""",
+                        """{"version":8,"sprite":"https://sprite.example.test/icons","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","text-field":["get","name"],"text-optional":true,"icon-future-layout":true}}]}""",
                     ),
                 )
             }
@@ -619,22 +962,29 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun aTextOptionalIconSizedFromTextExtentsNeedsNoSpriteAndStillPrepares() = runTest {
-        // The boundary of the rule above. text-optional: true puts a layer back on the strict
-        // path, but only for the layers this profile was actually drawing icons for. This one's
-        // icon is sized from text extents, so it was never retained and never needed an atlas:
-        // demanding one would fail a style that prepared fine, which is the exact class of
-        // regression this branch exists to avoid. It must stay excluded and stay silent.
-        val rasterizer = testRasterizer()
+    fun aTextOptionalIconSizedFromTextExtentsIsEmittedWithItsLabel() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = spriteAndGlyphTransport(vectorTile, glyphs),
+        )
         try {
             val style = rasterizer.prepare(
                 StyleInput.InlineJson(
-                    """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"base","type":"background","paint":{"background-color":"#ffffff"}},{"id":"shield","type":"symbol","source":"v","source-layer":"poi","layout":{"icon-image":"marker","icon-text-fit":"width","text-field":["get","name"],"text-optional":true}}]}""",
+                    placeNameStyleJson(
+                        iconImage = "marker",
+                        iconAnchor = "left",
+                        extraTextLayout = """"icon-text-fit":"width","text-optional":true""",
+                    ),
                 ),
             )
 
-            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED })
             assertTrue(style.diagnostics.none { it.severity == DiagnosticSeverity.ERROR })
+            val candidate = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+                .candidates.single()
+            assertEquals(IconTextFit.WIDTH, candidate.icon?.textFit)
+            assertEquals(LabelIconAnchor.LEFT, candidate.icon?.anchor)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -2775,25 +3125,23 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun aPlaceNameLayerWithARejectedFilterKeepsItsDescriptorAndRawMvtAccess() = runTest {
+    fun aPlaceNameLayerWithAnExpressionFilterKeepsItsProgramDescriptorAndRawMvtAccess() = runTest {
         val vectorTile = overzoomVectorTile()
         val rasterizer = testRasterizer(
             transport = ResourceTransport { TransportResponse(200, vectorTile) },
         )
         try {
-            // ["!=", ["get", "class"], "country"] is not legacy-filter-shaped (its second element
-            // is an array, not a bare property-name string), so it compiles as an expression -
-            // and "!=" is not a supported expression operator (only "==", "<=", ">=" are), so this
-            // filter genuinely fails to compile. compileFilter never ran for a label layer before
-            // this task; this is the exact regression the review caught: a rejected filter must
-            // degrade only the text program, never the raw-MVT descriptor below.
+            // This is expression syntax rather than the legacy filter shape. Supporting `!=`
+            // must retain the compiled label program as well as the descriptor and raw-MVT escape
+            // hatch that already existed before label candidates.
             val style = rasterizer.prepare(
                 StyleInput.InlineJson(
                     """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","filter":["!=",["get","class"],"country"],"layout":{"text-field":["get","name"]}}]}""",
                 ),
-            )
+            ) as CompiledPreparedStyle
 
-            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+            assertTrue(style.labelLayers.single().textProgram != null)
 
             val descriptors = rasterizer.labelLayerDescriptors(style)
             assertEquals(1, descriptors.size)
@@ -2810,21 +3158,28 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun aLinePlacedPlaceLayerIsExcludedWithADiagnostic() = runTest {
-        val rasterizer = testRasterizer()
+    fun aLinePlacedPlaceLayerEmitsALineCandidate() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo", copies = 0, lineCopies = 1)
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
         try {
             val style = rasterizer.prepare(
                 StyleInput.InlineJson(
-                    """{"version":8,"glyphs":"https://glyphs.example.test/{fontstack}/{range}.pbf","sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","layout":{"text-field":["get","name"],"symbol-placement":"line"}}]}""",
+                    placeNameStyleJson(extraTextLayout = """"symbol-placement":"line""""),
                 ),
-            ) as CompiledPreparedStyle
+            )
 
-            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED })
-            // The text program is excluded (no label candidates), but the descriptor still ships
-            // unconditionally - this layer's raw-MVT access must be exactly as unaffected as any
-            // other construct this compiler declines to compile.
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED })
             assertEquals(1, rasterizer.labelLayerDescriptors(style).size)
-            assertEquals(null, style.labelLayers.single().textProgram)
+            val candidate = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+                .candidates.single()
+            assertEquals(LabelPlacement.LINE, candidate.placement)
+            assertTrue(candidate.line.size >= 2)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -2863,15 +3218,15 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun preparedStyleExposesEveryPlaceNameSourceLayerAcrossBothTileSchemas() = runTest {
+    fun preparedStyleExposesEveryVisibleTextBearingVectorLayerAcrossBothTileSchemas() = runTest {
         val vectorTile = overzoomVectorTile()
         val rasterizer = testRasterizer(
             transport = ResourceTransport { TransportResponse(200, vectorTile) },
         )
         try {
             // MapTiler Planet v4 splits v3's single `place` layer into one layer per class
-            // family; a v4 style therefore names several source-layers, and the POI and road
-            // label layers beside them must stay out of the place-name closure.
+            // family. The expanded label API also includes the visible road, water and POI text
+            // layers beside them rather than silently narrowing the descriptor closure.
             val style = rasterizer.prepare(
                 StyleInput.InlineJson(
                     """{"version":8,"sources":{"v4":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"maxzoom":14}},"layers":[""" +
@@ -2904,12 +3259,15 @@ class RentileRuntimeTest {
                     "place_label",
                     "island_label",
                     "archipelago_label",
+                    "road_label",
+                    "water_label",
+                    "poi",
                 ),
                 descriptors.map(LabelLayerDescriptor::sourceLayer),
             )
             // Style order is preserved so the host can keep using it as draw/priority order.
             assertEquals("Continent labels", descriptors.first().id)
-            assertEquals("Archipelago labels", descriptors.last().id)
+            assertEquals("Points of interest", descriptors.last().id)
             // Every descriptor names the layer it must decode, not a schema-wide assumption.
             descriptors.forEach { descriptor ->
                 assertTrue(descriptor.layerJson.contains(descriptor.sourceLayer))
@@ -3131,12 +3489,74 @@ class RentileRuntimeTest {
             // Logical extent, exactly as placeIcons computes it: width / pixelRatio * icon-size.
             assertEquals(8.0, icon?.width)
             assertEquals(8.0, icon?.height)
-            // icon-anchor: bottom lifts the sprite by half its height, the same shift placeIcons
-            // applies. Without it a consumer draws the marker half a sprite below Rentile's own.
-            assertEquals(0.0, icon?.anchorOffsetX)
-            assertEquals(-4.0, icon?.anchorOffsetY)
+            // The consumer applies this to the final box after icon-text-fit, so a fitted marker
+            // does not retain a stale shift computed from the base 8px sprite.
+            assertEquals(LabelIconAnchor.BOTTOM, icon?.anchor)
             // A layer with no icon-image leaves it null rather than inventing a placeholder.
             assertEquals(null, plainBatch.candidates.single().icon)
+            assertTrue(plainBatch.diagnostics.none { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun featureDrivenTextColorsAreResolvedOnEachCandidate() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        extraTextPaint = """"text-color":["case",["==",["get","name"],"Tokyo"],"#123456","#ffffff"],"text-halo-color":"#abcdef"""",
+                    ),
+                ),
+            )
+
+            val candidate = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+                .candidates.single()
+
+            assertEquals(0xff123456.toInt(), candidate.color)
+            assertEquals(0xffabcdef.toInt(), candidate.haloColor)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aPairedIconThatCannotResolveIsReportedInsteadOfSilentlyOmitted() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                when (request.resourceClass) {
+                    ResourceClass.SPRITE_JSON -> TransportResponse(200, "{}".encodeToByteArray())
+                    ResourceClass.SPRITE_IMAGE -> TransportResponse(200, renderSyntheticPng(8))
+                    ResourceClass.GLYPH_RANGE -> TransportResponse(200, glyphs)
+                    else -> TransportResponse(200, vectorTile)
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(iconImage = "marker")),
+            )
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            assertEquals(null, batch.candidates.single().icon)
+            val diagnostic = batch.diagnostics.single { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED }
+            assertEquals("1", diagnostic.details["candidateFeatures"])
+            assertEquals("1", diagnostic.details["skippedFeatures"])
+            assertEquals("1", diagnostic.details["skippedMissingSprite"])
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -3243,7 +3663,7 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun aNonPointPlaceFeatureIsCountedRatherThanVanishing() = runTest {
+    fun aNonPointPlaceFeatureProducesACandidate() = runTest {
         val vectorTile = placeNameVectorTile("Tokyo", copies = 0, lineCopies = 1)
         val glyphs = testGlyphRange("Open Sans Regular", 0)
         val rasterizer = testRasterizer(
@@ -3257,11 +3677,78 @@ class RentileRuntimeTest {
 
             val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
 
-            assertTrue(batch.candidates.isEmpty())
-            val diagnostic = batch.diagnostics.single { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED }
-            assertEquals("1", diagnostic.details["candidateFeatures"])
-            assertEquals("1", diagnostic.details["skippedNonPointGeometry"])
-            assertEquals("0", diagnostic.details["skippedNoGlyphs"])
+            val candidate = batch.candidates.single()
+            assertEquals(LabelPlacement.POINT, candidate.placement)
+            assertTrue(candidate.line.size >= 2)
+            assertTrue(batch.diagnostics.none { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aMultipartPolygonProducesOneLabelCandidatePerExteriorButNoneForItsHole() = runTest {
+        val vectorTile = polygonLabelVectorTile(
+            name = "Tokyo",
+            rings = listOf(
+                // MVT exterior: clockwise in screen coordinates, positive signed area.
+                listOf(400 to 400, 1800 to 400, 1800 to 1800, 400 to 1800),
+                // Hole: counter-clockwise, negative signed area. It belongs to the first exterior
+                // and must constrain that anchor without becoming a third candidate.
+                listOf(800 to 800, 800 to 1500, 1500 to 1500, 1500 to 800),
+                listOf(2300 to 500, 3700 to 500, 3700 to 1900, 2300 to 1900),
+            ),
+        )
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
+
+            val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+
+            assertEquals(2, batch.candidates.size)
+            assertEquals(2, batch.candidates.map(LabelCandidate::longitude).distinct().size)
+            assertTrue(batch.diagnostics.none { it.code == DiagnosticCode.LABEL_FEATURE_SKIPPED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun automaticTextJustifyUsesTheEvaluatedLeftAnchorDuringLayout() = runTest {
+        val vectorTile = placeNameVectorTile("AAA A")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        extraTextLayout = """"text-anchor":"left","text-justify":"auto","text-max-width":1.5""",
+                    ),
+                ),
+            )
+
+            val candidate = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+                .candidates.single()
+            val rows = candidate.glyphs.groupBy { it.y }.values.sortedBy { row -> row.first().y }
+
+            // "AAA A" wraps into a wide first line and a narrow second line. Auto justification
+            // against a left-side anchor aligns their left edges; the old unconditional CENTER
+            // shifts the second line inward and makes these values differ.
+            assertEquals(2, rows.size)
+            assertEquals(rows[0].minOf { it.x }, rows[1].minOf { it.x }, 1e-9)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -3492,18 +3979,19 @@ class RentileRuntimeTest {
 
             assertEquals(16.0, icon?.width)
             assertEquals(16.0, icon?.height)
-            // icon-anchor bottom lifts by half the resolved height, which follows icon-size.
-            assertEquals(0.0, icon?.anchorOffsetX)
-            assertEquals(-8.0, icon?.anchorOffsetY)
+            // icon-anchor is carried as an enum because the eventual shift depends on the final
+            // dimensions after icon-text-fit, which only the consumer knows.
+            assertEquals(LabelIconAnchor.BOTTOM, icon?.anchor)
             // icon-offset is scaled by icon-size.
             assertEquals(4.0, icon?.offsetX)
             assertEquals(-6.0, icon?.offsetY)
             // icon-translate is not.
             assertEquals(5.0, icon?.translateX)
             assertEquals(7.0, icon?.translateY)
-            // The sum is the displacement from the label's anchor to the sprite's centre.
-            assertEquals(9.0, icon!!.anchorOffsetX + icon.offsetX + icon.translateX)
-            assertEquals(-7.0, icon.anchorOffsetY + icon.offsetY + icon.translateY)
+            // For these unfitted dimensions a consumer resolves BOTTOM to (0,-height/2), then
+            // adds offset and translate: x=0+4+5=9, y=-8-6+7=-7.
+            assertEquals(9.0, icon!!.offsetX + icon.translateX)
+            assertEquals(-7.0, -icon.height / 2.0 + icon.offsetY + icon.translateY)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -3588,9 +4076,9 @@ class RentileRuntimeTest {
 
     @Test
     fun anUnsupportedTextLayoutPropertyExcludesTheProgramAndKeepsTheDescriptor() = runTest {
-        // text-variable-anchor with text-radial-offset was read as neither, so the label came out
-        // centred on its anchor with no offset - Rentile appearing to misposition text rather than
-        // declining a construct. UNSUPPORTED_TEXT_CONSTRUCT already promises to cover this.
+        // Fixed text-anchor plus text-radial-offset is supported, but choosing among variable
+        // anchors belongs to collision placement. Rentile must still decline that construct rather
+        // than silently pinning it to the centre. UNSUPPORTED_TEXT_CONSTRUCT covers that boundary.
         val rasterizer = testRasterizer()
         try {
             val style = rasterizer.prepare(
@@ -3602,6 +4090,7 @@ class RentileRuntimeTest {
             )
 
             assertTrue(style.diagnostics.any { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.ICON_FEATURE_SKIPPED })
             // The raw-MVT escape hatch that predates label candidates is unaffected.
             assertEquals(1, rasterizer.labelLayerDescriptors(style).size)
         } finally {
@@ -3611,12 +4100,135 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun anUnsupportedTextPaintPropertyExcludesTheProgram() = runTest {
-        // text-translate-anchor chooses whether text-translate is applied in map space or viewport
-        // space. Rentile has no camera, so it cannot resolve viewport anchoring, and the consumer
-        // could not know the style asked for it - so the layer is excluded rather than translated
-        // in the wrong frame. No rolling-corpus place-name layer uses it.
+    fun aPositiveTextRadialOffsetDisplacesFromTheFixedAnchorAndOverridesTextOffset() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            val baseline = rasterizer.prepare(
+                StyleInput.InlineJson(placeNameStyleJson(extraTextLayout = """"text-anchor":"top"""")),
+            )
+            val radial = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        // The expression proves the property is compiled and evaluated as a
+                        // number. [7,9] would move both axes if text-offset incorrectly survived.
+                        extraTextLayout = """"text-anchor":"top","text-offset":[7,9],"text-radial-offset":["+",1,1]""",
+                    ),
+                ),
+            )
+
+            assertTrue(radial.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+            val tile = listOf(TileId(2, 1, 1))
+            val baselineCandidate = rasterizer.acquireLabelCandidates(baseline, tile).candidates.single()
+            val radialCandidate = rasterizer.acquireLabelCandidates(radial, tile).candidates.single()
+
+            baselineCandidate.glyphs.zip(radialCandidate.glyphs).forEach { (before, after) ->
+                assertEquals(before.x, after.x, 0.000001)
+                assertEquals(before.y + 28.0, after.y, 0.000001)
+            }
+            assertEquals(baselineCandidate.boundingBox.left, radialCandidate.boundingBox.left, 0.000001)
+            assertEquals(baselineCandidate.boundingBox.top + 28.0, radialCandidate.boundingBox.top, 0.000001)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun zeroAndNegativeTextRadialOffsetsFallBackToTextOffset() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
+        try {
+            suspend fun style(radial: Int) = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        extraTextLayout = """"text-anchor":"top","text-offset":[3,-4],"text-radial-offset":$radial""",
+                    ),
+                ),
+            )
+
+            val tile = listOf(TileId(2, 1, 1))
+            val baseline = rasterizer.acquireLabelCandidates(
+                rasterizer.prepare(
+                    StyleInput.InlineJson(placeNameStyleJson(extraTextLayout = """"text-anchor":"top"""")),
+                ),
+                tile,
+            ).candidates.single()
+            val zero = rasterizer.acquireLabelCandidates(style(0), tile).candidates.single()
+            val negative = rasterizer.acquireLabelCandidates(style(-2), tile).candidates.single()
+
+            baseline.glyphs.zip(zero.glyphs).forEach { (before, after) ->
+                assertEquals(before.x + 42.0, after.x, 0.000001)
+                assertEquals(before.y - 56.0, after.y, 0.000001)
+            }
+            assertEquals(zero.glyphs, negative.glyphs)
+            assertEquals(zero.boundingBox, negative.boundingBox)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun anUnsupportedTopLevelKeyOnATextLayerExcludesTheProgramAndKeepsTheDescriptor() = runTest {
         val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"places","type":"symbol","source":"v","source-layer":"place","slot":"future","layout":{"text-field":["get","name"],"text-font":["Open Sans Regular"]}}]}""",
+                ),
+            )
+
+            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+            assertEquals(1, rasterizer.labelLayerDescriptors(style).size)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aNewlyAdmittedNonPlaceLabelSourceFailureDoesNotBreakPreparation() = runTest {
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v":{"type":"vector","tiles":[123]}},"layers":[{"id":"roads","type":"symbol","source":"v","source-layer":"transportation_name","layout":{"text-field":["get","name"],"text-font":["Open Sans Regular"]}}]}""",
+                ),
+            )
+
+            val unavailable = style.diagnostics.single { it.code == DiagnosticCode.LABEL_SOURCE_UNAVAILABLE }
+            assertEquals(DiagnosticSeverity.INFO, unavailable.severity)
+            assertEquals(RentileErrorCode.STYLE_PREPARATION_FAILED.name, unavailable.details["causeCode"])
+            assertTrue(rasterizer.labelLayerDescriptors(style).isEmpty())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun textTranslateAnchorIsCarriedToTheViewportOwningConsumer() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo")
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
         try {
             val style = rasterizer.prepare(
                 StyleInput.InlineJson(
@@ -3624,7 +4236,10 @@ class RentileRuntimeTest {
                 ),
             )
 
-            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
+            val candidate = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+                .candidates.single()
+            assertEquals(SymbolAlignment.VIEWPORT, candidate.translateAlignment)
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -3662,18 +4277,18 @@ class RentileRuntimeTest {
             val tiles = listOf(TileId(2, 1, 1))
             assertTrue(always.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
             assertEquals(
-                true,
-                rasterizer.acquireLabelCandidates(always, tiles).candidates.single().allowOverlap,
+                SymbolOverlap.ALWAYS,
+                rasterizer.acquireLabelCandidates(always, tiles).candidates.single().overlap,
             )
             // "cooperative" is a negotiation during placement, which is the consumer's, so Rentile
             // does not assert an overlap the author did not unconditionally grant.
             assertEquals(
-                false,
-                rasterizer.acquireLabelCandidates(cooperative, tiles).candidates.single().allowOverlap,
+                SymbolOverlap.COOPERATIVE,
+                rasterizer.acquireLabelCandidates(cooperative, tiles).candidates.single().overlap,
             )
             assertEquals(
-                false,
-                rasterizer.acquireLabelCandidates(conflicting, tiles).candidates.single().allowOverlap,
+                SymbolOverlap.NEVER,
+                rasterizer.acquireLabelCandidates(conflicting, tiles).candidates.single().overlap,
             )
         } finally {
             rasterizer.close()
@@ -3703,12 +4318,12 @@ class RentileRuntimeTest {
 
             val tiles = listOf(TileId(2, 1, 1))
             assertEquals(
-                true,
-                rasterizer.acquireLabelCandidates(allowed, tiles).candidates.single().allowOverlap,
+                SymbolOverlap.ALWAYS,
+                rasterizer.acquireLabelCandidates(allowed, tiles).candidates.single().overlap,
             )
             assertEquals(
-                false,
-                rasterizer.acquireLabelCandidates(absent, tiles).candidates.single().allowOverlap,
+                SymbolOverlap.NEVER,
+                rasterizer.acquireLabelCandidates(absent, tiles).candidates.single().overlap,
             )
         } finally {
             rasterizer.close()
@@ -3717,11 +4332,7 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun textKeepUprightIsAllowedAndIgnoredBecauseLinePlacementIsExcluded() = runTest {
-        // 20 corpus layers across 4 styles carry it. It decides whether text may flip to avoid
-        // reading upside-down along a line, and this profile excludes line placement outright, so
-        // it cannot affect a point-placed place name. Allowed with the reason recorded, not
-        // silently dropped.
+    fun textKeepUprightIsCarriedWithTheLabelCandidate() = runTest {
         val vectorTile = placeNameVectorTile("Tokyo")
         val glyphs = testGlyphRange("Open Sans Regular", 0)
         val rasterizer = testRasterizer(
@@ -3732,11 +4343,24 @@ class RentileRuntimeTest {
         )
         try {
             val style = rasterizer.prepare(
-                StyleInput.InlineJson(placeNameStyleJson(extraTextLayout = """"text-keep-upright":false""")),
+                StyleInput.InlineJson(
+                    placeNameStyleJson(
+                        extraTextLayout = """"text-keep-upright":false,"text-rotate":12,"text-max-angle":30,"text-rotation-alignment":"viewport","text-pitch-alignment":"map","text-optional":true,"symbol-avoid-edges":true,"symbol-z-order":"source"""",
+                    ),
+                ),
             )
 
             assertTrue(style.diagnostics.none { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT })
-            assertEquals(1, rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1))).candidates.size)
+            val candidate = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+                .candidates.single()
+            assertFalse(candidate.keepUpright)
+            assertEquals(12.0, candidate.textRotationDegrees)
+            assertEquals(30.0, candidate.maxAngleDegrees)
+            assertEquals(SymbolAlignment.VIEWPORT, candidate.rotationAlignment)
+            assertEquals(SymbolAlignment.MAP, candidate.pitchAlignment)
+            assertTrue(candidate.textOptional)
+            assertTrue(candidate.avoidEdges)
+            assertEquals(SymbolZOrder.SOURCE, candidate.zOrder)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -3797,11 +4421,15 @@ class RentileRuntimeTest {
     }
 
     @Test
-    fun aLineCenterPlacedPlaceLayerIsExcludedLikeALinePlacedOne() = runTest {
-        // "line-center" is line placement that picks the line's midpoint. Treating only "line" as
-        // line-placed laid it out as point-anchored text, the wrong output this exclusion exists
-        // to prevent.
-        val rasterizer = testRasterizer()
+    fun aLineCenterPlacedPlaceLayerEmitsALineCenterCandidate() = runTest {
+        val vectorTile = placeNameVectorTile("Tokyo", copies = 0, lineCopies = 1)
+        val glyphs = testGlyphRange("Open Sans Regular", 0)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
+                else TransportResponse(200, vectorTile)
+            },
+        )
         try {
             val style = rasterizer.prepare(
                 StyleInput.InlineJson(
@@ -3809,7 +4437,11 @@ class RentileRuntimeTest {
                 ),
             )
 
-            assertTrue(style.diagnostics.any { it.code == DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED })
+            assertTrue(style.diagnostics.none { it.code == DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED })
+            val candidate = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
+                .candidates.single()
+            assertEquals(LabelPlacement.LINE_CENTER, candidate.placement)
+            assertTrue(candidate.line.size >= 2)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -3853,6 +4485,7 @@ class RentileRuntimeTest {
                 if (request.resourceClass == ResourceClass.GLYPH_RANGE) TransportResponse(200, glyphs)
                 else TransportResponse(200, vectorTile)
             },
+            resourceLimits = ResourceLimits(maxGlyphRangesPerBatch = 64),
         )
         try {
             val style = rasterizer.prepare(StyleInput.InlineJson(placeNameStyleJson()))
@@ -4711,6 +5344,102 @@ class RentileRuntimeTest {
         )
     }
 
+    /** Point features with a per-feature CSS color, in 4096-extent zoom-0 tile coordinates. */
+    private fun iconPointVectorTile(vararg points: Triple<Int, Int, String>): ByteArray =
+        Tile.ADAPTER.encode(
+            Tile(
+                layers = listOf(
+                    Tile.Layer(
+                        version = 2,
+                        name = "poi",
+                        features = points.mapIndexed { index, (x, y, _) ->
+                            Tile.Feature(
+                                tags = listOf(0, index),
+                                type = Tile.GeomType.POINT,
+                                geometry = listOf(command(1, 1), zigZag(x), zigZag(y)),
+                            )
+                        },
+                        keys = listOf("color"),
+                        values = points.map { (_, _, color) -> Tile.Value(string_value = color) },
+                        extent = 4096,
+                    ),
+                ),
+            ),
+        )
+
+    /** Serves one opaque SDF sprite and one vector tile for Output Tile icon regressions. */
+    private fun iconOutputTransport(
+        vectorTile: ByteArray,
+        spriteWidth: Int,
+        spriteHeight: Int,
+        spritePng: ByteArray = renderOpaquePng(spriteWidth, spriteHeight),
+    ): ResourceTransport {
+        return ResourceTransport { request ->
+            when (request.resourceClass) {
+                ResourceClass.SPRITE_JSON -> TransportResponse(
+                    200,
+                    """{"marker":{"x":0,"y":0,"width":$spriteWidth,"height":$spriteHeight,"pixelRatio":1,"sdf":true}}"""
+                        .encodeToByteArray(),
+                )
+                ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
+                ResourceClass.VECTOR_TILE -> TransportResponse(200, vectorTile)
+                else -> error("Unexpected resource class ${request.resourceClass}")
+            }
+        }
+    }
+
+    private fun renderOpaquePng(width: Int, height: Int): ByteArray {
+        val surface = Surface.makeRasterN32Premul(width, height)
+        try {
+            surface.canvas.clear(Color.makeARGB(255, 255, 255, 255))
+            val image = surface.makeImageSnapshot()
+            try {
+                val encoded = image.encodeToData(EncodedImageFormat.PNG)
+                    ?: error("Skia could not encode the synthetic icon sprite")
+                try {
+                    return encoded.bytes
+                } finally {
+                    encoded.close()
+                }
+            } finally {
+                image.close()
+            }
+        } finally {
+            surface.close()
+        }
+    }
+
+    /** An alpha-asymmetric SDF mask whose orientation remains observable after tinting. */
+    private fun renderDirectionalPng(width: Int, height: Int): ByteArray {
+        val surface = Surface.makeRasterN32Premul(width, height)
+        try {
+            surface.canvas.clear(Color.makeARGB(0, 0, 0, 0))
+            val paint = Paint().apply { color = Color.makeARGB(255, 255, 255, 255) }
+            try {
+                surface.canvas.drawRect(
+                    Rect.makeLTRB(0f, 0f, (width * 2f / 3f), height.toFloat()),
+                    paint,
+                )
+            } finally {
+                paint.close()
+            }
+            val image = surface.makeImageSnapshot()
+            try {
+                val encoded = image.encodeToData(EncodedImageFormat.PNG)
+                    ?: error("Skia could not encode the directional icon sprite")
+                try {
+                    return encoded.bytes
+                } finally {
+                    encoded.close()
+                }
+            } finally {
+                image.close()
+            }
+        } finally {
+            surface.close()
+        }
+    }
+
     /**
      * A "place" source-layer of POINT features carrying a "name" tag (and optionally a
      * "name:latin" one), in 4096-extent tile coordinates.
@@ -4765,6 +5494,55 @@ class RentileRuntimeTest {
                         features = features,
                         keys = keys,
                         values = values,
+                        extent = 4096,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    /** One named polygon feature. Ring order and winding follow the MVT polygon contract. */
+    private fun polygonLabelVectorTile(
+        name: String,
+        rings: List<List<Pair<Int, Int>>>,
+    ): ByteArray {
+        var cursorX = 0
+        var cursorY = 0
+        val geometry = buildList {
+            for (ring in rings) {
+                require(ring.size >= 3)
+                val first = ring.first()
+                add(command(1, 1))
+                add(zigZag(first.first - cursorX))
+                add(zigZag(first.second - cursorY))
+                cursorX = first.first
+                cursorY = first.second
+
+                add(command(2, ring.size - 1))
+                for ((x, y) in ring.drop(1)) {
+                    add(zigZag(x - cursorX))
+                    add(zigZag(y - cursorY))
+                    cursorX = x
+                    cursorY = y
+                }
+                add(command(7, 1))
+            }
+        }
+        return Tile.ADAPTER.encode(
+            Tile(
+                layers = listOf(
+                    Tile.Layer(
+                        version = 2,
+                        name = "place",
+                        features = listOf(
+                            Tile.Feature(
+                                tags = listOf(0, 0),
+                                type = Tile.GeomType.POLYGON,
+                                geometry = geometry,
+                            ),
+                        ),
+                        keys = listOf("name"),
+                        values = listOf(Tile.Value(string_value = name)),
                         extent = 4096,
                     ),
                 ),
@@ -4977,6 +5755,22 @@ private fun ByteArray.centerPixelColor(): Int {
             check(bitmap.allocN32Pixels(image.width, image.height, false))
             check(image.readPixels(bitmap))
             return bitmap.getColor(bitmap.width / 2, bitmap.height / 2)
+        } finally {
+            bitmap.close()
+        }
+    } finally {
+        image.close()
+    }
+}
+
+private fun ByteArray.pixelColor(x: Int, y: Int): Int {
+    val image = Image.makeFromEncoded(this)
+    try {
+        val bitmap = Bitmap()
+        try {
+            check(bitmap.allocN32Pixels(image.width, image.height, false))
+            check(image.readPixels(bitmap))
+            return bitmap.getColor(x, y)
         } finally {
             bitmap.close()
         }

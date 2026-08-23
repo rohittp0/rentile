@@ -125,34 +125,6 @@ internal data class GeoJsonPosition(
 
 internal const val GEO_JSON_SOURCE_LAYER: String = "__rentile_geojson__"
 
-/**
- * The vector source-layers that carry geographic place names, across both tile schemas the
- * rolling style corpus serves.
- *
- * OpenMapTiles v3 aggregates every settlement, admin area and island name into one `place`
- * layer whose `class` property discriminates them (`continent`, `country`, `state`,
- * `province`, `city`, `town`, `village`, `hamlet`, `suburb`, `neighbourhood`, `island`,
- * `islet` are all in use across the corpus). MapTiler Planet v4 splits that same content
- * into one layer per class family, so the v4 names below are the exact counterpart of v3's
- * single layer -- nothing more. Point-of-interest, road, water, terrain and protected-area
- * naming stays out: a host that asked for place names never drew those under v3, and
- * admitting them here would change what a style renders rather than repair it.
- */
-internal val PLACE_NAME_SOURCE_LAYERS: Set<String> = setOf(
-    // OpenMapTiles v3
-    "place",
-    // MapTiler Planet v4
-    "continent_label",
-    "country_label",
-    "country_disputed_label",
-    "state_label",
-    "city_label",
-    "town_label",
-    "place_label",
-    "island_label",
-    "archipelago_label",
-)
-
 internal sealed interface CompiledDrawLayer {
     val minZoom: Double
     val maxZoom: Double
@@ -231,6 +203,7 @@ internal enum class CompiledLineJoin {
 internal enum class SymbolPlacement {
     POINT,
     LINE,
+    LINE_CENTER,
 }
 
 internal enum class IconAnchor {
@@ -388,7 +361,7 @@ internal data class IconDrawLayer(
     override val sourceLayer: String,
     override val filter: CompiledStyleFilter,
     val layerOrder: Int,
-    val placement: SymbolPlacement,
+    val placement: CompiledStyleProperty,
     val image: CompiledStyleProperty,
     val size: CompiledStyleProperty,
     val opacity: CompiledStyleProperty,
@@ -397,14 +370,23 @@ internal data class IconDrawLayer(
     val haloWidth: CompiledStyleProperty,
     val haloBlur: CompiledStyleProperty,
     val rotate: CompiledStyleProperty,
-    val padding: Double,
+    val padding: CompiledStyleProperty,
     val offset: CompiledStyleProperty,
     val translate: CompiledStyleProperty,
-    val anchor: IconAnchor,
+    val translateAnchor: CompiledStyleProperty,
+    val anchor: CompiledStyleProperty,
     val sortKey: CompiledStyleProperty?,
     val spacing: CompiledStyleProperty,
-    val allowOverlap: Boolean,
-    val avoidEdges: Boolean,
+    val overlap: CompiledStyleProperty,
+    val ignorePlacement: CompiledStyleProperty,
+    /** Text-half collision intents used only to select the symbol's icon draw order. */
+    val textOverlap: CompiledStyleProperty?,
+    val textIgnorePlacement: CompiledStyleProperty?,
+    val avoidEdges: CompiledStyleProperty,
+    val zOrder: CompiledStyleProperty,
+    val rotationAlignment: CompiledStyleProperty,
+    val pitchAlignment: CompiledStyleProperty,
+    val keepUpright: CompiledStyleProperty,
     /**
      * True when this layer was retained only because its text was removed and its icon is
      * independent of that text - meaning it was never validated as a retained construct before
@@ -419,8 +401,34 @@ internal data class IconDrawLayer(
     override val maxZoom: Double,
 ) : VectorDrawLayer
 
+/** Icon styling emitted with a label, including properties Rentile cannot apply without a viewport. */
+internal data class CompiledLabelIconProgram(
+    val image: CompiledStyleProperty,
+    val size: CompiledStyleProperty,
+    val opacity: CompiledStyleProperty,
+    val color: CompiledStyleProperty,
+    val haloColor: CompiledStyleProperty,
+    val haloWidth: CompiledStyleProperty,
+    val haloBlur: CompiledStyleProperty,
+    val rotate: CompiledStyleProperty,
+    val padding: CompiledStyleProperty,
+    val offset: CompiledStyleProperty,
+    val translate: CompiledStyleProperty,
+    val translateAnchor: CompiledStyleProperty,
+    val anchor: CompiledStyleProperty,
+    val optional: CompiledStyleProperty,
+    val overlap: CompiledStyleProperty,
+    val ignorePlacement: CompiledStyleProperty,
+    val rotationAlignment: CompiledStyleProperty,
+    val pitchAlignment: CompiledStyleProperty,
+    val keepUpright: CompiledStyleProperty,
+    val avoidEdges: CompiledStyleProperty,
+    val textFit: CompiledStyleProperty,
+    val textFitPadding: CompiledStyleProperty,
+)
+
 /**
- * A place-name label layer's compiled text program: everything needed to lay out label
+ * A visible text-bearing vector symbol layer's compiled text program: everything needed to lay out label
  * candidates for it. Kept as a separate, nullable type from [CompiledLabelLayer] rather than a
  * set of fields on it, so that a construct this compatibility profile cannot compile - an
  * unsupported filter, layout property, or paint property - can leave a layer's raw-MVT
@@ -436,24 +444,43 @@ internal data class CompiledLabelTextProgram(
     val text: CompiledStyleProperty,
     val font: CompiledStyleProperty,
     val size: CompiledStyleProperty,
-    val anchor: IconAnchor,
+    val placement: CompiledStyleProperty,
+    val spacing: CompiledStyleProperty,
+    val keepUpright: CompiledStyleProperty,
+    val avoidEdges: CompiledStyleProperty,
+    val zOrder: CompiledStyleProperty,
+    val rotate: CompiledStyleProperty,
+    val maxAngle: CompiledStyleProperty,
+    val rotationAlignment: CompiledStyleProperty,
+    val pitchAlignment: CompiledStyleProperty,
+    val optional: CompiledStyleProperty,
+    val anchor: CompiledStyleProperty,
+    val radialOffset: CompiledStyleProperty,
     val offset: CompiledStyleProperty,
-    val justify: TextJustify,
+    val justify: CompiledStyleProperty,
     val maxWidth: CompiledStyleProperty,
     val letterSpacing: CompiledStyleProperty,
     val lineHeight: CompiledStyleProperty,
-    val transform: TextTransform,
-    val padding: Double,
-    val allowOverlap: Boolean,
-    val ignorePlacement: Boolean,
+    val transform: CompiledStyleProperty,
+    val padding: CompiledStyleProperty,
+    val overlap: CompiledStyleProperty,
+    val ignorePlacement: CompiledStyleProperty,
     val sortKey: CompiledStyleProperty?,
     val color: CompiledStyleProperty,
     val haloColor: CompiledStyleProperty,
     val haloWidth: CompiledStyleProperty,
     val haloBlur: CompiledStyleProperty,
     val opacity: CompiledStyleProperty,
-    /** `text-translate`, in pixels and never scaled by `text-size`, unlike `text-offset`. */
+    /** `text-translate`, in pixels and never scaled by `text-size`, unlike the effective em offset. */
     val translate: CompiledStyleProperty,
+    val translateAnchor: CompiledStyleProperty,
+    val icon: CompiledLabelIconProgram?,
+    /**
+     * True when `icon-image` was present but the paired icon program could not be compiled. This
+     * is distinct from [icon] being null because no icon was requested: label assembly reports the
+     * requested loss through `ICON_FEATURE_SKIPPED` while still emitting the text candidate.
+     */
+    val iconRequestedButUnsupported: Boolean,
     val minZoom: Double,
     val maxZoom: Double,
 )

@@ -35,28 +35,27 @@ public enum class DiagnosticCode {
     UNSUPPORTED_RETAINED_CONSTRUCT,
 
     /**
-     * A repaired icon layer - one retained because its text was removed and its icon is
-     * independent of that text - could not draw one or more of its features, and the tile was
-     * returned without them rather than failing.
+     * A style-requested icon could not be emitted for one or more features, while the rest of the
+     * Output Tile or Label Candidate Batch was returned rather than failing.
      *
-     * Reported once per layer per tile, whatever the cause, deliberately: the name stays neutral
-     * because two different things reach it. A feature is skipped either because an icon property
-     * would not evaluate to a usable value (`icon-size: "big"`, a negative `icon-halo-width`, a
-     * data-driven `icon-offset` that is not a numeric pair) or because it named an icon the sprite
-     * atlas does not contain. `details` carries the discriminator: `candidateFeatures` is how many
-     * features wanted an icon, `skippedFeatures` how many of those drew nothing, and
-     * `skippedMissingSprite` how many of *those* were a missing sprite name - so the
-     * invalid-property count is `skippedFeatures` minus `skippedMissingSprite`. `layerIndex`
+     * This covers both repaired Output Tile icon layers and icons coupled to retained label text.
+     * A feature is skipped either because an icon construct/property cannot produce a usable icon
+     * (`icon-size: "big"`, a negative `icon-halo-width`, an unsupported icon property, or a
+     * data-driven `icon-offset` that is not a numeric pair) or because it names an icon absent from
+     * the sprite atlas. `details` carries the discriminator: `candidateFeatures` is how many
+     * features requested an icon, `skippedFeatures` how many emitted none, and
+     * `skippedMissingSprite` how many of *those* named a missing sprite. The invalid-or-unsupported
+     * property count is therefore `skippedFeatures` minus `skippedMissingSprite`; `layerIndex`
      * locates the layer in the compiled style.
      *
-     * All of these counts describe **this tile only**. `skippedFeatures == candidateFeatures`
-     * means the layer drew none of the features that wanted an icon on this tile; it does not
-     * mean the style is broken. The cause is frequently tile-dependent - a data-driven
-     * `icon-image` resolving to a sprite name the atlas lacks for the features on this tile is the
-     * common case - so the same layer can lose everything here and draw normally on the next tile.
-     * Alerting on equal counts alone will fire on healthy tiles; compare across tiles first.
+     * For Output Tiles this is reported once per layer per tile and all counts describe that tile.
+     * For Label Candidates it is reported once per layer per requested batch: the counts aggregate
+     * every requested tile, and `affectedTiles` identifies the tiles which lost an icon. In either
+     * pipeline, `skippedFeatures == candidateFeatures` means only that this sample emitted none of
+     * the requested icons; it does not by itself mean the whole style is broken. Causes are often
+     * feature- or tile-dependent, so compare multiple representative samples before alerting.
      *
-     * Always a WARNING. Nothing failed: preparation succeeded and the tile rendered.
+     * Always a WARNING. The containing result still succeeded.
      */
     ICON_FEATURE_SKIPPED,
 
@@ -99,7 +98,7 @@ public enum class DiagnosticCode {
     COMPLEX_SCRIPT_LABEL_EXCLUDED,
 
     /**
-     * A place-name label layer carried a construct this compatibility profile cannot compile -
+     * A text-bearing vector symbol layer carried a construct this compatibility profile cannot compile -
      * its `filter`, a text layout property, a text paint property, or an expression inside any of
      * those - and that layer contributes no label candidates, rather than failing style
      * preparation.
@@ -116,6 +115,19 @@ public enum class DiagnosticCode {
     UNSUPPORTED_TEXT_CONSTRUCT,
 
     /**
+     * A visible text-bearing vector symbol layer outside the place-name descriptor set supported
+     * before 0.6.0 could not resolve or compile its vector source, so that newly admitted label
+     * layer was excluded without making the previously valid style fail preparation.
+     *
+     * `details` carries `layerIndex`, `layerIdDigest`, and the stable Rentile error enum name in
+     * `causeCode`; it never contains a source URL. Legacy place-name source failures remain strict
+     * because those descriptors were already reachable before 0.6.0.
+     *
+     * Always INFO. No pre-existing capability failed.
+     */
+    LABEL_SOURCE_UNAVAILABLE,
+
+    /**
      * Label candidates were requested for a prepared style whose `glyphs` URL template could not
      * be resolved, so an empty label-candidate batch was returned instead of failing. A style
      * that declares no `glyphs` key has no text to lay out - a legitimate style, not an error.
@@ -125,9 +137,9 @@ public enum class DiagnosticCode {
     GLYPH_RANGE_UNAVAILABLE,
 
     /**
-     * A label layer declared `symbol-placement: line`, which this profile's label-candidate
-     * layout does not implement, so that layer contributes no label candidates rather than being
-     * laid out as point-anchored text.
+     * Legacy compatibility code for a label layer whose line placement could not be compiled.
+     * Version 0.6.0 implements `line` and `line-center`; this enum entry remains stable for old
+     * diagnostics and for future failures that must preserve the same public classification.
      *
      * Only the label candidates are lost. As with [UNSUPPORTED_TEXT_CONSTRUCT], the layer keeps
      * its [LabelLayerDescriptor] and its raw MVT still acquires, so a consumer using
@@ -141,7 +153,7 @@ public enum class DiagnosticCode {
     LINE_PLACEMENT_LABEL_EXCLUDED,
 
     /**
-     * A place-name label layer produced no candidate for one or more of the features that wanted
+     * A text-bearing vector symbol layer produced no candidate for one or more of the features that wanted
      * one, and the batch was returned without them rather than failing.
      *
      * Reported once per layer per acquisition, whatever the cause and however many features were
@@ -159,8 +171,8 @@ public enum class DiagnosticCode {
      *   emitting code does not know.
      * - `skippedNoGlyphs` - the label's text resolved, but the acquired glyph atlas covers none of
      *   its codepoints, so it laid out to nothing.
-     * - `skippedNonPointGeometry` - the feature's geometry is not points, which this profile
-     *   cannot anchor a place name to.
+     * - `skippedNonPointGeometry` - the feature geometry is empty, degenerate, or incompatible
+     *   with the resolved point/line placement, so no geographic anchor can be produced.
      *
      * The three are counted apart rather than summed, because a consumer seeing no labels needs to
      * know which of them happened; they are strict subsets of `candidateFeatures` and share its

@@ -235,7 +235,8 @@ public data class LabelGlyphAtlas(
  * [x] and [y] are the **top-left corner of the glyph's cell** in label-local coordinates: x
  * rightwards, y downwards, and the origin is the label's own anchor point — the position
  * [LabelCandidate.longitude] and [LabelCandidate.latitude] name — after `text-anchor` and
- * `text-offset` have been applied. Nothing here is in screen coordinates and nothing is projected.
+ * the effective em offset (`text-radial-offset` when positive, otherwise `text-offset`) have been
+ * applied. Nothing here is in screen coordinates and nothing is projected.
  *
  * Each line of a multi-line label occupies one `text-line-height` row and is positioned from that
  * row's top edge, which is what [LabelGlyphEntry.top] is measured against; no baseline is involved
@@ -277,7 +278,7 @@ public data class LabelBox(
 )
 
 /**
- * Paint resolved for one layer at one requested output zoom with no feature context.
+ * Stable layer-and-zoom metadata shared by every candidate that references this entry.
  * One entry per (layer, zoom) pair present in the batch; [LabelCandidate.layerStyleIndex]
  * selects the entry matching that candidate's own `requestedTile.z`.
  *
@@ -286,35 +287,111 @@ public data class LabelBox(
  * smaller one. It exists so that two consumers resolve ties the same way; the absolute values are
  * not contiguous and carry no meaning beyond their order.
  *
- * [color] and [haloColor] are packed `0xAARRGGBB` integers. Both are resolved with no feature
- * context because no place-name layer in the rolling corpus makes either feature-driven, unlike
- * `text-opacity` and the halo widths, which sit on [LabelCandidate] for exactly that reason.
+ * Paint which may depend on a feature belongs to [LabelCandidate]. Keeping this record limited to
+ * layer-and-zoom state lets newly admitted road, water, POI, and other label layers use
+ * data-driven colors without being evaluated against an empty feature context.
  */
 public data class LabelLayerStyle(
     public val layerId: String,
     public val zoom: Int,
     public val priority: Int,
-    public val color: Int,
-    public val haloColor: Int,
+)
+
+/** How a symbol is anchored to its source geometry before viewport collision and drawing. */
+public enum class LabelPlacement {
+    POINT,
+    LINE,
+    LINE_CENTER,
+}
+
+/** The overlap permission declared by the style, without collapsing `cooperative` to `never`. */
+public enum class SymbolOverlap {
+    NEVER,
+    ALWAYS,
+    COOPERATIVE,
+}
+
+/** The coordinate frame a symbol property is resolved in by the viewport-owning consumer. */
+public enum class SymbolAlignment {
+    MAP,
+    VIEWPORT,
+    AUTO,
+}
+
+/** Ordering policy the style asks the viewport-owning symbol renderer to apply. */
+public enum class SymbolZOrder {
+    AUTO,
+    SOURCE,
+    VIEWPORT_Y,
+}
+
+/** How an icon's box is fitted to the text it is emitted beside. */
+public enum class IconTextFit {
+    NONE,
+    WIDTH,
+    HEIGHT,
+    BOTH,
+}
+
+/** Which point of an icon's final, possibly text-fitted box is attached to the symbol anchor. */
+public enum class LabelIconAnchor {
+    CENTER,
+    LEFT,
+    RIGHT,
+    TOP,
+    BOTTOM,
+    TOP_LEFT,
+    TOP_RIGHT,
+    BOTTOM_LEFT,
+    BOTTOM_RIGHT,
+}
+
+/** One geographic point from a line geometry used by a line-placed label. */
+public data class LabelLinePoint(
+    public val longitude: Double,
+    public val latitude: Double,
 )
 
 /**
- * The sprite the style pairs with this label, indexing the atlas Rentile already builds.
+ * The sprite the style pairs with this label. [imageName] is an opaque lookup key into sprite
+ * resources owned and resolved by the consumer; Rentile does not expose a public sprite atlas.
  *
- * The sprite's centre sits at the label's anchor displaced by
- * `anchorOffset + offset + translate` — the sum of all three, which is exactly how Rentile's own
- * icon pass positions the same sprite. Applying a subset puts the marker somewhere Rentile does
- * not: [anchorOffsetX] and [anchorOffsetY] carry `icon-anchor`'s shift in logical pixels for the
- * resolved [width] and [height], [offsetX] and [offsetY] carry `icon-offset` scaled by
- * `icon-size`, and [translateX] and [translateY] carry `icon-translate`, which the style
- * specification does not scale.
+ * First apply [textFit] and [textFitPadding] to derive the icon's final drawn dimensions from the
+ * label bounds. Derive the displacement from [anchor] against that fitted box, add
+ * [offsetX]/[offsetY], and rotate that icon-local displacement by the icon's final rotation. Add
+ * [translateX]/[translateY] afterwards in the frame selected by [translateAlignment]. Carrying the
+ * anchor instead of a shift computed from the unfitted sprite is essential: `left`, `right`, and
+ * corner anchors move when text fitting changes the icon's dimensions.
+ *
+ * [offsetX] and [offsetY] carry `icon-offset` scaled by `icon-size`; [translateX] and [translateY]
+ * carry `icon-translate`, which the style specification does not scale or rotate with the icon.
+ * [padding] expands the icon's oriented collision box. [haloWidth] and [haloBlur] affect paint
+ * only and must not enlarge that collision geometry.
  */
 public data class LabelIconRef(
     public val imageName: String,
     public val width: Double, public val height: Double,
+    public val anchor: LabelIconAnchor,
     public val offsetX: Double, public val offsetY: Double,
-    public val anchorOffsetX: Double, public val anchorOffsetY: Double,
     public val translateX: Double, public val translateY: Double,
+    public val translateAlignment: SymbolAlignment,
+    public val color: Int,
+    public val opacity: Double,
+    public val haloColor: Int,
+    public val haloWidth: Double,
+    public val haloBlur: Double,
+    public val rotationDegrees: Double,
+    public val padding: Double,
+    public val optional: Boolean,
+    public val overlap: SymbolOverlap,
+    public val ignorePlacement: Boolean,
+    public val rotationAlignment: SymbolAlignment,
+    public val pitchAlignment: SymbolAlignment,
+    public val keepUpright: Boolean,
+    public val avoidEdges: Boolean,
+    public val textFit: IconTextFit,
+    /** `icon-text-fit-padding` in top, right, bottom, left order. */
+    public val textFitPadding: List<Double>,
 )
 
 /**
@@ -333,6 +410,24 @@ public data class LabelCandidate(
     public val sourceTile: TileId,
     public val longitude: Double,
     public val latitude: Double,
+    public val placement: LabelPlacement,
+    /** Source line in geographic coordinates; empty for point placement. */
+    public val line: List<LabelLinePoint>,
+    /** Tangent direction at the selected line anchor, clockwise from screen-space east. */
+    public val rotationDegrees: Double,
+    /** Requested repeat distance for line placement, in pixels. */
+    public val symbolSpacing: Double,
+    public val keepUpright: Boolean,
+    public val avoidEdges: Boolean,
+    public val zOrder: SymbolZOrder,
+    /** Authored `text-rotate`, separate from the source-line tangent in [rotationDegrees]. */
+    public val textRotationDegrees: Double,
+    /** Maximum permitted change in direction across a line label. */
+    public val maxAngleDegrees: Double,
+    public val rotationAlignment: SymbolAlignment,
+    public val pitchAlignment: SymbolAlignment,
+    /** Whether the paired icon may be placed when this text cannot be placed. */
+    public val textOptional: Boolean,
     public val glyphs: List<LabelGlyphQuad>,
     public val boundingBox: LabelBox,
     public val icon: LabelIconRef?,
@@ -340,42 +435,42 @@ public data class LabelCandidate(
      * Whether the style grants this label permission to overlap others, from `text-overlap` or the
      * legacy `text-allow-overlap`.
      *
-     * `text-overlap: cooperative` collapses to `false` here, which is a deliberate narrowing rather
-     * than a faithful mapping: cooperative means "overlap only if the colliding symbol also permits
-     * it", a negotiation between two symbols during placement, and placement belongs to the consumer
-     * under this profile. Rentile has no second symbol to consult, so it reports only what the
-     * author granted unconditionally and never asserts an overlap on their behalf. A consumer that
-     * implements cooperative placement itself cannot recover the distinction from this field.
+     * `cooperative` remains distinct so the viewport-owning consumer can negotiate the collision
+     * with the other symbol instead of Rentile prematurely collapsing it to `never`.
      */
-    public val allowOverlap: Boolean,
+    public val overlap: SymbolOverlap,
     public val ignorePlacement: Boolean,
     public val padding: Double,
     public val sortKey: Double,
+    /** Resolved `text-color`, packed as `0xAARRGGBB`. */
+    public val color: Int,
+    /** Resolved `text-halo-color`, packed as `0xAARRGGBB`. */
+    public val haloColor: Int,
     public val opacity: Double,
     public val haloWidth: Double,
     public val haloBlur: Double,
     /**
      * `text-translate`, in pixels, to be applied to the label's projected anchor position.
      *
-     * Unlike `text-offset` — which is em-based and is already folded into every
-     * [LabelGlyphQuad] — this is a pixel displacement of the anchor itself and is **not** scaled by
-     * `text-size`, exactly as [LabelIconRef.translateX] is not scaled by `icon-size`. It is carried
-     * rather than applied because Rentile cannot apply it: the anchor it moves is a geographic
-     * position here, and a pixel offset only becomes meaningful once the consumer has projected it.
+     * Unlike the effective em offset (`text-radial-offset` when positive, otherwise
+     * `text-offset`) — which is already folded into every [LabelGlyphQuad] — this is a pixel
+     * displacement of the anchor itself and is **not** scaled by `text-size`, exactly as
+     * [LabelIconRef.translateX] is not scaled by `icon-size`. It is carried rather than applied
+     * because Rentile cannot apply it: the anchor it moves is a geographic position here, and a
+     * pixel offset only becomes meaningful once the consumer has projected it.
      *
      * Ignoring it silently misplaces the label, which is why it is here even though only two layers
      * in the rolling corpus use it. Add it to the projected anchor before laying the quads out
      * around that point.
      *
-     * `text-translate-anchor` decides the frame this is applied in, and it defaults to `map` — so on
-     * a rotated or pitched camera the displacement rotates with the map rather than staying fixed to
-     * the viewport. Rentile does not carry that property: a layer declaring it explicitly is
-     * excluded with [DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT], because Rentile has no camera to
-     * resolve `viewport` against, so anything reaching a consumer here is map-anchored.
+     * [translateAlignment] identifies whether this displacement rotates with the map or remains
+     * fixed to the viewport; Rentile carries the authoring choice because the consumer owns the
+     * camera needed to apply it.
      */
     public val translateX: Double,
     /** See [translateX]. */
     public val translateY: Double,
+    public val translateAlignment: SymbolAlignment,
 )
 
 /** The immutable result of one Label acquisition. Not a Prepared Batch; see CONTEXT.md. */
@@ -538,18 +633,20 @@ public data class ResourceLimits(
      */
     public val maxGlyphRangeBytes: Long = 1L * 1024L * 1024L,
     /**
-     * Highest observed in the rolling corpus was 15 glyph ranges, at Tokyo z14, dense CJK
-     * (measured 2026-08-19). That count is per tile, while this ceiling is per batch: a real
+     * The expanded rolling corpus required 159 ranges for Outdoor at Tokyo z14 on 2026-08-23;
+     * the measurement and resulting headroom are documented in `compatibility/README.md`.
+     * That count is per tile, while this ceiling is per batch: a real
      * consumer acquires ten to thirty tiles in one [acquireLabelCandidates] call. Ranges dedupe
-     * across the whole batch, so a large viewport over one dense area does not multiply 15 by
+     * across the whole batch, so a large viewport over one dense area does not multiply it by
      * the tile count — but a style with several font stacks does multiply it by the stack count.
      * The failure mode is a hard [SafetyLimitException] that fails the entire acquisition, so
-     * headroom is worth more than tightness here: 64 is about four times the observed
-     * single-tile maximum, not the ~32 a naive "twice the observed maximum" would give.
-     * Tightening this further needs a real multi-tile viewport measurement, not a re-derivation
-     * from the single-tile number above.
+     * headroom is worth more than tightness here. 256 is the next power of two above that observed
+     * closure and still a hard per-batch bound; 512 was rejected because a dense atlas at that
+     * range count cannot fit the independent [maxRasterDimensionPx] and
+     * [maxDecodedRasterBytes] defaults. Tightening this needs a real multi-tile viewport
+     * measurement, not a re-derivation from one corpus tile.
      */
-    public val maxGlyphRangesPerBatch: Int = 64,
+    public val maxGlyphRangesPerBatch: Int = 256,
 ) {
     init {
         require(maxStyleBytes > 0)
@@ -652,7 +749,7 @@ public interface BasemapRasterizer : AutoCloseable {
      */
     public suspend fun retryExact(batch: PreparedBatch): ExactRecoveryResult
 
-    /** Resolved visible place-name symbol layers in style order. URL templates remain private. */
+    /** Resolved visible text-bearing vector symbol layers in style order. URL templates remain private. */
     public fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor>
 
     /** All-or-error validated MVT acquisition. Tile substitution is deliberately not applied. */

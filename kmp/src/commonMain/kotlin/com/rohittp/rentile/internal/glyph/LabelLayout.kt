@@ -51,7 +51,7 @@ internal object LabelLayout {
      *
      * The map is a parameter rather than something this function derives, because it depends only
      * on the batch's glyph ranges and never on the label: deriving it here rebuilt it once per
-     * label, which at the `maxGlyphRangesPerBatch` ceiling is up to 64 x 256 map operations for
+     * label, which at the `maxGlyphRangesPerBatch` ceiling is up to 256 x 256 map operations for
      * every label on the tile - landing hardest on exactly the dense-CJK case this design set out
      * to bound. The caller builds it once per batch.
      *

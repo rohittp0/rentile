@@ -6,6 +6,12 @@ Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a
 
 Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
+The source tree currently declares `VERSION_NAME=0.6.0`, a deliberate prerelease minor because its
+label-candidate data classes and coverage contract break the `0.5.x` API. It is not a published
+release until the `Build and Publish` workflow has passed and the coordinate is publicly
+resolvable. Consumers upgrading from `0.5.x` must follow the
+[0.6.0 migration guide](docs/migrations/0.6.0.md).
+
 ## Targets
 
 - Android: `arm64-v8a` and `x86_64`
@@ -44,6 +50,7 @@ dependencyResolutionManagement {
 
 ```text
 python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
+python3 tools/check_corpus_fidelity_policy.py compatibility/rentile-v1-coverage.json
 ./gradlew :kmp:checkKotlinAbi
 ./gradlew :kmp:testAndroidHostTest :kmp:jvmTest :kmp:macosArm64Test
 ./gradlew :kmp:compileKotlinIosArm64 :kmp:compileKotlinIosSimulatorArm64
@@ -52,7 +59,10 @@ python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
 ./gradlew -p consumer-smoke compileAndroidMain compileKotlinJvm compileKotlinIosArm64 compileKotlinIosSimulatorArm64 compileKotlinMacosArm64 compileKotlinLinuxX64 compileKotlinLinuxArm64
 ```
 
-Merging to `main` publishes once the release gates pass. To run a release manually, or to watch the one a push started:
+Merging a non-documentation change to `main` starts one publication automatically. Do not also
+dispatch the workflow manually for the same commit: a second run can legitimately resolve the next
+patch version. Use manual dispatch only when no push-triggered run exists. To dispatch deliberately,
+or to watch the run a push started:
 
 ```text
 gh workflow run publish.yml --repo rohittp0/rentile --ref main
@@ -63,6 +73,23 @@ gh run watch RUN_ID --repo rohittp0/rentile --exit-status
 Architecture decisions and the evolving contract are in [`docs/`](docs/). Public documentation is prepared for `https://rohittp.com/rentile/`.
 
 The rolling corpus is discovered from the public paginated map catalog and checked against a credential-free Coverage Manifest. See [`compatibility/README.md`](compatibility/README.md) for local and workflow usage.
+
+## Label candidates
+
+Rentile does not bake text into Output Tiles. It admits every visible text-bearing vector symbol
+layer to descriptor and candidate compilation, including point, line, and line-center labels, and
+carries each successfully resolved paired icon so the viewport-owning consumer can place and
+collide the complete symbol. Unsupported scripts, constructs, sources, and feature values are
+excluded with stable diagnostics instead of being represented as plausible but incorrect labels.
+The public API exposes
+glyph geometry, source-line geometry, feature-resolved paint, explicit overlap, alignment, and
+z-order enums, and icon text-fit inputs. `LabelIconRef` now carries a `LabelIconAnchor` for the final
+fitted box instead of the removed pre-fit `anchorOffsetX/Y` shifts. The consumer resolves sprite
+imagery by `LabelIconRef.imageName`, as in 0.5.x, and still owns projection, shaping limitations,
+cross-tile collision, depth, and final drawing. Rentile does not publish a second sprite atlas
+through the label batch.
+See [ADR 0024](docs/adr/0024-label-placement-belongs-to-the-consumer.md) and the
+[0.6.0 migration guide](docs/migrations/0.6.0.md).
 
 ### Static documentation version convention
 

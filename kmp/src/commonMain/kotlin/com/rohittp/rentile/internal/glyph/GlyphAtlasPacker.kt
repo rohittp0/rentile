@@ -34,19 +34,19 @@ internal object GlyphAtlasPacker {
      * Shelf width, and therefore the atlas's own width once more than one shelf is needed.
      *
      * Chosen so that `maxGlyphRangesPerBatch` genuinely fits, because the two ceilings must agree:
-     * that limit's KDoc promises 64 ranges as deliberate headroom over a measured 15, and a shelf
-     * that cannot hold 64 turns the promise into a `SafetyLimitException` thrown *after* every
+     * that limit's KDoc promises 256 ranges as measured corpus headroom, and a shelf that cannot
+     * hold 256 ordinary dense ranges turns the promise into a `SafetyLimitException` thrown after every
      * range has been fetched - a network cost paid for a failure. The previous 1024 held about 41
      * dense ranges, so a 30-tile Tokyo viewport across two or three font stacks passed the range
      * check and then failed in the packer.
      *
-     * 64 dense CJK ranges are 16384 cells. At 4096 wide that is 3164 rows for 28-pixel cells and
-     * 6440 for 40-pixel ones - inside `maxRasterDimensionPx`'s 8192 default with room to spare, and
-     * 49 to 101 MiB against `maxDecodedRasterBytes`' 256 MiB. 2048 was rejected: it fits 28- and
-     * 32-pixel cells and breaches the height ceiling at 36, which is too little margin for a number
-     * derived from estimated glyph extents.
+     * 256 dense CJK ranges are 65536 cells. At 8192 wide, 28-pixel cells occupy about 6300 rows
+     * and 197 MiB; 32-pixel cells exactly reach the independent 8192-pixel and 256 MiB defaults.
+     * Larger provider-declared glyph metrics can still trip those separate typed limits, as they
+     * should. 4096 was rejected because even the 28-pixel corpus shape would breach the default
+     * height ceiling before reaching the range ceiling.
      */
-    private const val SHELF_WIDTH_PX = 4096
+    private const val SHELF_WIDTH_PX = 8192
 
     /**
      * A total-order string over a glyph's own content: its metrics and its decoded bitmap

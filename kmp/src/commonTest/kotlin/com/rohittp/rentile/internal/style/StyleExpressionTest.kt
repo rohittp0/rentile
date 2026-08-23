@@ -38,6 +38,122 @@ class StyleExpressionTest {
     }
 
     @Test
+    fun evaluatesStrictComparisonOperatorsForNumbersAndStrings() {
+        val context = StyleEvaluationContext(
+            zoom = 0.0,
+            properties = mapOf(
+                "class" to StyleValue.StringValue("primary"),
+                "rank" to StyleValue.NumberValue(3.0),
+            ),
+        )
+
+        assertEquals(StyleValue.BooleanValue(true), evaluate("""["!=",["get","class"],"secondary"]""", context))
+        assertEquals(StyleValue.BooleanValue(true), evaluate("""["<",["get","rank"],4]""", context))
+        assertEquals(StyleValue.BooleanValue(true), evaluate("""[">",["get","rank"],2]""", context))
+        assertEquals(StyleValue.BooleanValue(true), evaluate("""["<","alpha","beta"]""", context))
+        assertEquals(StyleValue.BooleanValue(true), evaluate("""["!=",["get","rank"],"3"]""", context))
+        assertEquals(StyleValue.Null, evaluate("""["<",["get","rank"],"4"]""", context))
+    }
+
+    @Test
+    fun comparisonsRejectWrongArityAndStaticallyIncompatibleTypes() {
+        listOf(
+            """["!=",1]""",
+            """["<",1,2,3]""",
+            """[">",true,false]""",
+            """["!=",1,"1"]""",
+        ).forEach { source ->
+            assertFailsWith<StyleExpressionCompilationException>(source) {
+                compile(source)
+            }
+        }
+    }
+
+    @Test
+    fun sliceEvaluatesStringsArraysBoundsAndFractionalIndices() {
+        val context = StyleEvaluationContext(zoom = 0.0)
+
+        assertEquals(StyleValue.StringValue("bcd"), evaluate("""["slice","abcdef",1,4]""", context))
+        assertEquals(StyleValue.StringValue("cdef"), evaluate("""["slice","abcdef",2]""", context))
+        assertEquals(StyleValue.StringValue("ef"), evaluate("""["slice","abcdef",-2,99]""", context))
+        assertEquals(StyleValue.StringValue(""), evaluate("""["slice","abcdef",4,2]""", context))
+        assertEquals(StyleValue.StringValue("bc"), evaluate("""["slice","abcdef",1.9,3.9]""", context))
+        assertEquals(
+            StyleValue.ArrayValue(listOf(StyleValue.NumberValue(2.0), StyleValue.NumberValue(3.0))),
+            evaluate("""["slice",["literal",[1,2,3,4]],1,3]""", context),
+        )
+    }
+
+    @Test
+    fun sliceCountsUnicodeSurrogatePairsAsOnePosition() {
+        assertEquals(
+            StyleValue.StringValue("😀"),
+            evaluate("""["slice","A😀B",1,2]""", StyleEvaluationContext(zoom = 0.0)),
+        )
+    }
+
+    @Test
+    fun sliceReturnsNullForRuntimeTypeErrors() {
+        val context = StyleEvaluationContext(
+            zoom = 0.0,
+            properties = mapOf(
+                "input" to StyleValue.BooleanValue(true),
+                "index" to StyleValue.StringValue("1"),
+            ),
+        )
+
+        assertEquals(StyleValue.Null, evaluate("""["slice",["get","input"],0]""", context))
+        assertEquals(StyleValue.Null, evaluate("""["slice","abc",["get","index"]]""", context))
+    }
+
+    @Test
+    fun sliceRejectsWrongArityAndStaticallyInvalidTypes() {
+        listOf(
+            """["slice","abc"]""",
+            """["slice","abc",0,1,2]""",
+            """["slice",true,0]""",
+            """["slice","abc","0"]""",
+        ).forEach { source ->
+            assertFailsWith<StyleExpressionCompilationException>(source) {
+                compile(source)
+            }
+        }
+    }
+
+    @Test
+    fun toStringConvertsScalarsCollectionsAndColors() {
+        val context = StyleEvaluationContext(zoom = 0.0)
+
+        assertEquals(StyleValue.StringValue(""), evaluate("""["to-string",null]""", context))
+        assertEquals(StyleValue.StringValue("true"), evaluate("""["to-string",true]""", context))
+        assertEquals(StyleValue.StringValue("7"), evaluate("""["to-string",7]""", context))
+        assertEquals(
+            StyleValue.StringValue("[1,\"two\",true,null]"),
+            evaluate("""["to-string",["literal",[1,"two",true,null]]]""", context),
+        )
+        assertEquals(
+            StyleValue.StringValue("{\"name\":\"A\\nB\",\"enabled\":true}"),
+            evaluate("""["to-string",["literal",{"name":"A\nB","enabled":true}]]""", context),
+        )
+        assertEquals(
+            StyleValue.StringValue("rgba(255,0,0,1)"),
+            evaluate("""["to-string",["interpolate",["linear"],["zoom"],-1,"#ff0000",1,"#ff0000"]]""", context),
+        )
+    }
+
+    @Test
+    fun toStringRequiresExactlyOneArgument() {
+        listOf(
+            """["to-string"]""",
+            """["to-string",1,2]""",
+        ).forEach { source ->
+            assertFailsWith<StyleExpressionCompilationException>(source) {
+                compile(source)
+            }
+        }
+    }
+
+    @Test
     fun evaluatesStepInterpolateAndNumberConversionAtOutputZoom() {
         val context = StyleEvaluationContext(
             zoom = 15.0,

@@ -79,6 +79,7 @@ public final class com/rohittp/rentile/DiagnosticCode : java/lang/Enum {
 	public static final field ICON_FEATURE_SKIPPED Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field ICON_LAYER_SKIPPED_SOURCE_UNAVAILABLE Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field LABEL_FEATURE_SKIPPED Lcom/rohittp/rentile/DiagnosticCode;
+	public static final field LABEL_SOURCE_UNAVAILABLE Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field LINE_PLACEMENT_LABEL_EXCLUDED Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field RASTER_PASSTHROUGH_USED Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field RESOURCE_CACHE_HIT Lcom/rohittp/rentile/DiagnosticCode;
@@ -204,6 +205,16 @@ public final class com/rohittp/rentile/GroundRadianceDescriptor {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class com/rohittp/rentile/IconTextFit : java/lang/Enum {
+	public static final field BOTH Lcom/rohittp/rentile/IconTextFit;
+	public static final field HEIGHT Lcom/rohittp/rentile/IconTextFit;
+	public static final field NONE Lcom/rohittp/rentile/IconTextFit;
+	public static final field WIDTH Lcom/rohittp/rentile/IconTextFit;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/rohittp/rentile/IconTextFit;
+	public static fun values ()[Lcom/rohittp/rentile/IconTextFit;
+}
+
 public final class com/rohittp/rentile/InvalidTileIdException : com/rohittp/rentile/RentileException {
 	public fun <init> (Lcom/rohittp/rentile/TileId;Ljava/lang/String;)V
 	public synthetic fun <init> (Lcom/rohittp/rentile/TileId;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -228,44 +239,74 @@ public final class com/rohittp/rentile/LabelBox {
 }
 
 public final class com/rohittp/rentile/LabelCandidate {
-	public fun <init> (ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;ZZDDDDDDD)V
+	public fun <init> (ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLcom/rohittp/rentile/LabelPlacement;Ljava/util/List;DDZZLcom/rohittp/rentile/SymbolZOrder;DDLcom/rohittp/rentile/SymbolAlignment;Lcom/rohittp/rentile/SymbolAlignment;ZLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;Lcom/rohittp/rentile/SymbolOverlap;ZDDIIDDDDDLcom/rohittp/rentile/SymbolAlignment;)V
 	public final fun component1 ()I
 	public final fun component10 ()Z
-	public final fun component11 ()D
-	public final fun component12 ()D
+	public final fun component11 ()Z
+	public final fun component12 ()Lcom/rohittp/rentile/SymbolZOrder;
 	public final fun component13 ()D
 	public final fun component14 ()D
-	public final fun component15 ()D
-	public final fun component16 ()D
-	public final fun component17 ()D
+	public final fun component15 ()Lcom/rohittp/rentile/SymbolAlignment;
+	public final fun component16 ()Lcom/rohittp/rentile/SymbolAlignment;
+	public final fun component17 ()Z
+	public final fun component18 ()Ljava/util/List;
+	public final fun component19 ()Lcom/rohittp/rentile/LabelBox;
 	public final fun component2 ()Lcom/rohittp/rentile/TileId;
+	public final fun component20 ()Lcom/rohittp/rentile/LabelIconRef;
+	public final fun component21 ()Lcom/rohittp/rentile/SymbolOverlap;
+	public final fun component22 ()Z
+	public final fun component23 ()D
+	public final fun component24 ()D
+	public final fun component25 ()I
+	public final fun component26 ()I
+	public final fun component27 ()D
+	public final fun component28 ()D
+	public final fun component29 ()D
 	public final fun component3 ()Lcom/rohittp/rentile/TileId;
+	public final fun component30 ()D
+	public final fun component31 ()D
+	public final fun component32 ()Lcom/rohittp/rentile/SymbolAlignment;
 	public final fun component4 ()D
 	public final fun component5 ()D
-	public final fun component6 ()Ljava/util/List;
-	public final fun component7 ()Lcom/rohittp/rentile/LabelBox;
-	public final fun component8 ()Lcom/rohittp/rentile/LabelIconRef;
-	public final fun component9 ()Z
-	public final fun copy (ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;ZZDDDDDDD)Lcom/rohittp/rentile/LabelCandidate;
-	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelCandidate;ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;ZZDDDDDDDILjava/lang/Object;)Lcom/rohittp/rentile/LabelCandidate;
+	public final fun component6 ()Lcom/rohittp/rentile/LabelPlacement;
+	public final fun component7 ()Ljava/util/List;
+	public final fun component8 ()D
+	public final fun component9 ()D
+	public final fun copy (ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLcom/rohittp/rentile/LabelPlacement;Ljava/util/List;DDZZLcom/rohittp/rentile/SymbolZOrder;DDLcom/rohittp/rentile/SymbolAlignment;Lcom/rohittp/rentile/SymbolAlignment;ZLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;Lcom/rohittp/rentile/SymbolOverlap;ZDDIIDDDDDLcom/rohittp/rentile/SymbolAlignment;)Lcom/rohittp/rentile/LabelCandidate;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelCandidate;ILcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;DDLcom/rohittp/rentile/LabelPlacement;Ljava/util/List;DDZZLcom/rohittp/rentile/SymbolZOrder;DDLcom/rohittp/rentile/SymbolAlignment;Lcom/rohittp/rentile/SymbolAlignment;ZLjava/util/List;Lcom/rohittp/rentile/LabelBox;Lcom/rohittp/rentile/LabelIconRef;Lcom/rohittp/rentile/SymbolOverlap;ZDDIIDDDDDLcom/rohittp/rentile/SymbolAlignment;ILjava/lang/Object;)Lcom/rohittp/rentile/LabelCandidate;
 	public fun equals (Ljava/lang/Object;)Z
-	public final fun getAllowOverlap ()Z
+	public final fun getAvoidEdges ()Z
 	public final fun getBoundingBox ()Lcom/rohittp/rentile/LabelBox;
+	public final fun getColor ()I
 	public final fun getGlyphs ()Ljava/util/List;
 	public final fun getHaloBlur ()D
+	public final fun getHaloColor ()I
 	public final fun getHaloWidth ()D
 	public final fun getIcon ()Lcom/rohittp/rentile/LabelIconRef;
 	public final fun getIgnorePlacement ()Z
+	public final fun getKeepUpright ()Z
 	public final fun getLatitude ()D
 	public final fun getLayerStyleIndex ()I
+	public final fun getLine ()Ljava/util/List;
 	public final fun getLongitude ()D
+	public final fun getMaxAngleDegrees ()D
 	public final fun getOpacity ()D
+	public final fun getOverlap ()Lcom/rohittp/rentile/SymbolOverlap;
 	public final fun getPadding ()D
+	public final fun getPitchAlignment ()Lcom/rohittp/rentile/SymbolAlignment;
+	public final fun getPlacement ()Lcom/rohittp/rentile/LabelPlacement;
 	public final fun getRequestedTile ()Lcom/rohittp/rentile/TileId;
+	public final fun getRotationAlignment ()Lcom/rohittp/rentile/SymbolAlignment;
+	public final fun getRotationDegrees ()D
 	public final fun getSortKey ()D
 	public final fun getSourceTile ()Lcom/rohittp/rentile/TileId;
+	public final fun getSymbolSpacing ()D
+	public final fun getTextOptional ()Z
+	public final fun getTextRotationDegrees ()D
+	public final fun getTranslateAlignment ()Lcom/rohittp/rentile/SymbolAlignment;
 	public final fun getTranslateX ()D
 	public final fun getTranslateY ()D
+	public final fun getZOrder ()Lcom/rohittp/rentile/SymbolZOrder;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -366,26 +407,73 @@ public final class com/rohittp/rentile/LabelGlyphQuad {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class com/rohittp/rentile/LabelIconAnchor : java/lang/Enum {
+	public static final field BOTTOM Lcom/rohittp/rentile/LabelIconAnchor;
+	public static final field BOTTOM_LEFT Lcom/rohittp/rentile/LabelIconAnchor;
+	public static final field BOTTOM_RIGHT Lcom/rohittp/rentile/LabelIconAnchor;
+	public static final field CENTER Lcom/rohittp/rentile/LabelIconAnchor;
+	public static final field LEFT Lcom/rohittp/rentile/LabelIconAnchor;
+	public static final field RIGHT Lcom/rohittp/rentile/LabelIconAnchor;
+	public static final field TOP Lcom/rohittp/rentile/LabelIconAnchor;
+	public static final field TOP_LEFT Lcom/rohittp/rentile/LabelIconAnchor;
+	public static final field TOP_RIGHT Lcom/rohittp/rentile/LabelIconAnchor;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/rohittp/rentile/LabelIconAnchor;
+	public static fun values ()[Lcom/rohittp/rentile/LabelIconAnchor;
+}
+
 public final class com/rohittp/rentile/LabelIconRef {
-	public fun <init> (Ljava/lang/String;DDDDDDDD)V
+	public fun <init> (Ljava/lang/String;DDLcom/rohittp/rentile/LabelIconAnchor;DDDDLcom/rohittp/rentile/SymbolAlignment;IDIDDDDZLcom/rohittp/rentile/SymbolOverlap;ZLcom/rohittp/rentile/SymbolAlignment;Lcom/rohittp/rentile/SymbolAlignment;ZZLcom/rohittp/rentile/IconTextFit;Ljava/util/List;)V
 	public final fun component1 ()Ljava/lang/String;
+	public final fun component10 ()I
+	public final fun component11 ()D
+	public final fun component12 ()I
+	public final fun component13 ()D
+	public final fun component14 ()D
+	public final fun component15 ()D
+	public final fun component16 ()D
+	public final fun component17 ()Z
+	public final fun component18 ()Lcom/rohittp/rentile/SymbolOverlap;
+	public final fun component19 ()Z
 	public final fun component2 ()D
+	public final fun component20 ()Lcom/rohittp/rentile/SymbolAlignment;
+	public final fun component21 ()Lcom/rohittp/rentile/SymbolAlignment;
+	public final fun component22 ()Z
+	public final fun component23 ()Z
+	public final fun component24 ()Lcom/rohittp/rentile/IconTextFit;
+	public final fun component25 ()Ljava/util/List;
 	public final fun component3 ()D
-	public final fun component4 ()D
+	public final fun component4 ()Lcom/rohittp/rentile/LabelIconAnchor;
 	public final fun component5 ()D
 	public final fun component6 ()D
 	public final fun component7 ()D
 	public final fun component8 ()D
-	public final fun component9 ()D
-	public final fun copy (Ljava/lang/String;DDDDDDDD)Lcom/rohittp/rentile/LabelIconRef;
-	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelIconRef;Ljava/lang/String;DDDDDDDDILjava/lang/Object;)Lcom/rohittp/rentile/LabelIconRef;
+	public final fun component9 ()Lcom/rohittp/rentile/SymbolAlignment;
+	public final fun copy (Ljava/lang/String;DDLcom/rohittp/rentile/LabelIconAnchor;DDDDLcom/rohittp/rentile/SymbolAlignment;IDIDDDDZLcom/rohittp/rentile/SymbolOverlap;ZLcom/rohittp/rentile/SymbolAlignment;Lcom/rohittp/rentile/SymbolAlignment;ZZLcom/rohittp/rentile/IconTextFit;Ljava/util/List;)Lcom/rohittp/rentile/LabelIconRef;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelIconRef;Ljava/lang/String;DDLcom/rohittp/rentile/LabelIconAnchor;DDDDLcom/rohittp/rentile/SymbolAlignment;IDIDDDDZLcom/rohittp/rentile/SymbolOverlap;ZLcom/rohittp/rentile/SymbolAlignment;Lcom/rohittp/rentile/SymbolAlignment;ZZLcom/rohittp/rentile/IconTextFit;Ljava/util/List;ILjava/lang/Object;)Lcom/rohittp/rentile/LabelIconRef;
 	public fun equals (Ljava/lang/Object;)Z
-	public final fun getAnchorOffsetX ()D
-	public final fun getAnchorOffsetY ()D
+	public final fun getAnchor ()Lcom/rohittp/rentile/LabelIconAnchor;
+	public final fun getAvoidEdges ()Z
+	public final fun getColor ()I
+	public final fun getHaloBlur ()D
+	public final fun getHaloColor ()I
+	public final fun getHaloWidth ()D
 	public final fun getHeight ()D
+	public final fun getIgnorePlacement ()Z
 	public final fun getImageName ()Ljava/lang/String;
+	public final fun getKeepUpright ()Z
 	public final fun getOffsetX ()D
 	public final fun getOffsetY ()D
+	public final fun getOpacity ()D
+	public final fun getOptional ()Z
+	public final fun getOverlap ()Lcom/rohittp/rentile/SymbolOverlap;
+	public final fun getPadding ()D
+	public final fun getPitchAlignment ()Lcom/rohittp/rentile/SymbolAlignment;
+	public final fun getRotationAlignment ()Lcom/rohittp/rentile/SymbolAlignment;
+	public final fun getRotationDegrees ()D
+	public final fun getTextFit ()Lcom/rohittp/rentile/IconTextFit;
+	public final fun getTextFitPadding ()Ljava/util/List;
+	public final fun getTranslateAlignment ()Lcom/rohittp/rentile/SymbolAlignment;
 	public final fun getTranslateX ()D
 	public final fun getTranslateY ()D
 	public final fun getWidth ()D
@@ -415,22 +503,40 @@ public final class com/rohittp/rentile/LabelLayerDescriptor {
 }
 
 public final class com/rohittp/rentile/LabelLayerStyle {
-	public fun <init> (Ljava/lang/String;IIII)V
+	public fun <init> (Ljava/lang/String;II)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()I
 	public final fun component3 ()I
-	public final fun component4 ()I
-	public final fun component5 ()I
-	public final fun copy (Ljava/lang/String;IIII)Lcom/rohittp/rentile/LabelLayerStyle;
-	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelLayerStyle;Ljava/lang/String;IIIIILjava/lang/Object;)Lcom/rohittp/rentile/LabelLayerStyle;
+	public final fun copy (Ljava/lang/String;II)Lcom/rohittp/rentile/LabelLayerStyle;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelLayerStyle;Ljava/lang/String;IIILjava/lang/Object;)Lcom/rohittp/rentile/LabelLayerStyle;
 	public fun equals (Ljava/lang/Object;)Z
-	public final fun getColor ()I
-	public final fun getHaloColor ()I
 	public final fun getLayerId ()Ljava/lang/String;
 	public final fun getPriority ()I
 	public final fun getZoom ()I
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/rohittp/rentile/LabelLinePoint {
+	public fun <init> (DD)V
+	public final fun component1 ()D
+	public final fun component2 ()D
+	public final fun copy (DD)Lcom/rohittp/rentile/LabelLinePoint;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelLinePoint;DDILjava/lang/Object;)Lcom/rohittp/rentile/LabelLinePoint;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getLatitude ()D
+	public final fun getLongitude ()D
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/rohittp/rentile/LabelPlacement : java/lang/Enum {
+	public static final field LINE Lcom/rohittp/rentile/LabelPlacement;
+	public static final field LINE_CENTER Lcom/rohittp/rentile/LabelPlacement;
+	public static final field POINT Lcom/rohittp/rentile/LabelPlacement;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/rohittp/rentile/LabelPlacement;
+	public static fun values ()[Lcom/rohittp/rentile/LabelPlacement;
 }
 
 public final class com/rohittp/rentile/MapSession {
@@ -908,6 +1014,33 @@ public final class com/rohittp/rentile/StyleInput$Remote : com/rohittp/rentile/S
 public final class com/rohittp/rentile/StylePreparationException : com/rohittp/rentile/RentileException {
 	public fun <init> (Ljava/lang/String;Ljava/util/List;Ljava/lang/Throwable;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/util/List;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class com/rohittp/rentile/SymbolAlignment : java/lang/Enum {
+	public static final field AUTO Lcom/rohittp/rentile/SymbolAlignment;
+	public static final field MAP Lcom/rohittp/rentile/SymbolAlignment;
+	public static final field VIEWPORT Lcom/rohittp/rentile/SymbolAlignment;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/rohittp/rentile/SymbolAlignment;
+	public static fun values ()[Lcom/rohittp/rentile/SymbolAlignment;
+}
+
+public final class com/rohittp/rentile/SymbolOverlap : java/lang/Enum {
+	public static final field ALWAYS Lcom/rohittp/rentile/SymbolOverlap;
+	public static final field COOPERATIVE Lcom/rohittp/rentile/SymbolOverlap;
+	public static final field NEVER Lcom/rohittp/rentile/SymbolOverlap;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/rohittp/rentile/SymbolOverlap;
+	public static fun values ()[Lcom/rohittp/rentile/SymbolOverlap;
+}
+
+public final class com/rohittp/rentile/SymbolZOrder : java/lang/Enum {
+	public static final field AUTO Lcom/rohittp/rentile/SymbolZOrder;
+	public static final field SOURCE Lcom/rohittp/rentile/SymbolZOrder;
+	public static final field VIEWPORT_Y Lcom/rohittp/rentile/SymbolZOrder;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/rohittp/rentile/SymbolZOrder;
+	public static fun values ()[Lcom/rohittp/rentile/SymbolZOrder;
 }
 
 public final class com/rohittp/rentile/TerrainDemEncoding : java/lang/Enum {

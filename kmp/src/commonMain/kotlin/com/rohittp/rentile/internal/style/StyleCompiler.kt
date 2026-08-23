@@ -53,6 +53,12 @@ private class SpriteAtlasResolution(
     val causeCode: String? = null,
 )
 
+/** The paired-icon half of a label program, including a requested loss that must be reported. */
+private data class LabelIconCompilation(
+    val program: CompiledLabelIconProgram? = null,
+    val requestedButUnsupported: Boolean = false,
+)
+
 internal class StyleCompiler(
     private val owner: Any,
     private val resolveTileJson: suspend (String) -> ResolvedTileJson,
@@ -126,7 +132,7 @@ internal class StyleCompiler(
         val spriteResolution = when {
             layers.any(::layerRequiresSpriteUnconditionally) ->
                 SpriteAtlasResolution(resolveRequiredSpriteAtlas(root, baseUri, secretContext))
-            layers.any(::layerDesiresSpriteIndependentOfText) ->
+            layers.any(::layerDesiresSpriteForLabel) ->
                 resolveOptionalSpriteAtlas(root, baseUri, secretContext)
             else -> SpriteAtlasResolution()
         }
@@ -186,16 +192,34 @@ internal class StyleCompiler(
             try {
                 if (type == "symbol") {
                     if (isAuxiliaryLabelLayer(layer, layout, hidden, sources)) {
-                        val source = compileLayerVectorSource(
-                            layer = layer,
-                            sources = sources,
-                            compiledSources = compiledVectorSources,
-                            secretContext = secretContext,
-                            baseUri = baseUri,
-                            index = index,
-                            layerId = layerId,
-                        )
-                        if (source.geoJson == null) {
+                        val source = try {
+                            compileLayerVectorSource(
+                                layer = layer,
+                                sources = sources,
+                                compiledSources = compiledVectorSources,
+                                secretContext = secretContext,
+                                baseUri = baseUri,
+                                index = index,
+                                layerId = layerId,
+                            )
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: RentileException) {
+                            // Place-name descriptors were already reachable before 0.6.0, so their
+                            // source contract remains strict. Every other text-bearing source is
+                            // newly reachable work: a failure there must not turn a style which
+                            // prepared under 0.5.x into an outage merely because 0.6.0 attempted
+                            // to add more labels.
+                            if (isLegacyPlaceNameLabel(layer)) throw error
+                            diagnostics += diagnostic(
+                                code = DiagnosticCode.LABEL_SOURCE_UNAVAILABLE,
+                                severity = DiagnosticSeverity.INFO,
+                                message = "A newly admitted text-bearing symbol layer could not resolve its vector source and is excluded",
+                                details = identity + ("causeCode" to error.code.name),
+                            )
+                            null
+                        }
+                        if (source != null && source.geoJson == null) {
                             val sourceLayer = sourceLayerFor(layer, source, index, layerId)
                             // The descriptor is built and added unconditionally, exactly as it was
                             // before this compatibility profile compiled any text program at all:
@@ -210,36 +234,14 @@ internal class StyleCompiler(
                                 sourceMaximumZoom = source.maxZoom,
                                 layerJson = sanitizedLabelLayerJson(layer),
                             )
-                            val placement =
-                                layout["symbol-placement"]?.asPrimitive()?.takeIf { it.isString }?.content
-                                    ?: "point"
-                            // "line-center" is line placement that picks one anchor at the line's
-                            // midpoint rather than repeating along it. Either way the text follows
-                            // a line, which this profile's layout does not implement, so treating
-                            // only "line" as line-placed would have laid a line-centered label out
-                            // as point-anchored text - the exact wrong output this exclusion exists
-                            // to avoid.
-                            val textProgram = if (placement == "line" || placement == "line-center") {
-                                // Place-name source layers are point geometry, so line placement
-                                // means the style is doing something this profile's label layout
-                                // does not implement. Only the text program is excluded here - the
-                                // descriptor above still ships, so raw MVT access is unaffected.
-                                diagnostics += diagnostic(
-                                    code = DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED,
-                                    severity = DiagnosticSeverity.INFO,
-                                    message = "A line-placed place-name label layer is excluded by the compatibility profile",
-                                    details = identity,
-                                )
-                                null
-                            } else {
-                                try {
-                                    compileLabelTextProgram(layer, layout, index, layerId)
-                                } catch (error: CancellationException) {
+                            val textProgram = try {
+                                compileLabelTextProgram(layer, layout, index, layerId)
+                            } catch (error: CancellationException) {
                                     // Cancellation is control flow, not a Rentile failure (ADR
                                     // 0011): it propagates unwrapped and must never be degraded
                                     // into an exclusion.
                                     throw error
-                                } catch (error: StylePreparationException) {
+                            } catch (error: StylePreparationException) {
                                     // The filter and every text-field/layout/paint construct
                                     // compiled here are newly reachable: this layer never held a
                                     // compiled text program before this compatibility profile grew
@@ -252,11 +254,10 @@ internal class StyleCompiler(
                                     diagnostics += diagnostic(
                                         code = DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT,
                                         severity = DiagnosticSeverity.INFO,
-                                        message = "A place-name label layer uses an unsupported text construct and is excluded",
+                                        message = "A text-bearing symbol layer uses an unsupported text construct and is excluded",
                                         details = identity,
                                     )
-                                    null
-                                }
+                                null
                             }
                             labelLayers += CompiledLabelLayer(
                                 descriptor = descriptor,
@@ -266,6 +267,13 @@ internal class StyleCompiler(
                         }
                     }
                     val classification = classifySymbol(layout, hidden, identity)
+                    // Reuse the label program's already compatibility-gated text collision
+                    // properties. Compiling text-* again inside an icon layer would add a new
+                    // strict failure edge to icon layers that 0.5.x already drew while ignoring
+                    // their text half, violating ADR 0026 when that text program is unsupported.
+                    val labelTextProgram = labelLayers
+                        .firstOrNull { it.textProgram?.layerOrder == index }
+                        ?.textProgram
                     val retainedIconDiagnostic = classification.diagnostic
                     if (classification.retained && classification.retainedIndependentOfText && retainedIconDiagnostic != null) {
                         // This layer has meaningful text, so classifySymbol used to exclude it
@@ -305,6 +313,7 @@ internal class StyleCompiler(
                                 index = index,
                                 layerId = layerId,
                                 retainedIndependentOfText = true,
+                                labelTextProgram = labelTextProgram,
                             )
                             diagnostics += retainedIconDiagnostic
                         } catch (error: CancellationException) {
@@ -374,6 +383,7 @@ internal class StyleCompiler(
                             baseUri = baseUri,
                             index = index,
                             layerId = layerId,
+                            labelTextProgram = labelTextProgram,
                         )
                     }
                     continue
@@ -541,11 +551,15 @@ internal class StyleCompiler(
     ): Boolean {
         if (hidden || !hasMeaningfulText(layout)) return false
         val sourceLayer = layer["source-layer"]?.asPrimitive()?.takeIf { it.isString }?.content
-        if (sourceLayer !in PLACE_NAME_SOURCE_LAYERS) return false
+        if (sourceLayer == null) return false
         val sourceId = layer["source"]?.asPrimitive()?.takeIf { it.isString }?.content ?: return false
         val source = sources[sourceId] as? JsonObject ?: return false
         return source["type"]?.asPrimitive()?.takeIf { it.isString }?.content == "vector"
     }
+
+    private fun isLegacyPlaceNameLabel(layer: JsonObject): Boolean =
+        layer["source-layer"]?.asPrimitive()?.takeIf { it.isString }?.content in
+            LEGACY_PLACE_NAME_SOURCE_LAYERS
 
     private suspend fun compileTerrainSource(
         root: JsonObject,
@@ -844,22 +858,12 @@ internal class StyleCompiler(
         index: Int,
         layerId: String,
         retainedIndependentOfText: Boolean = false,
+        labelTextProgram: CompiledLabelTextProgram? = null,
     ): IconDrawLayer {
         validateVectorLayerKeys(layer, index, layerId)
         val layout = objectOrEmpty(layer, "layout", index, layerId)
-        val supportedLayout = setOf(
+        val supportedLayout = SUPPORTED_ICON_LAYOUT_KEYS + setOf(
             "visibility",
-            "icon-allow-overlap",
-            "icon-anchor",
-            "icon-image",
-            "icon-offset",
-            "icon-optional",
-            "icon-overlap",
-            "icon-padding",
-            "icon-rotate",
-            "icon-rotation-alignment",
-            "icon-size",
-            "icon-text-fit",
             "symbol-avoid-edges",
             "symbol-placement",
             "symbol-sort-key",
@@ -869,50 +873,16 @@ internal class StyleCompiler(
         val unsupportedLayout = layout.keys.filter { key -> key !in supportedLayout && !key.startsWith("text-") }
         if (unsupportedLayout.isNotEmpty()) failRetained(index, layerId, "an icon layout property is unsupported")
         val paint = objectOrEmpty(layer, "paint", index, layerId)
-        val supportedPaint = setOf(
-            "icon-color",
-            "icon-halo-blur",
-            "icon-halo-color",
-            "icon-halo-width",
-            "icon-opacity",
-            "icon-translate",
-        )
-        val unsupportedPaint = paint.keys.filter { key -> key !in supportedPaint && !key.startsWith("text-") }
+        val unsupportedPaint = paint.keys.filter { key -> key !in SUPPORTED_ICON_PAINT_KEYS && !key.startsWith("text-") }
         if (unsupportedPaint.isNotEmpty()) failRetained(index, layerId, "an icon paint property is unsupported")
 
-        val placement = when (layout["symbol-placement"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "point") {
-            "point" -> SymbolPlacement.POINT
-            "line" -> SymbolPlacement.LINE
-            else -> failRetained(index, layerId, "symbol-placement is unsupported for retained icons")
-        }
-        val alignment = layout["icon-rotation-alignment"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "auto"
-        if (alignment !in setOf("auto", "map", "viewport")) {
-            failRetained(index, layerId, "icon-rotation-alignment is invalid")
-        }
-        if (placement == SymbolPlacement.LINE && alignment == "viewport") {
-            failRetained(index, layerId, "viewport-aligned line icons are outside the compatibility profile")
-        }
-        val anchor = iconAnchorOrNull(layout["icon-anchor"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center")
-            ?: failRetained(index, layerId, "icon-anchor is invalid")
-        val allowOverlap = layout["icon-allow-overlap"]?.let { value ->
-            value.asPrimitive()?.booleanOrNull
-                ?: failRetained(index, layerId, "icon-allow-overlap must be a boolean constant")
-        } ?: when (val overlap = layout["icon-overlap"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "never") {
-            "always" -> true
-            "never", "cooperative" -> false
-            else -> failRetained(index, layerId, "icon-overlap is invalid: $overlap")
-        }
-        val padding = layout["icon-padding"]?.asPrimitive()?.doubleOrNull ?: 2.0
-        if (!padding.isFinite() || padding < 0.0) failRetained(index, layerId, "icon-padding must be non-negative")
-        val avoidEdges = layout["symbol-avoid-edges"]?.let { value ->
-            value.asPrimitive()?.booleanOrNull
-                ?: failRetained(index, layerId, "symbol-avoid-edges must be a boolean constant")
-        } ?: false
-        layout["symbol-z-order"]?.let { value ->
-            val order = value.asPrimitive()?.takeIf { it.isString }?.content
-                ?: failRetained(index, layerId, "symbol-z-order must be a string constant")
-            if (order !in setOf("auto", "source", "viewport-y")) failRetained(index, layerId, "symbol-z-order is invalid")
-        }
+        val placement = compilePropertyWithDefault(
+            layout["symbol-placement"], JsonPrimitive("point"), StyleType.STRING, index, layerId, "symbol-placement",
+        )
+        val overlap = layout["icon-overlap"] ?: layout["icon-allow-overlap"] ?: JsonPrimitive("never")
+        val padding = compilePropertyWithDefault(
+            layout["icon-padding"], JsonPrimitive(2.0), StyleType.NUMBER, index, layerId, "icon-padding",
+        )
 
         val compiledSource = compileLayerVectorSource(
             layer, sources, compiledSources, secretContext, baseUri, index, layerId,
@@ -981,7 +951,13 @@ internal class StyleCompiler(
                 layerId,
                 "icon-translate",
             ),
-            anchor = anchor,
+            translateAnchor = compilePropertyWithDefault(
+                paint["icon-translate-anchor"], JsonPrimitive("map"), StyleType.STRING, index, layerId,
+                "icon-translate-anchor",
+            ),
+            anchor = compilePropertyWithDefault(
+                layout["icon-anchor"], JsonPrimitive("center"), StyleType.STRING, index, layerId, "icon-anchor",
+            ),
             sortKey = layout["symbol-sort-key"]?.let {
                 compileProperty(it, StyleType.NUMBER, index, layerId, "symbol-sort-key")
             },
@@ -993,8 +969,33 @@ internal class StyleCompiler(
                 layerId,
                 "symbol-spacing",
             ),
-            allowOverlap = allowOverlap,
-            avoidEdges = avoidEdges,
+            overlap = compileProperty(overlap, StyleType.VALUE, index, layerId, "icon-overlap"),
+            ignorePlacement = compilePropertyWithDefault(
+                layout["icon-ignore-placement"], JsonPrimitive(false), StyleType.BOOLEAN, index, layerId,
+                "icon-ignore-placement",
+            ),
+            textOverlap = labelTextProgram?.overlap,
+            textIgnorePlacement = labelTextProgram?.ignorePlacement,
+            avoidEdges = compilePropertyWithDefault(
+                layout["symbol-avoid-edges"], JsonPrimitive(false), StyleType.BOOLEAN, index, layerId,
+                "symbol-avoid-edges",
+            ),
+            zOrder = compilePropertyWithDefault(
+                layout["symbol-z-order"], JsonPrimitive("auto"), StyleType.STRING, index, layerId,
+                "symbol-z-order",
+            ),
+            rotationAlignment = compilePropertyWithDefault(
+                layout["icon-rotation-alignment"], JsonPrimitive("auto"), StyleType.STRING, index, layerId,
+                "icon-rotation-alignment",
+            ),
+            pitchAlignment = compilePropertyWithDefault(
+                layout["icon-pitch-alignment"], JsonPrimitive("auto"), StyleType.STRING, index, layerId,
+                "icon-pitch-alignment",
+            ),
+            keepUpright = compilePropertyWithDefault(
+                layout["icon-keep-upright"], JsonPrimitive(false), StyleType.BOOLEAN, index, layerId,
+                "icon-keep-upright",
+            ),
             retainedIndependentOfText = retainedIndependentOfText,
             minZoom = layer["minzoom"]?.asPrimitive()?.doubleOrNull ?: 0.0,
             maxZoom = layer["maxzoom"]?.asPrimitive()?.doubleOrNull ?: 31.0,
@@ -1002,12 +1003,13 @@ internal class StyleCompiler(
     }
 
     /**
-     * Compiles a place-name symbol layer's text program: its `filter`, `text-field`, and every
+     * Compiles a visible text-bearing vector symbol layer's text program: its `filter`,
+     * `text-field`, and every
      * text layout and paint property, using the same [compileProperty]/[compilePropertyWithDefault]/
      * [compileColorPropertyWithDefault] helpers [compileIconLayer] uses for its own properties.
      * The caller already resolved this layer's [CompiledVectorSource] and
-     * [LabelLayerDescriptor][com.rohittp.rentile.LabelLayerDescriptor] and gates out
-     * `symbol-placement: line` before calling this - neither is a parameter here, because this
+     * [LabelLayerDescriptor][com.rohittp.rentile.LabelLayerDescriptor]. Neither is a parameter
+     * here, because this
      * function produces only the nullable [CompiledLabelLayer.textProgram], never the
      * [CompiledLabelLayer] itself, so a rejected construct can never take the descriptor down with
      * it. Any rejected construct - an unsupported filter or text expression, an invalid enum
@@ -1021,43 +1023,23 @@ internal class StyleCompiler(
         index: Int,
         layerId: String,
     ): CompiledLabelTextProgram {
+        validateVectorLayerKeys(layer, index, layerId)
         val paint = objectOrEmpty(layer, "paint", index, layerId)
         validateLabelTextKeys(layout, paint, index, layerId)
-        val anchor = iconAnchorOrNull(layout["text-anchor"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center")
-            ?: failRetained(index, layerId, "text-anchor is invalid")
-        val justify = when (layout["text-justify"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "center") {
-            "left" -> TextJustify.LEFT
-            "center" -> TextJustify.CENTER
-            "right" -> TextJustify.RIGHT
-            else -> failRetained(index, layerId, "text-justify is unsupported")
-        }
-        val transform = when (layout["text-transform"]?.asPrimitive()?.takeIf { it.isString }?.content ?: "none") {
-            "none" -> TextTransform.NONE
-            "uppercase" -> TextTransform.UPPERCASE
-            "lowercase" -> TextTransform.LOWERCASE
-            else -> failRetained(index, layerId, "text-transform is unsupported")
-        }
-        val padding = layout["text-padding"]?.asPrimitive()?.doubleOrNull ?: 2.0
-        if (!padding.isFinite() || padding < 0.0) failRetained(index, layerId, "text-padding must be non-negative")
         // text-overlap is the modern spelling and wins when both are present, per the style
-        // specification. "cooperative" allows an overlap only when the colliding symbol also
-        // permits one, which is a negotiation between two symbols during placement - and placement
-        // belongs to the consumer here - so it resolves to the same false as "never": Rentile
-        // reports what the style asked for and never asserts an overlap the author did not grant.
-        val allowOverlap = layout["text-overlap"]?.let { value ->
-            when (value.asPrimitive()?.takeIf { it.isString }?.content) {
-                "always" -> true
-                "never", "cooperative" -> false
-                else -> failRetained(index, layerId, "text-overlap must be a supported constant")
-            }
-        } ?: layout["text-allow-overlap"]?.let { value ->
-            value.asPrimitive()?.booleanOrNull
-                ?: failRetained(index, layerId, "text-allow-overlap must be a boolean constant")
-        } ?: false
-        val ignorePlacement = layout["text-ignore-placement"]?.let { value ->
-            value.asPrimitive()?.booleanOrNull
-                ?: failRetained(index, layerId, "text-ignore-placement must be a boolean constant")
-        } ?: false
+        // specification. Preserve "cooperative" as its own value so the viewport-owning consumer
+        // can negotiate it against the other symbol during placement instead of collapsing it to
+        // either "never" or "always" here.
+        val overlap = layout["text-overlap"] ?: layout["text-allow-overlap"] ?: JsonPrimitive("never")
+        val iconCompilation = try {
+            LabelIconCompilation(program = compileLabelIconProgram(layout, paint, index, layerId))
+        } catch (_: StylePreparationException) {
+            // Only the paired icon is newly lost. Its text program remains valid and carries an
+            // explicit requested-but-unsupported state so label assembly can report the omission
+            // once per layer with candidate counts. Catching exactly StylePreparationException
+            // keeps cancellation and every unrelated failure outside this compatibility seam.
+            LabelIconCompilation(requestedButUnsupported = true)
+        }
 
         return CompiledLabelTextProgram(
             layerOrder = index,
@@ -1067,7 +1049,52 @@ internal class StyleCompiler(
             size = compilePropertyWithDefault(
                 layout["text-size"], JsonPrimitive(16.0), StyleType.NUMBER, index, layerId, "text-size",
             ),
-            anchor = anchor,
+            placement = compilePropertyWithDefault(
+                layout["symbol-placement"], JsonPrimitive("point"), StyleType.STRING, index, layerId, "symbol-placement",
+            ),
+            spacing = compilePropertyWithDefault(
+                layout["symbol-spacing"], JsonPrimitive(250.0), StyleType.NUMBER, index, layerId, "symbol-spacing",
+            ),
+            keepUpright = compilePropertyWithDefault(
+                layout["text-keep-upright"], JsonPrimitive(true), StyleType.BOOLEAN, index, layerId,
+                "text-keep-upright",
+            ),
+            avoidEdges = compilePropertyWithDefault(
+                layout["symbol-avoid-edges"], JsonPrimitive(false), StyleType.BOOLEAN, index, layerId,
+                "symbol-avoid-edges",
+            ),
+            zOrder = compilePropertyWithDefault(
+                layout["symbol-z-order"], JsonPrimitive("auto"), StyleType.STRING, index, layerId,
+                "symbol-z-order",
+            ),
+            rotate = compilePropertyWithDefault(
+                layout["text-rotate"], JsonPrimitive(0.0), StyleType.NUMBER, index, layerId, "text-rotate",
+            ),
+            maxAngle = compilePropertyWithDefault(
+                layout["text-max-angle"], JsonPrimitive(45.0), StyleType.NUMBER, index, layerId, "text-max-angle",
+            ),
+            rotationAlignment = compilePropertyWithDefault(
+                layout["text-rotation-alignment"], JsonPrimitive("auto"), StyleType.STRING, index, layerId,
+                "text-rotation-alignment",
+            ),
+            pitchAlignment = compilePropertyWithDefault(
+                layout["text-pitch-alignment"], JsonPrimitive("auto"), StyleType.STRING, index, layerId,
+                "text-pitch-alignment",
+            ),
+            optional = compilePropertyWithDefault(
+                layout["text-optional"], JsonPrimitive(false), StyleType.BOOLEAN, index, layerId, "text-optional",
+            ),
+            anchor = compilePropertyWithDefault(
+                layout["text-anchor"], JsonPrimitive("center"), StyleType.STRING, index, layerId, "text-anchor",
+            ),
+            radialOffset = compilePropertyWithDefault(
+                layout["text-radial-offset"],
+                JsonPrimitive(0.0),
+                StyleType.NUMBER,
+                index,
+                layerId,
+                "text-radial-offset",
+            ),
             offset = compilePropertyWithDefault(
                 layout["text-offset"],
                 JsonArray(listOf(JsonPrimitive(0.0), JsonPrimitive(0.0))),
@@ -1076,7 +1103,9 @@ internal class StyleCompiler(
                 layerId,
                 "text-offset",
             ),
-            justify = justify,
+            justify = compilePropertyWithDefault(
+                layout["text-justify"], JsonPrimitive("center"), StyleType.STRING, index, layerId, "text-justify",
+            ),
             maxWidth = compilePropertyWithDefault(
                 layout["text-max-width"], JsonPrimitive(10.0), StyleType.NUMBER, index, layerId, "text-max-width",
             ),
@@ -1091,10 +1120,17 @@ internal class StyleCompiler(
             lineHeight = compilePropertyWithDefault(
                 layout["text-line-height"], JsonPrimitive(1.2), StyleType.NUMBER, index, layerId, "text-line-height",
             ),
-            transform = transform,
-            padding = padding,
-            allowOverlap = allowOverlap,
-            ignorePlacement = ignorePlacement,
+            transform = compilePropertyWithDefault(
+                layout["text-transform"], JsonPrimitive("none"), StyleType.STRING, index, layerId, "text-transform",
+            ),
+            padding = compilePropertyWithDefault(
+                layout["text-padding"], JsonPrimitive(2.0), StyleType.NUMBER, index, layerId, "text-padding",
+            ),
+            overlap = compileProperty(overlap, StyleType.VALUE, index, layerId, "text-overlap"),
+            ignorePlacement = compilePropertyWithDefault(
+                layout["text-ignore-placement"], JsonPrimitive(false), StyleType.BOOLEAN, index, layerId,
+                "text-ignore-placement",
+            ),
             sortKey = layout["symbol-sort-key"]?.let {
                 compileProperty(it, StyleType.NUMBER, index, layerId, "symbol-sort-key")
             },
@@ -1121,9 +1157,76 @@ internal class StyleCompiler(
                 layerId,
                 "text-translate",
             ),
+            translateAnchor = compilePropertyWithDefault(
+                paint["text-translate-anchor"], JsonPrimitive("map"), StyleType.STRING, index, layerId,
+                "text-translate-anchor",
+            ),
+            icon = iconCompilation.program,
+            iconRequestedButUnsupported = iconCompilation.requestedButUnsupported,
             minZoom = layer["minzoom"]?.asPrimitive()?.doubleOrNull ?: 0.0,
             maxZoom = layer["maxzoom"]?.asPrimitive()?.doubleOrNull ?: 31.0,
         )
+    }
+
+    private fun compileLabelIconProgram(
+        layout: JsonObject,
+        paint: JsonObject,
+        index: Int,
+        layerId: String,
+    ): CompiledLabelIconProgram? {
+        val image = layout["icon-image"] ?: return null
+        validateLabelIconKeys(layout, paint, index, layerId)
+        val overlap = layout["icon-overlap"] ?: layout["icon-allow-overlap"] ?: JsonPrimitive("never")
+        return CompiledLabelIconProgram(
+            image = compileProperty(image, StyleType.VALUE, index, layerId, "icon-image"),
+            size = compilePropertyWithDefault(layout["icon-size"], JsonPrimitive(1.0), StyleType.NUMBER, index, layerId, "icon-size"),
+            opacity = compilePropertyWithDefault(paint["icon-opacity"], JsonPrimitive(1.0), StyleType.NUMBER, index, layerId, "icon-opacity"),
+            color = compileColorPropertyWithDefault(paint["icon-color"], JsonPrimitive("#000000"), index, layerId, "icon-color"),
+            haloColor = compileColorPropertyWithDefault(paint["icon-halo-color"], JsonPrimitive("rgba(0,0,0,0)"), index, layerId, "icon-halo-color"),
+            haloWidth = compilePropertyWithDefault(paint["icon-halo-width"], JsonPrimitive(0.0), StyleType.NUMBER, index, layerId, "icon-halo-width"),
+            haloBlur = compilePropertyWithDefault(paint["icon-halo-blur"], JsonPrimitive(0.0), StyleType.NUMBER, index, layerId, "icon-halo-blur"),
+            rotate = compilePropertyWithDefault(layout["icon-rotate"], JsonPrimitive(0.0), StyleType.NUMBER, index, layerId, "icon-rotate"),
+            padding = compilePropertyWithDefault(layout["icon-padding"], JsonPrimitive(2.0), StyleType.NUMBER, index, layerId, "icon-padding"),
+            offset = compilePropertyWithDefault(layout["icon-offset"], JsonArray(listOf(JsonPrimitive(0.0), JsonPrimitive(0.0))), StyleType.ARRAY, index, layerId, "icon-offset"),
+            translate = compilePropertyWithDefault(paint["icon-translate"], JsonArray(listOf(JsonPrimitive(0.0), JsonPrimitive(0.0))), StyleType.ARRAY, index, layerId, "icon-translate"),
+            translateAnchor = compilePropertyWithDefault(paint["icon-translate-anchor"], JsonPrimitive("map"), StyleType.STRING, index, layerId, "icon-translate-anchor"),
+            anchor = compilePropertyWithDefault(layout["icon-anchor"], JsonPrimitive("center"), StyleType.STRING, index, layerId, "icon-anchor"),
+            optional = compilePropertyWithDefault(layout["icon-optional"], JsonPrimitive(false), StyleType.BOOLEAN, index, layerId, "icon-optional"),
+            overlap = compileProperty(overlap, StyleType.VALUE, index, layerId, "icon-overlap"),
+            ignorePlacement = compilePropertyWithDefault(layout["icon-ignore-placement"], JsonPrimitive(false), StyleType.BOOLEAN, index, layerId, "icon-ignore-placement"),
+            rotationAlignment = compilePropertyWithDefault(layout["icon-rotation-alignment"], JsonPrimitive("auto"), StyleType.STRING, index, layerId, "icon-rotation-alignment"),
+            pitchAlignment = compilePropertyWithDefault(layout["icon-pitch-alignment"], JsonPrimitive("auto"), StyleType.STRING, index, layerId, "icon-pitch-alignment"),
+            keepUpright = compilePropertyWithDefault(layout["icon-keep-upright"], JsonPrimitive(false), StyleType.BOOLEAN, index, layerId, "icon-keep-upright"),
+            avoidEdges = compilePropertyWithDefault(layout["symbol-avoid-edges"], JsonPrimitive(false), StyleType.BOOLEAN, index, layerId, "symbol-avoid-edges"),
+            textFit = compilePropertyWithDefault(layout["icon-text-fit"], JsonPrimitive("none"), StyleType.STRING, index, layerId, "icon-text-fit"),
+            textFitPadding = compilePropertyWithDefault(layout["icon-text-fit-padding"], JsonArray(listOf(JsonPrimitive(0.0), JsonPrimitive(0.0), JsonPrimitive(0.0), JsonPrimitive(0.0))), StyleType.ARRAY, index, layerId, "icon-text-fit-padding"),
+        )
+    }
+
+    /**
+     * Validates the icon half of a label program. [validateLabelTextKeys] deliberately ignores
+     * `icon-*` keys because a symbol layer can carry both halves; without this counterpart a
+     * text-fit icon silently accepted every unknown future icon property and emitted a plausible
+     * but incomplete [CompiledLabelIconProgram].
+     */
+    private fun validateLabelIconKeys(
+        layout: JsonObject,
+        paint: JsonObject,
+        index: Int,
+        layerId: String,
+    ) {
+        val unsupportedLayout = layout.keys.filter { key ->
+            key.startsWith("icon-") && key !in SUPPORTED_ICON_LAYOUT_KEYS
+        }
+        if (unsupportedLayout.isNotEmpty()) {
+            failRetained(index, layerId, "an icon layout property is unsupported")
+        }
+        val unsupportedPaint = paint.keys.filter { key ->
+            key.startsWith("icon-") && key !in SUPPORTED_ICON_PAINT_KEYS
+        }
+        if (unsupportedPaint.isNotEmpty()) {
+            failRetained(index, layerId, "an icon paint property is unsupported")
+        }
     }
 
     /**
@@ -1132,19 +1235,19 @@ internal class StyleCompiler(
      *
      * Reading the known properties and ignoring the rest silently produced wrong output rather
      * than no output, which is the one thing this compatibility profile does not do:
-     * `text-variable-anchor` with `text-radial-offset` yielded a label centred on its anchor with
-     * no offset at all, and `text-writing-mode: ["vertical"]` yielded horizontal CJK. Both look
-     * like Rentile mispositioning text rather than like a construct it declined, and the frozen
-     * `UNSUPPORTED_TEXT_CONSTRUCT` documentation already promises to cover exactly this.
+     * `text-variable-anchor` used to yield a label centred on its anchor, and
+     * `text-writing-mode: ["vertical"]` yielded horizontal CJK. Both look like Rentile
+     * mispositioning text rather than like a construct it declined, and the frozen
+     * `UNSUPPORTED_TEXT_CONSTRUCT` documentation already promises to cover exactly this. A fixed
+     * `text-anchor` with `text-radial-offset` is supported; choosing among variable anchors still
+     * belongs to collision placement and remains rejected here.
      *
      * `icon-` prefixed keys are skipped rather than rejected, the mirror image of
-     * [compileIconLayer] skipping `text-` prefixed ones: a place-name symbol layer can carry both,
+     * [compileIconLayer] skipping `text-` prefixed ones: a symbol layer can carry both,
      * and each compiler validates its own half.
      *
-     * The `symbol-` keys are allowed and not honoured, deliberately. Every one of them -
-     * avoid-edges, spacing, z-order - is a placement or draw-order instruction, and under this
-     * profile placement belongs entirely to the consumer (ADR 0024). Rejecting a layer for
-     * carrying one would remove real labels over a property that could not have applied.
+     * The supported `symbol-` keys are compiled and carried to the consumer because placement and
+     * draw order belong there under ADR 0024.
      */
     private fun validateLabelTextKeys(
         layout: JsonObject,
@@ -1164,20 +1267,20 @@ internal class StyleCompiler(
             "text-field",
             "text-font",
             "text-ignore-placement",
-            // Allowed and not honoured, with the reason recorded because that is the whole point of
-            // this allowlist: text-keep-upright decides whether text may flip to avoid reading
-            // upside-down as it follows a line, and this profile excludes line placement outright,
-            // so it cannot affect a point-placed place name. 20 corpus layers across 4 styles
-            // carry it.
             "text-keep-upright",
             "text-justify",
             "text-letter-spacing",
             "text-line-height",
             "text-max-width",
+            "text-max-angle",
             "text-offset",
             "text-optional",
             "text-overlap",
             "text-padding",
+            "text-pitch-alignment",
+            "text-radial-offset",
+            "text-rotate",
+            "text-rotation-alignment",
             "text-size",
             "text-transform",
         )
@@ -1192,6 +1295,7 @@ internal class StyleCompiler(
             "text-halo-width",
             "text-opacity",
             "text-translate",
+            "text-translate-anchor",
         )
         val unsupportedPaint = paint.keys.filter { key ->
             key !in supportedPaint && !key.startsWith("icon-")
@@ -1855,12 +1959,10 @@ internal class StyleCompiler(
                 retainedIndependentOfText = !authorDeclaredTextOptional(layout),
             )
         }
-        return SymbolClassification(false, diagnostic(
-            code = DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED,
-            severity = DiagnosticSeverity.INFO,
-            message = "An icon sized from text extents is excluded by the compatibility profile",
-            details = identity,
-        ))
+        // Text-fitted icons are emitted through the label-candidate interface, where the text
+        // extents and viewport placement they depend on remain attached. They are deliberately
+        // absent from the ground-texture icon pass, but they are no longer an excluded layer.
+        return SymbolClassification(false, null)
     }
 
     /**
@@ -1948,6 +2050,14 @@ internal class StyleCompiler(
         if (layout["visibility"]?.asPrimitive()?.content == "none") return false
         if (authorDeclaredTextOptional(layout)) return false
         return meaningfulLayoutValue(layout, "text-field") && retainsIconIndependentOfText(layout)
+    }
+
+    private fun layerDesiresSpriteForLabel(element: JsonElement): Boolean {
+        val layer = element as? JsonObject ?: return false
+        if (layer["type"]?.asPrimitive()?.content != "symbol") return false
+        val layout = layer["layout"] as? JsonObject ?: JsonObject(emptyMap())
+        if (layout["visibility"]?.asPrimitive()?.content == "none") return false
+        return meaningfulLayoutValue(layout, "text-field") && meaningfulLayoutValue(layout, "icon-image")
     }
 
     private fun resolveAbsoluteSpriteUrl(spriteReference: String, baseUri: String?): String? = when {
@@ -2100,8 +2210,46 @@ internal class StyleCompiler(
     private fun JsonElement.asPrimitive(): JsonPrimitive? = this as? JsonPrimitive
 
     private companion object {
-        const val RENDERER_SEMANTIC_VERSION = "rentile-renderer-3"
+        const val RENDERER_SEMANTIC_VERSION = "rentile-renderer-4"
         val SUPPORTED_LAYER_TYPES = setOf("background", "fill", "line", "raster", "hillshade")
+        val LEGACY_PLACE_NAME_SOURCE_LAYERS = setOf(
+            "place",
+            "continent_label",
+            "country_label",
+            "country_disputed_label",
+            "state_label",
+            "city_label",
+            "town_label",
+            "place_label",
+            "island_label",
+            "archipelago_label",
+        )
+        val SUPPORTED_ICON_LAYOUT_KEYS = setOf(
+            "icon-allow-overlap",
+            "icon-anchor",
+            "icon-ignore-placement",
+            "icon-image",
+            "icon-keep-upright",
+            "icon-offset",
+            "icon-optional",
+            "icon-overlap",
+            "icon-padding",
+            "icon-pitch-alignment",
+            "icon-rotate",
+            "icon-rotation-alignment",
+            "icon-size",
+            "icon-text-fit",
+            "icon-text-fit-padding",
+        )
+        val SUPPORTED_ICON_PAINT_KEYS = setOf(
+            "icon-color",
+            "icon-halo-blur",
+            "icon-halo-color",
+            "icon-halo-width",
+            "icon-opacity",
+            "icon-translate",
+            "icon-translate-anchor",
+        )
         val EXCLUDED_ROOT_KEYS = setOf(
             "bearing",
             "center",

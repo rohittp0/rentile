@@ -203,8 +203,10 @@ jobs:
             exit 1
           fi
 
-      - name: Validate credential-free coverage
-        run: python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
+      - name: Validate credential-free coverage and fidelity policy
+        run: |
+          python3 tools/check_coverage_manifest.py compatibility/rentile-v1-coverage.json
+          python3 tools/check_corpus_fidelity_policy.py compatibility/rentile-v1-coverage.json
 
       - name: Test and publish to isolated local repository
         env:

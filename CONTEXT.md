@@ -41,12 +41,16 @@ Rendering an output tile above a vector source's maximum data zoom by reusing th
 _Avoid_: Missing high-zoom data, vector upscaling
 
 **Label**:
-The name of a place feature — settlement, administrative area, island or continent — prepared for a host-owned renderer rather than drawn into an Output Tile.
-_Avoid_: Map text, annotation, caption, road or point-of-interest text
+Text produced by a visible text-bearing vector symbol layer and prepared for a host-owned renderer rather than drawn into an Output Tile. It includes place, road, point-of-interest, water, terrain, protected-area, and other style-authored symbol text.
+_Avoid_: Place name, annotation, caption, raster text
 
 **Label Candidate**:
-A Label decoded, style-evaluated and laid out into glyph geometry, but not positioned on screen and not resolved against any other Label.
+A Label decoded, style-evaluated and laid out into glyph geometry, with its point or source-line geometry and any successfully resolved paired icon, but not positioned on screen and not resolved against any other Label. The consumer places and collides the text and icon as one symbol; a failed paired icon leaves the text plus an `ICON_FEATURE_SKIPPED` diagnostic.
 _Avoid_: Label primitive, prepared label, placed label, label descriptor
+
+**Paired Icon**:
+An icon authored on the same symbol layer as a Label. Rentile carries its resolved style intent and final-box anchor; the viewport-owning consumer places and collides it with the Label as one symbol, and sprite imagery remains consumer-owned.
+_Avoid_: Label icon layer, public sprite atlas, pre-fit anchor shift
 
 **Label Tile**:
 A vector tile consumed as input while producing Label Candidates rather than an Output Tile.
@@ -69,11 +73,11 @@ The frozen Glyph Closure and evaluated label content for one tile set, held betw
 _Avoid_: Prepared Batch, Label Candidate Batch, resource closure
 
 **Repaired Layer**:
-A symbol layer retained only because the compatibility profile removed its text and its icon's geometry does not depend on that text, as opposed to one the style author declared as an icon layer.
+A symbol layer retained in the Output Tile path only because the compatibility profile removed its text and its icon's geometry does not depend on that text, as opposed to one the style author declared as an icon layer. The Label Candidate path does not repair away that text: it can emit the Label and a successfully resolved paired icon, including icon text-fit inputs; a failed icon leaves the text and a diagnostic.
 _Avoid_: Retained layer, text-coupled layer, degraded layer
 
 **Profile-Complete Rendering**:
-Successful rendering of every current rolling-corpus style at every supported output zoom, plus successful Label preparation for the corpus geographies chosen to exercise script coverage, after applying the compatibility profile's deliberate transformations and exclusions.
+Successful rendering of every current rolling-corpus style at every supported output zoom, plus successful Label preparation for every visible text-bearing vector symbol layer in the corpus geographies chosen to exercise script and geometry coverage, after applying the compatibility profile's deliberate transformations and exclusions.
 _Avoid_: Unmodified style parity, zoom-zero smoke success
 
 **Coverage Manifest**:
@@ -98,7 +102,7 @@ Performance profiling and numeric acceptance budgets are intentionally deferred 
 
 ## Distribution
 
-The public consumer coordinate is `com.rohittp.rentile:kmp`. Releases `0.1.0` through `0.1.4` remain on Maven Central; the shared repository at `https://maven.rohittp.com` is canonical after the migration and is also the version line: each release takes the highest version already published there and advances its patch component. `VERSION_NAME` in the root `gradle.properties` governs only when it names a version strictly above everything public, which is how a deliberate minor or major release is requested. Snapshot versions never govern and remain local-repository-only. Every push to `main` outside documentation publishes; documentation-only commits do not consume a version, and releases are serialised so concurrent pushes cannot race for one coordinate. The release workflow rejects an existing primary POM before upload, requires the exact version to pass signed local publication plus Android, JVM, iOS, macOS, Linux, and rolling-corpus gates, verifies every public artifact, then resolves it from a fresh credential-free consumer. A GitHub Release is not required. Version numbers are cheap and non-contiguous; a gap does not imply a withdrawn version.
+The public consumer coordinate is `com.rohittp.rentile:kmp`. Releases `0.1.0` through `0.1.4` remain on Maven Central; the shared repository at `https://maven.rohittp.com` is canonical after the migration and is also the version line: each release takes the highest version already published there and advances its patch component. `VERSION_NAME` in the root `gradle.properties` governs only when it names a version strictly above everything public, which is how a deliberate minor or major release is requested. The source tree declares `0.6.0` for the breaking label-candidate expansion; that declaration is a release request, not proof that the coordinate has been published. Snapshot versions never govern and remain local-repository-only. Every push to `main` outside documentation publishes; documentation-only commits do not consume a version, and releases are serialised so concurrent pushes cannot race for one coordinate. The release workflow rejects an existing primary POM before upload, requires the exact version to pass signed local publication plus Android, JVM, iOS, macOS, Linux, and rolling-corpus gates, verifies every public artifact, then resolves it from a fresh credential-free consumer. A GitHub Release is not required. Version numbers are cheap and non-contiguous; a gap does not imply a withdrawn version.
 
 Rentile is licensed under Apache-2.0. Published artifacts also carry a maintained third-party notices inventory for dependencies and copied or adapted upstream code.
 
@@ -106,10 +110,11 @@ Public documentation and the Maven POM project URL use `https://rohittp.com/rent
 
 ## Flagged ambiguities
 
-- "Label" was used to mean both any map text and a place name specifically. Resolved: **Label** is narrow — only place names, only the place-name source layers that OpenMapTiles v3 and MapTiler Planet v4 use for settlement, admin, island and continent naming. Road, point-of-interest, water, terrain and protected-area naming is not a Label and Rentile does not prepare it.
-- Widening **Label** past place names is a deliberate future option, not an oversight. It would mean admitting source layers a v3 host never drew, and line-placed text needs layout that point-placed place names do not, so it is a scope decision to take explicitly rather than a gap to close incidentally.
+- "Label" was used to mean a place name specifically. Resolved for `0.6.0`: **Label** is every visible text-bearing vector symbol layer admitted by the compatibility profile. Place, road, point-of-interest, water, terrain, protected-area, and other symbol text all belong to the same public closure; raster-baked text and non-vector annotations do not.
+- Point placement is not assumed. A **Label Candidate** says whether it is point, line, or line-center placed, carries the geographic source line for line modes, and carries the selected tangent and repeat spacing. The consumer projects that geometry and owns final screen-space placement.
+- A **Paired Icon** is part of the same candidate rather than a second, disconnected icon layer. Its sprite geometry, paint, collision intent, alignment, text-fit inputs, and anchor on the final fitted box travel with the Label so one consumer decision can fold both together. The consumer resolves its sprite imagery by name; Rentile does not add a public sprite atlas.
 - A **Label Candidate Batch** is not a **Prepared Batch**, and labels still cannot be folded into `prepareBatch`. The reason was once stated too strongly: which Glyph Ranges a tile set needs depends on decoded feature properties, so a **Glyph Closure** cannot be frozen before **Label Tile** acquisition — but it can be frozen after it, which is what a **Label Candidate Plan** holds. The closure is therefore frozen in two stages rather than not at all. A Glyph Closure is still not a **Resource Closure**: it is complete and immutable in the same way, but it is what one Label Candidate Batch needs, not what a batch of Output Tiles needs. See [ADR 0028](docs/adr/0028-freeze-the-glyph-closure-in-a-label-candidate-plan.md).
-- Three keys serve three distinct questions and none substitutes for another: a request key answers "must I fetch?" before any network, a **Label Candidate Batch** content key answers "are my cached candidates still valid?" after acquisition, and the glyph atlas content key answers "must I re-upload the texture?".
+- Three label keys serve three distinct questions and none substitutes for another: a request key answers "must I fetch?" before any network, a **Label Candidate Batch** content key answers "are my cached candidates still valid?" after acquisition, and the glyph atlas content key answers "must I re-upload the texture?". Candidate layout or public-field changes bump both candidate request and content semantics; glyph pixels alone govern the atlas key.
+- Output Tile request and content keys have their own renderer-semantics markers. Any change that can alter PNG pixels for identical style, tile, options, and resources must bump both markers so caller-owned caches cannot serve output from the previous renderer.
 - A **Repaired Layer** and an author-declared icon layer look alike in a style document but do not fail alike: the first degrades with a diagnostic, the second fails loudly. `text-optional: true` marks the author's intent and therefore selects the strict path. See [ADR 0026](docs/adr/0026-repaired-layers-degrade-and-author-intended-layers-fail.md).
-- `instructions.md` tells Travel Animator not to route labels through Rentile. That predates the place-name seam Rentile now ships and is narrower than current behaviour; the guidance means Rentile does not *draw* labels, not that it prepares nothing.
-
+- Rentile prepares Labels but does not draw them. The host routes label acquisition through Rentile, then owns projection, collision, occlusion, and drawing above the Output Tile texture.

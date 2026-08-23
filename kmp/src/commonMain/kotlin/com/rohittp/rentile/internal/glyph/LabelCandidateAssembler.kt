@@ -6,30 +6,46 @@ import com.rohittp.rentile.LabelCandidate
 import com.rohittp.rentile.LabelCandidateBatch
 import com.rohittp.rentile.LabelGlyphAtlas
 import com.rohittp.rentile.LabelIconRef
+import com.rohittp.rentile.LabelIconAnchor
+import com.rohittp.rentile.LabelLinePoint
+import com.rohittp.rentile.LabelPlacement
 import com.rohittp.rentile.LabelLayerStyle
+import com.rohittp.rentile.IconTextFit
 import com.rohittp.rentile.PipelineStage
 import com.rohittp.rentile.RasterizationException
 import com.rohittp.rentile.RenderDiagnostic
 import com.rohittp.rentile.ResourceLimits
 import com.rohittp.rentile.SafetyLimitException
+import com.rohittp.rentile.SymbolAlignment
+import com.rohittp.rentile.SymbolOverlap
+import com.rohittp.rentile.SymbolZOrder
 import com.rohittp.rentile.TileId
 import com.rohittp.rentile.internal.mvt.DecodedVectorFeature
 import com.rohittp.rentile.internal.mvt.DecodedVectorGeometry
 import com.rohittp.rentile.internal.mvt.VectorResource
+import com.rohittp.rentile.internal.mvt.VectorCoordinate
+import com.rohittp.rentile.internal.mvt.VectorRing
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.style.CompiledColor
 import com.rohittp.rentile.internal.style.CompiledLabelTextProgram
 import com.rohittp.rentile.internal.style.CompiledPreparedStyle
-import com.rohittp.rentile.internal.style.IconDrawLayer
+import com.rohittp.rentile.internal.style.IconAnchor
 import com.rohittp.rentile.internal.style.StyleEvaluationContext
 import com.rohittp.rentile.internal.style.StyleValue
-import com.rohittp.rentile.internal.style.TextTransform
+import com.rohittp.rentile.internal.style.TextJustify
+import com.rohittp.rentile.internal.style.iconAnchorOrNull
 import com.rohittp.rentile.internal.style.mercatorLatitude
 import com.rohittp.rentile.internal.style.parseCssColor
 import com.rohittp.rentile.internal.style.spriteAnchoring
 import com.rohittp.rentile.internal.withExpandedFeatureTokens
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlin.math.atan2
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.hypot
+import kotlin.math.PI
+import kotlin.math.sqrt
 
 /**
  * Per-layer tally behind `LABEL_FEATURE_SKIPPED`.
@@ -58,7 +74,7 @@ internal class LabelFeatureSkips(val layerId: String) {
         code = DiagnosticCode.LABEL_FEATURE_SKIPPED,
         severity = DiagnosticSeverity.INFO,
         stage = PipelineStage.RESOURCE_DECODING,
-        message = "A place-name label layer produced no candidate for one or more of its features",
+        message = "A text-bearing symbol layer produced no candidate for one or more of its features",
         details = mapOf(
             "layerIndex" to layerOrder.toString(),
             "layerIdDigest" to layerId.sha256Hex(),
@@ -108,11 +124,36 @@ internal class ComplexScriptExclusion(val layerId: String) {
         code = DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED,
         severity = DiagnosticSeverity.INFO,
         stage = PipelineStage.RESOURCE_DECODING,
-        message = "A place-name label layer's text resolves to a script this profile cannot lay out",
+        message = "A text-bearing symbol layer's text resolves to a script this profile cannot lay out",
         details = mapOf(
             "layerIndex" to layerOrder.toString(),
             "layerIdDigest" to layerId.sha256Hex(),
             "excludedFeatures" to features.toString(),
+        ),
+        affectedTiles = tiles.sortedWith(LABEL_TILE_ORDER),
+    )
+}
+
+/** Per-layer tally for an icon a text-bearing symbol requested but could not emit. */
+internal class LabelIconSkips(val layerId: String) {
+    var candidates: Int = 0
+    var skipped: Int = 0
+    var missingSprite: Int = 0
+    val tiles: MutableSet<TileId> = mutableSetOf()
+
+    val reportable: Boolean get() = skipped > 0
+
+    fun toDiagnostic(layerOrder: Int): RenderDiagnostic = RenderDiagnostic(
+        code = DiagnosticCode.ICON_FEATURE_SKIPPED,
+        severity = DiagnosticSeverity.WARNING,
+        stage = PipelineStage.RESOURCE_DECODING,
+        message = "A label-coupled icon could not be emitted for one or more label candidates",
+        details = mapOf(
+            "layerIndex" to layerOrder.toString(),
+            "layerIdDigest" to layerId.sha256Hex(),
+            "candidateFeatures" to candidates.toString(),
+            "skippedFeatures" to skipped.toString(),
+            "skippedMissingSprite" to missingSprite.toString(),
         ),
         affectedTiles = tiles.sortedWith(LABEL_TILE_ORDER),
     )
@@ -126,6 +167,12 @@ internal val LABEL_TILE_ORDER: Comparator<TileId> = compareBy(TileId::z, TileId:
  * keeps the check off the hot path of a tile with half a million features.
  */
 private const val CANCELLATION_CHECK_MASK = 0x3FF
+
+internal data class GeometryAnchor(
+    val point: VectorCoordinate,
+    val line: List<VectorCoordinate> = emptyList(),
+    val rotationDegrees: Double = 0.0,
+)
 
 /** One Glyph Range a batch needs: a resolved font stack and the 256-codepoint block within it. */
 internal data class GlyphRangeRequest(val fontStack: String, val rangeStart: Int)
@@ -146,17 +193,32 @@ internal data class PendingLabel(
     val anchorIndex: Int,
     val longitude: Double,
     val latitude: Double,
+    val placement: LabelPlacement,
+    val line: List<LabelLinePoint>,
+    val rotationDegrees: Double,
+    val symbolSpacing: Double,
+    val keepUpright: Boolean,
+    val avoidEdges: Boolean,
+    val zOrder: SymbolZOrder,
+    val textRotationDegrees: Double,
+    val maxAngleDegrees: Double,
+    val rotationAlignment: SymbolAlignment,
+    val pitchAlignment: SymbolAlignment,
+    val textOptional: Boolean,
     val text: String,
     val textStyle: LabelTextStyle,
     val icon: LabelIconRef?,
-    val allowOverlap: Boolean,
+    val overlap: SymbolOverlap,
     val ignorePlacement: Boolean,
     val padding: Double,
     val sortKey: Double,
+    val color: Int,
+    val haloColor: Int,
     val opacity: Double,
     val haloWidth: Double,
     val haloBlur: Double,
     val translate: Pair<Double, Double>,
+    val translateAlignment: SymbolAlignment,
 )
 
 /**
@@ -168,6 +230,7 @@ internal class LabelAssembly internal constructor(
     val requiredRanges: List<GlyphRangeRequest>,
     private val complexScript: Map<Int, ComplexScriptExclusion>,
     private val featureSkips: Map<Int, LabelFeatureSkips>,
+    private val iconSkips: Map<Int, LabelIconSkips>,
     private val style: CompiledPreparedStyle,
     private val contentDigests: List<String>,
     private val requestedTiles: List<TileId>,
@@ -188,7 +251,7 @@ internal class LabelAssembly internal constructor(
     ): LabelCandidateBatch {
         val atlas = GlyphAtlasPacker.pack(ranges, limits)
         // Once per batch, never per label: the map depends only on the acquired ranges, and
-        // rebuilding it inside layOut cost up to 64 x 256 map operations for every label.
+        // rebuilding it inside layOut cost up to 256 x 256 map operations for every label.
         val whitespace = LabelLayout.whitespaceAdvances(ranges)
         val layerStyles = mutableListOf<LabelLayerStyle>()
         val layerStyleIndex = mutableMapOf<Pair<String, Int>, Int>()
@@ -226,18 +289,33 @@ internal class LabelAssembly internal constructor(
                 sourceTile = label.sourceTile,
                 longitude = label.longitude,
                 latitude = label.latitude,
+                placement = label.placement,
+                line = label.line,
+                rotationDegrees = label.rotationDegrees,
+                symbolSpacing = label.symbolSpacing,
+                keepUpright = label.keepUpright,
+                avoidEdges = label.avoidEdges,
+                zOrder = label.zOrder,
+                textRotationDegrees = label.textRotationDegrees,
+                maxAngleDegrees = label.maxAngleDegrees,
+                rotationAlignment = label.rotationAlignment,
+                pitchAlignment = label.pitchAlignment,
+                textOptional = label.textOptional,
                 glyphs = laidOut.quads,
                 boundingBox = laidOut.box,
                 icon = label.icon,
-                allowOverlap = label.allowOverlap,
+                overlap = label.overlap,
                 ignorePlacement = label.ignorePlacement,
                 padding = label.padding,
                 sortKey = label.sortKey,
+                color = label.color,
+                haloColor = label.haloColor,
                 opacity = label.opacity,
                 haloWidth = label.haloWidth,
                 haloBlur = label.haloBlur,
                 translateX = label.translate.first,
                 translateY = label.translate.second,
+                translateAlignment = label.translateAlignment,
             )
         }
 
@@ -257,21 +335,22 @@ internal class LabelAssembly internal constructor(
             ),
             contentKey = contentKey(ranges),
             // The prepared style's own diagnostics ride along exactly as they do on a
-            // PreparedBatch: UNSUPPORTED_TEXT_CONSTRUCT and LINE_PLACEMENT_LABEL_EXCLUDED are
-            // the reasons a layer the caller can see in labelLayerDescriptors contributed no
-            // candidates, so a caller reading only this batch would otherwise have no way to
-            // tell an excluded layer from an empty one.
+            // PreparedBatch: UNSUPPORTED_TEXT_CONSTRUCT and any retained legacy/future
+            // LINE_PLACEMENT_LABEL_EXCLUDED diagnostic explain why a layer visible through
+            // labelLayerDescriptors contributed no candidates. Without these, a caller reading
+            // only this batch could not distinguish an excluded layer from an empty one.
             diagnostics = style.diagnostics + labelDiagnostics(layoutLosses).onEach(record),
         )
     }
 
     /** One entry per layer per code, in layer order, so the list is identical between runs. */
     private fun labelDiagnostics(layoutLosses: Map<Int, LayoutLoss>): List<RenderDiagnostic> =
-        (complexScript.keys + featureSkips.keys).sorted().flatMap { layerOrder ->
+        (complexScript.keys + featureSkips.keys + iconSkips.keys).sorted().flatMap { layerOrder ->
             val merged = featureSkips[layerOrder]?.mergedWith(layoutLosses[layerOrder])
             listOfNotNull(
                 complexScript[layerOrder]?.toDiagnostic(layerOrder),
                 merged?.takeIf { it.reportable }?.toDiagnostic(layerOrder),
+                iconSkips[layerOrder]?.takeIf { it.reportable }?.toDiagnostic(layerOrder),
             )
         }
 
@@ -286,7 +365,7 @@ internal class LabelAssembly internal constructor(
      * consumer another style's cached candidates.
      */
     private fun contentKey(ranges: List<AcquiredGlyphRange>): String = buildString {
-        append("rentile-label-candidates-1\n")
+        append("rentile-label-candidates-2\n")
         append(style.digest)
         append('\n')
         append(contentDigests.joinToString(","))
@@ -331,6 +410,7 @@ internal object LabelCandidateAssembler {
         val ranges = mutableSetOf<GlyphRangeRequest>()
         val complexScript = mutableMapOf<Int, ComplexScriptExclusion>()
         val featureSkips = mutableMapOf<Int, LabelFeatureSkips>()
+        val iconSkips = mutableMapOf<Int, LabelIconSkips>()
         // Paint for one (layer, requested zoom) is feature-independent, so it is resolved once and
         // reused. Resolved inside the per-feature guard below rather than at assembly time, so a
         // text-color that will not evaluate degrades exactly like any other unusable text
@@ -372,13 +452,16 @@ internal object LabelCandidateAssembler {
                         LabelFeatureSkips(layer.descriptor.id)
                     }
 
-                    val anchors = (feature.geometry as? DecodedVectorGeometry.Points)?.points
-                    if (anchors == null) {
-                        // Place-name source layers are point geometry, so this profile anchors
-                        // nothing else and does not invent a midpoint or centroid the way icons
-                        // do. Silently producing nothing was the gap: a layer that is entirely
-                        // lines or polygons would have looked identical to a layer with no
-                        // features at all.
+                    val placement = try {
+                        placementOf(program.placement.evaluate(context), tile)
+                    } catch (_: RasterizationException) {
+                        skips.candidates += 1
+                        skips.skipped += 1
+                        skips.tiles += tile
+                        continue
+                    }
+                    val anchors = geometryAnchors(feature.geometry, placement)
+                    if (anchors.isEmpty()) {
                         skips.candidates += 1
                         skips.nonPointGeometry += 1
                         skips.tiles += tile
@@ -408,9 +491,9 @@ internal object LabelCandidateAssembler {
                     // the anchor falling inside [0, extent) of the source tile.
                     val sample = resource.sample
                     val extent = sourceLayer.extent
-                    val inside = anchors.withIndex().filter { (_, point) ->
-                        val localX = point.x.toLong() * sample.childScale - sample.childX.toLong() * extent
-                        val localY = point.y.toLong() * sample.childScale - sample.childY.toLong() * extent
+                    val inside = anchors.withIndex().filter { (_, anchor) ->
+                        val localX = anchor.point.x.toLong() * sample.childScale - sample.childX.toLong() * extent
+                        val localY = anchor.point.y.toLong() * sample.childScale - sample.childY.toLong() * extent
                         localX in 0 until extent.toLong() && localY in 0 until extent.toLong()
                     }
                     // Not a loss: the feature belongs to a different tile, not to this one.
@@ -454,7 +537,7 @@ internal object LabelCandidateAssembler {
                             textStyle = textStyleFor(program, context, fontStack, size, tile),
                             scalars = evaluateScalars(program, context, tile),
                             layerStyle = layerStyles.getOrPut(program.layerOrder to tile.z) {
-                                resolveLayerStyle(program, layer.descriptor.id, tile.z)
+                                resolveLayerStyle(program.layerOrder, layer.descriptor.id, tile.z)
                             },
                         )
                     } catch (error: RasterizationException) {
@@ -465,7 +548,18 @@ internal object LabelCandidateAssembler {
                     val fontStack = resolved.fontStack
                     val textStyle = resolved.textStyle
                     val scalars = resolved.scalars
-                    val icon = iconRefFor(style, program.layerOrder, tile, feature, context, iconImageNameOf)
+                    val resolvedIcon = iconRefFor(style, program.layerOrder, tile, feature, context, iconImageNameOf)
+                    if (resolvedIcon.requested) {
+                        val tally = iconSkips.getOrPut(program.layerOrder) {
+                            LabelIconSkips(layer.descriptor.id)
+                        }
+                        tally.candidates += inside.size
+                        if (resolvedIcon.skipped) {
+                            tally.skipped += inside.size
+                            if (resolvedIcon.missingSprite) tally.missingSprite += inside.size
+                            tally.tiles += tile
+                        }
+                    }
 
                     var index = 0
                     while (index < text.length) {
@@ -490,7 +584,7 @@ internal object LabelCandidateAssembler {
                     }
 
                     val dimension = (1L shl sourceTile.z).toDouble()
-                    for ((anchorIndex, point) in inside) {
+                    for ((anchorIndex, anchor) in inside) {
                         pending += PendingLabel(
                             program = program,
                             layerId = layer.descriptor.id,
@@ -499,20 +593,40 @@ internal object LabelCandidateAssembler {
                             sourceTile = sourceTile,
                             featureIndex = featureIndex,
                             anchorIndex = anchorIndex,
-                            longitude = (sourceTile.x + point.x.toDouble() / extent) /
+                            longitude = (sourceTile.x + anchor.point.x.toDouble() / extent) /
                                 dimension * 360.0 - 180.0,
-                            latitude = mercatorLatitude(sourceTile.y + point.y.toDouble() / extent, dimension),
+                            latitude = mercatorLatitude(sourceTile.y + anchor.point.y.toDouble() / extent, dimension),
+                            placement = placement,
+                            line = anchor.line.map { point ->
+                                LabelLinePoint(
+                                    longitude = (sourceTile.x + point.x.toDouble() / extent) / dimension * 360.0 - 180.0,
+                                    latitude = mercatorLatitude(sourceTile.y + point.y.toDouble() / extent, dimension),
+                                )
+                            },
+                            rotationDegrees = anchor.rotationDegrees,
+                            symbolSpacing = scalars.symbolSpacing,
+                            keepUpright = scalars.keepUpright,
+                            avoidEdges = scalars.avoidEdges,
+                            zOrder = scalars.zOrder,
+                            textRotationDegrees = scalars.textRotationDegrees,
+                            maxAngleDegrees = scalars.maxAngleDegrees,
+                            rotationAlignment = scalars.rotationAlignment,
+                            pitchAlignment = scalars.pitchAlignment,
+                            textOptional = scalars.textOptional,
                             text = text,
                             textStyle = textStyle,
-                            icon = icon,
-                            allowOverlap = program.allowOverlap,
-                            ignorePlacement = program.ignorePlacement,
-                            padding = program.padding,
+                            icon = resolvedIcon.ref,
+                            overlap = scalars.overlap,
+                            ignorePlacement = scalars.ignorePlacement,
+                            padding = scalars.padding,
                             sortKey = scalars.sortKey,
+                            color = scalars.color,
+                            haloColor = scalars.haloColor,
                             opacity = scalars.opacity,
                             haloWidth = scalars.haloWidth,
                             haloBlur = scalars.haloBlur,
                             translate = scalars.translate,
+                            translateAlignment = scalars.translateAlignment,
                         )
                     }
                 }
@@ -536,6 +650,7 @@ internal object LabelCandidateAssembler {
             requiredRanges = required,
             complexScript = complexScript,
             featureSkips = featureSkips,
+            iconSkips = iconSkips,
             style = style,
             contentDigests = resources.values.map { it.contentDigest }.distinct().sorted(),
             requestedTiles = tiles.sortedWith(TILE_ORDER),
@@ -568,7 +683,7 @@ internal object LabelCandidateAssembler {
                 contentKey = atlas.contentKey,
                 entries = atlas.entries,
             ),
-            contentKey = "rentile-label-candidates-1\n${style.digest}\n\n".sha256Hex(),
+            contentKey = "rentile-label-candidates-2\n${style.digest}\n\n".sha256Hex(),
             diagnostics = style.diagnostics + glyphRangeUnavailable(tiles),
         )
     }
@@ -589,32 +704,39 @@ internal object LabelCandidateAssembler {
         val layerStyle: LabelLayerStyle,
     )
 
-    /**
-     * Paint for one layer at one requested output zoom, evaluated with no feature context. The
-     * corpus has no feature-driven `text-color` or `text-halo-color` in any of its 265 place-name
-     * layers, which is why colour lives on the layer record rather than on each candidate.
-     */
     private fun resolveLayerStyle(
-        program: CompiledLabelTextProgram,
+        layerOrder: Int,
         layerId: String,
         zoom: Int,
     ): LabelLayerStyle {
-        val context = StyleEvaluationContext(zoom = zoom.toDouble())
         return LabelLayerStyle(
             layerId = layerId,
             zoom = zoom,
-            priority = program.layerOrder,
-            color = program.color.evaluate(context).asColor("text-color").packedArgb(),
-            haloColor = program.haloColor.evaluate(context).asColor("text-halo-color").packedArgb(),
+            priority = layerOrder,
         )
     }
 
     private data class LabelScalars(
         val sortKey: Double,
+        val symbolSpacing: Double,
+        val padding: Double,
+        val overlap: SymbolOverlap,
+        val ignorePlacement: Boolean,
+        val keepUpright: Boolean,
+        val avoidEdges: Boolean,
+        val zOrder: SymbolZOrder,
+        val textRotationDegrees: Double,
+        val maxAngleDegrees: Double,
+        val rotationAlignment: SymbolAlignment,
+        val pitchAlignment: SymbolAlignment,
+        val textOptional: Boolean,
+        val color: Int,
+        val haloColor: Int,
         val opacity: Double,
         val haloWidth: Double,
         val haloBlur: Double,
         val translate: Pair<Double, Double>,
+        val translateAlignment: SymbolAlignment,
     )
 
     private fun evaluateScalars(
@@ -625,13 +747,20 @@ internal object LabelCandidateAssembler {
         val opacity = program.opacity.evaluate(context).asNumber("text-opacity", tile)
         val haloWidth = program.haloWidth.evaluate(context).asNumber("text-halo-width", tile)
         val haloBlur = program.haloBlur.evaluate(context).asNumber("text-halo-blur", tile)
+        val padding = program.padding.evaluate(context).asNumber("text-padding", tile)
+        val symbolSpacing = program.spacing.evaluate(context).asNumber("symbol-spacing", tile)
+        val textRotationDegrees = program.rotate.evaluate(context).asNumber("text-rotate", tile)
+        val maxAngleDegrees = program.maxAngle.evaluate(context).asNumber("text-max-angle", tile)
         if (opacity !in 0.0..1.0) {
             throw RasterizationException(
                 message = "text-opacity did not evaluate to a value between zero and one",
                 affectedTiles = listOf(tile),
             )
         }
-        if (haloWidth < 0.0 || haloBlur < 0.0) {
+        if (
+            haloWidth < 0.0 || haloBlur < 0.0 || padding < 0.0 || symbolSpacing <= 0.0 ||
+            maxAngleDegrees !in 0.0..180.0
+        ) {
             throw RasterizationException(
                 message = "A text halo value did not evaluate to a non-negative number",
                 affectedTiles = listOf(tile),
@@ -642,12 +771,31 @@ internal object LabelCandidateAssembler {
                 null, StyleValue.Null -> 0.0
                 else -> value.asNumber("symbol-sort-key", tile)
             },
+            symbolSpacing = symbolSpacing,
+            padding = padding,
+            overlap = overlapOf(program.overlap.evaluate(context), "text-overlap", tile),
+            ignorePlacement = program.ignorePlacement.evaluate(context).asBoolean("text-ignore-placement", tile),
+            keepUpright = program.keepUpright.evaluate(context).asBoolean("text-keep-upright", tile),
+            avoidEdges = program.avoidEdges.evaluate(context).asBoolean("symbol-avoid-edges", tile),
+            zOrder = zOrderOf(program.zOrder.evaluate(context), tile),
+            textRotationDegrees = textRotationDegrees,
+            maxAngleDegrees = maxAngleDegrees,
+            rotationAlignment = alignmentOf(
+                program.rotationAlignment.evaluate(context), "text-rotation-alignment", tile,
+            ),
+            pitchAlignment = alignmentOf(program.pitchAlignment.evaluate(context), "text-pitch-alignment", tile),
+            textOptional = program.optional.evaluate(context).asBoolean("text-optional", tile),
+            color = program.color.evaluate(context).asColor("text-color").packedArgb(),
+            haloColor = program.haloColor.evaluate(context).asColor("text-halo-color").packedArgb(),
             opacity = opacity,
             haloWidth = haloWidth,
             haloBlur = haloBlur,
             // Pixels, not ems: text-translate is not scaled by text-size, so it is carried through
             // untouched for the consumer to add to the projected anchor.
             translate = program.translate.evaluate(context).asNumberPair("text-translate", tile),
+            translateAlignment = alignmentOf(
+                program.translateAnchor.evaluate(context), "text-translate-anchor", tile, autoAllowed = false,
+            ),
         )
     }
 
@@ -658,18 +806,54 @@ internal object LabelCandidateAssembler {
         sizePx: Double,
         tile: TileId,
     ): LabelTextStyle {
-        val offset = program.offset.evaluate(context).asNumberPair("text-offset", tile)
+        val anchor = iconAnchorOrNull(program.anchor.evaluate(context).asString("text-anchor", tile))
+            ?: throw RasterizationException(
+                "text-anchor did not evaluate to a supported value",
+                affectedTiles = listOf(tile),
+            )
+        // MapLibre clamps a negative radial distance to zero. A positive radial value replaces
+        // text-offset rather than adding to it; zero (including a clamped negative value) retains
+        // text-offset. Do not evaluate that fallback when radial placement wins, so an unusable
+        // feature value in an irrelevant text-offset cannot suppress an otherwise valid label.
+        val radialOffset = program.radialOffset.evaluate(context)
+            .asNumber("text-radial-offset", tile)
+            .coerceAtLeast(0.0)
+        val offset = if (radialOffset == 0.0) {
+            program.offset.evaluate(context).asNumberPair("text-offset", tile)
+        } else {
+            anchor.radialOffsetEm(radialOffset)
+        }
         return LabelTextStyle(
             fontStackDigest = fontStack.sha256Hex(),
             sizePx = sizePx,
-            anchor = program.anchor,
+            anchor = anchor,
             offsetEm = offset,
-            justify = program.justify,
+            justify = textJustifyOf(program.justify.evaluate(context), anchor, tile),
             maxWidthEm = program.maxWidth.evaluate(context).asNumber("text-max-width", tile),
             letterSpacingEm = program.letterSpacing.evaluate(context).asNumber("text-letter-spacing", tile),
             lineHeightEm = program.lineHeight.evaluate(context).asNumber("text-line-height", tile),
-            paddingPx = program.padding,
+            paddingPx = program.padding.evaluate(context).asNumber("text-padding", tile),
         )
+    }
+
+    /**
+     * Converts a fixed anchor's outward radial distance into the inward block displacement this
+     * layout applies in screen coordinates (positive x right, positive y down). Diagonals split
+     * the authored distance equally over the two axes while preserving its Euclidean length.
+     */
+    private fun IconAnchor.radialOffsetEm(distanceEm: Double): Pair<Double, Double> {
+        val diagonal = distanceEm / sqrt(2.0)
+        return when (this) {
+            IconAnchor.CENTER -> 0.0 to 0.0
+            IconAnchor.TOP -> 0.0 to distanceEm
+            IconAnchor.BOTTOM -> 0.0 to -distanceEm
+            IconAnchor.LEFT -> distanceEm to 0.0
+            IconAnchor.RIGHT -> -distanceEm to 0.0
+            IconAnchor.TOP_LEFT -> diagonal to diagonal
+            IconAnchor.TOP_RIGHT -> -diagonal to diagonal
+            IconAnchor.BOTTOM_LEFT -> diagonal to -diagonal
+            IconAnchor.BOTTOM_RIGHT -> -diagonal to -diagonal
+        }
     }
 
     /**
@@ -689,10 +873,11 @@ internal object LabelCandidateAssembler {
             else -> return null
         }
         val expanded = raw.withExpandedFeatureTokens(feature.properties)
-        val transformed = when (program.transform) {
-            TextTransform.NONE -> expanded
-            TextTransform.UPPERCASE -> expanded.uppercase()
-            TextTransform.LOWERCASE -> expanded.lowercase()
+        val transformed = when (program.transform.evaluate(context).asStringOrNull()) {
+            "none" -> expanded
+            "uppercase" -> expanded.uppercase()
+            "lowercase" -> expanded.lowercase()
+            else -> return null
         }
         return transformed.trim().takeIf(String::isNotEmpty)
     }
@@ -722,13 +907,17 @@ internal object LabelCandidateAssembler {
     /**
      * The sprite this label's own style layer pairs with it, or null.
      *
-     * Null is the normal answer and never a placeholder: a layer with no icon, an `icon-image`
-     * that resolves to no sprite in the atlas `prepare` already built, or a style with no sprite
-     * at all all yield null, because inventing a marker would draw something the style never
-     * asked for. An icon layer sitting beside label text is always a repaired layer - the
-     * compatibility profile excludes text-coupled icons and retains only text-independent ones -
-     * so ADR 0026 governs: a property that will not evaluate loses the icon, not the label.
+     * A layer with no icon produces an unrequested resolution. A requested icon that cannot be
+     * resolved or evaluated produces a skipped resolution, which is tallied into
+     * [DiagnosticCode.ICON_FEATURE_SKIPPED]; the label itself remains available under ADR 0026.
      */
+    private data class IconResolution(
+        val ref: LabelIconRef? = null,
+        val requested: Boolean = false,
+        val skipped: Boolean = false,
+        val missingSprite: Boolean = false,
+    )
+
     private fun iconRefFor(
         style: CompiledPreparedStyle,
         layerOrder: Int,
@@ -736,43 +925,74 @@ internal object LabelCandidateAssembler {
         feature: DecodedVectorFeature,
         context: StyleEvaluationContext,
         iconImageNameOf: (StyleValue, DecodedVectorFeature) -> String?,
-    ): LabelIconRef? {
-        val atlas = style.spriteAtlas ?: return null
-        val iconLayer = style.drawLayers
-            .filterIsInstance<IconDrawLayer>()
-            .firstOrNull { it.layerOrder == layerOrder && it.isActiveAt(tile.z) } ?: return null
-        val iconContext = context.copy(imageAvailable = atlas.entries::containsKey)
-        val imageName = iconImageNameOf(iconLayer.image.evaluate(iconContext), feature) ?: return null
-        val entry = atlas.entries[imageName] ?: return null
+    ): IconResolution {
+        val labelLayer = style.labelLayers.firstOrNull { it.textProgram?.layerOrder == layerOrder }
+        val textProgram = labelLayer?.textProgram ?: return IconResolution()
+        if (textProgram.iconRequestedButUnsupported) {
+            return IconResolution(requested = true, skipped = true)
+        }
+        val iconLayer = textProgram.icon ?: return IconResolution()
+        val atlas = style.spriteAtlas
+            ?: return IconResolution(requested = true, skipped = true, missingSprite = true)
         return try {
+            val iconContext = context.copy(imageAvailable = atlas.entries::containsKey)
+            val imageName = iconImageNameOf(iconLayer.image.evaluate(iconContext), feature)
+                ?: return IconResolution(requested = true, skipped = true, missingSprite = true)
+            val entry = atlas.entries[imageName]
+                ?: return IconResolution(requested = true, skipped = true, missingSprite = true)
             val size = iconLayer.size.evaluate(iconContext).asNumber("icon-size", tile)
-            if (size <= 0.0) return null
+            if (size <= 0.0) return IconResolution(requested = false)
+            val opacity = iconLayer.opacity.evaluate(iconContext).asNumber("icon-opacity", tile)
+            val haloWidth = iconLayer.haloWidth.evaluate(iconContext).asNumber("icon-halo-width", tile)
+            val haloBlur = iconLayer.haloBlur.evaluate(iconContext).asNumber("icon-halo-blur", tile)
+            val padding = iconLayer.padding.evaluate(iconContext).asNumber("icon-padding", tile)
+            if (opacity !in 0.0..1.0 || haloWidth < 0.0 || haloBlur < 0.0 || padding < 0.0) {
+                throw RasterizationException("An icon paint or collision value is outside its valid range", affectedTiles = listOf(tile))
+            }
             val offset = iconLayer.offset.evaluate(iconContext).asNumberPair("icon-offset", tile)
             val translate = iconLayer.translate.evaluate(iconContext).asNumberPair("icon-translate", tile)
+            val anchor = iconAnchorOrNull(iconLayer.anchor.evaluate(iconContext).asString("icon-anchor", tile))
+                ?: throw RasterizationException("icon-anchor did not evaluate to a supported value", affectedTiles = listOf(tile))
             // The same decomposition placeIcons places its own markers from, out of the same
             // helper, so what a consumer draws and what Rentile's icon pass draws cannot drift.
             val anchoring = spriteAnchoring(
                 entry = entry,
-                anchor = iconLayer.anchor,
+                anchor = anchor,
                 size = size,
                 offsetX = offset.first,
                 offsetY = offset.second,
                 translateX = translate.first,
                 translateY = translate.second,
             )
-            LabelIconRef(
+            IconResolution(ref = LabelIconRef(
                 imageName = imageName,
                 width = anchoring.width,
                 height = anchoring.height,
+                anchor = anchor.toLabelIconAnchor(),
                 offsetX = anchoring.offsetX,
                 offsetY = anchoring.offsetY,
-                anchorOffsetX = anchoring.anchorShiftX,
-                anchorOffsetY = anchoring.anchorShiftY,
                 translateX = anchoring.translateX,
                 translateY = anchoring.translateY,
-            )
+                translateAlignment = alignmentOf(iconLayer.translateAnchor.evaluate(iconContext), "icon-translate-anchor", tile, autoAllowed = false),
+                color = iconLayer.color.evaluate(iconContext).asColor("icon-color").packedArgb(),
+                opacity = opacity,
+                haloColor = iconLayer.haloColor.evaluate(iconContext).asColor("icon-halo-color").packedArgb(),
+                haloWidth = haloWidth,
+                haloBlur = haloBlur,
+                rotationDegrees = iconLayer.rotate.evaluate(iconContext).asNumber("icon-rotate", tile),
+                padding = padding,
+                optional = iconLayer.optional.evaluate(iconContext).asBoolean("icon-optional", tile),
+                overlap = overlapOf(iconLayer.overlap.evaluate(iconContext), "icon-overlap", tile),
+                ignorePlacement = iconLayer.ignorePlacement.evaluate(iconContext).asBoolean("icon-ignore-placement", tile),
+                rotationAlignment = alignmentOf(iconLayer.rotationAlignment.evaluate(iconContext), "icon-rotation-alignment", tile),
+                pitchAlignment = alignmentOf(iconLayer.pitchAlignment.evaluate(iconContext), "icon-pitch-alignment", tile),
+                keepUpright = iconLayer.keepUpright.evaluate(iconContext).asBoolean("icon-keep-upright", tile),
+                avoidEdges = iconLayer.avoidEdges.evaluate(iconContext).asBoolean("symbol-avoid-edges", tile),
+                textFit = textFitOf(iconLayer.textFit.evaluate(iconContext), tile),
+                textFitPadding = iconLayer.textFitPadding.evaluate(iconContext).asNumberList("icon-text-fit-padding", tile, 4),
+            ), requested = true)
         } catch (_: RasterizationException) {
-            null
+            IconResolution(requested = true, skipped = true)
         }
     }
 
@@ -787,12 +1007,244 @@ internal object LabelCandidateAssembler {
     )
 }
 
+private fun IconAnchor.toLabelIconAnchor(): LabelIconAnchor = when (this) {
+    IconAnchor.CENTER -> LabelIconAnchor.CENTER
+    IconAnchor.LEFT -> LabelIconAnchor.LEFT
+    IconAnchor.RIGHT -> LabelIconAnchor.RIGHT
+    IconAnchor.TOP -> LabelIconAnchor.TOP
+    IconAnchor.BOTTOM -> LabelIconAnchor.BOTTOM
+    IconAnchor.TOP_LEFT -> LabelIconAnchor.TOP_LEFT
+    IconAnchor.TOP_RIGHT -> LabelIconAnchor.TOP_RIGHT
+    IconAnchor.BOTTOM_LEFT -> LabelIconAnchor.BOTTOM_LEFT
+    IconAnchor.BOTTOM_RIGHT -> LabelIconAnchor.BOTTOM_RIGHT
+}
+
 private fun StyleValue.asNumber(property: String, tile: TileId): Double =
     (this as? StyleValue.NumberValue)?.value?.takeIf(Double::isFinite)
         ?: throw RasterizationException(
             message = "$property did not evaluate to a finite number",
             affectedTiles = listOf(tile),
         )
+
+private fun StyleValue.asString(property: String, tile: TileId): String =
+    (this as? StyleValue.StringValue)?.value
+        ?: throw RasterizationException(
+            message = "$property did not evaluate to a string",
+            affectedTiles = listOf(tile),
+        )
+
+private fun StyleValue.asStringOrNull(): String? = (this as? StyleValue.StringValue)?.value
+
+private fun StyleValue.asBoolean(property: String, tile: TileId): Boolean =
+    (this as? StyleValue.BooleanValue)?.value
+        ?: throw RasterizationException(
+            message = "$property did not evaluate to a boolean",
+            affectedTiles = listOf(tile),
+        )
+
+private fun StyleValue.asNumberList(property: String, tile: TileId, count: Int): List<Double> {
+    val values = (this as? StyleValue.ArrayValue)?.values?.takeIf { it.size == count }
+        ?: throw RasterizationException(
+            message = "$property did not evaluate to $count numbers",
+            affectedTiles = listOf(tile),
+        )
+    return values.map { value ->
+        (value as? StyleValue.NumberValue)?.value?.takeIf(Double::isFinite)
+            ?: throw RasterizationException(
+                message = "$property did not evaluate to $count finite numbers",
+                affectedTiles = listOf(tile),
+            )
+    }
+}
+
+private fun placementOf(value: StyleValue, tile: TileId): LabelPlacement = when (value.asString("symbol-placement", tile)) {
+    "point" -> LabelPlacement.POINT
+    "line" -> LabelPlacement.LINE
+    "line-center" -> LabelPlacement.LINE_CENTER
+    else -> throw RasterizationException("symbol-placement did not evaluate to a supported value", affectedTiles = listOf(tile))
+}
+
+private fun overlapOf(value: StyleValue, property: String, tile: TileId): SymbolOverlap = when (value) {
+    is StyleValue.BooleanValue -> if (value.value) SymbolOverlap.ALWAYS else SymbolOverlap.NEVER
+    is StyleValue.StringValue -> when (value.value) {
+        "always" -> SymbolOverlap.ALWAYS
+        "never" -> SymbolOverlap.NEVER
+        "cooperative" -> SymbolOverlap.COOPERATIVE
+        else -> throw RasterizationException("$property did not evaluate to a supported value", affectedTiles = listOf(tile))
+    }
+    else -> throw RasterizationException("$property did not evaluate to an overlap value", affectedTiles = listOf(tile))
+}
+
+private fun alignmentOf(
+    value: StyleValue,
+    property: String,
+    tile: TileId,
+    autoAllowed: Boolean = true,
+): SymbolAlignment = when (value.asString(property, tile)) {
+    "map" -> SymbolAlignment.MAP
+    "viewport" -> SymbolAlignment.VIEWPORT
+    "auto" -> if (autoAllowed) SymbolAlignment.AUTO else SymbolAlignment.MAP
+    else -> throw RasterizationException("$property did not evaluate to a supported value", affectedTiles = listOf(tile))
+}
+
+private fun textFitOf(value: StyleValue, tile: TileId): IconTextFit = when (value.asString("icon-text-fit", tile)) {
+    "none" -> IconTextFit.NONE
+    "width" -> IconTextFit.WIDTH
+    "height" -> IconTextFit.HEIGHT
+    "both" -> IconTextFit.BOTH
+    else -> throw RasterizationException("icon-text-fit did not evaluate to a supported value", affectedTiles = listOf(tile))
+}
+
+private fun zOrderOf(value: StyleValue, tile: TileId): SymbolZOrder = when (value.asString("symbol-z-order", tile)) {
+    "auto" -> SymbolZOrder.AUTO
+    "source" -> SymbolZOrder.SOURCE
+    "viewport-y" -> SymbolZOrder.VIEWPORT_Y
+    else -> throw RasterizationException("symbol-z-order did not evaluate to a supported value", affectedTiles = listOf(tile))
+}
+
+internal fun textJustifyOf(value: StyleValue, anchor: IconAnchor, tile: TileId): TextJustify =
+    when (value.asString("text-justify", tile)) {
+        "left" -> TextJustify.LEFT
+        "center" -> TextJustify.CENTER
+        "right" -> TextJustify.RIGHT
+        "auto" -> when (anchor) {
+            IconAnchor.LEFT, IconAnchor.TOP_LEFT, IconAnchor.BOTTOM_LEFT -> TextJustify.LEFT
+            IconAnchor.RIGHT, IconAnchor.TOP_RIGHT, IconAnchor.BOTTOM_RIGHT -> TextJustify.RIGHT
+            IconAnchor.CENTER, IconAnchor.TOP, IconAnchor.BOTTOM -> TextJustify.CENTER
+        }
+        else -> throw RasterizationException(
+            "text-justify did not evaluate to a supported value",
+            affectedTiles = listOf(tile),
+        )
+    }
+
+internal fun geometryAnchors(geometry: DecodedVectorGeometry, placement: LabelPlacement): List<GeometryAnchor> =
+    when (placement) {
+        LabelPlacement.POINT -> when (geometry) {
+            is DecodedVectorGeometry.Points -> geometry.points.map(::GeometryAnchor)
+            is DecodedVectorGeometry.Lines -> geometry.lines.mapNotNull(::lineAnchor)
+            is DecodedVectorGeometry.Polygons -> polygonPointAnchors(geometry.rings)
+        }
+        LabelPlacement.LINE, LabelPlacement.LINE_CENTER -> when (geometry) {
+            is DecodedVectorGeometry.Lines -> geometry.lines.mapNotNull(::lineAnchor)
+            else -> emptyList()
+        }
+    }
+
+/**
+ * Returns one point-placement anchor per MVT polygon component.
+ *
+ * MVT's screen-coordinate winding is load-bearing here: exterior rings have positive signed area,
+ * and any following negative-area rings are holes belonging to that exterior until the next
+ * positive ring. A hole therefore constrains its exterior's interior point but never creates a
+ * label of its own.
+ *
+ * A vertex average is not a polygon centroid and can sit outside a concave shape. Instead, each
+ * component is intersected with a horizontal scanline halfway through its widest vertex-free Y
+ * band. The widest filled interval on that line is strictly inside the even-odd-filled component
+ * and avoids its holes. One scan rather than one per vertex band keeps this O(n log n) for the
+ * detailed water and land polygons that make polygon labels matter. A degenerate component with
+ * no integral interior coordinate produces no anchor and is counted by `LABEL_FEATURE_SKIPPED`
+ * rather than being silently placed on an arbitrary boundary vertex.
+ */
+private fun polygonPointAnchors(rings: List<VectorRing>): List<GeometryAnchor> {
+    data class Component(
+        val exterior: VectorRing,
+        val holes: MutableList<VectorRing> = mutableListOf(),
+    )
+
+    val components = mutableListOf<Component>()
+    for (ring in rings) {
+        if (ring.signedAreaTwice > 0.0) {
+            components += Component(ring)
+        } else {
+            components.lastOrNull()?.holes?.add(ring)
+        }
+    }
+    return components.mapNotNull { component ->
+        val componentRings = listOf(component.exterior) + component.holes
+        interiorPoint(componentRings)?.let(::GeometryAnchor)
+    }
+}
+
+private data class InteriorPointCandidate(
+    val point: VectorCoordinate,
+    val clearance: Double,
+)
+
+/** Finds a deterministic integral point strictly inside the even-odd fill of [rings]. */
+private fun interiorPoint(
+    rings: List<VectorRing>,
+): VectorCoordinate? {
+    val vertexYs = rings.flatMap { ring -> ring.points.map(VectorCoordinate::y) }.distinct().sorted()
+    val band = (0 until vertexYs.lastIndex)
+        .map { index -> vertexYs[index] to vertexYs[index + 1] }
+        .filter { (low, high) -> high - low >= 2 }
+        .maxByOrNull { (low, high) -> high - low }
+        ?: return null
+    val lowY = band.first
+    val highY = band.second
+    val y = lowY + (highY - lowY) / 2
+    val intersections = rings.flatMap { ring -> scanlineIntersections(ring.points, y.toDouble()) }.sorted()
+    var best: InteriorPointCandidate? = null
+    var index = 0
+    while (index + 1 < intersections.size) {
+        val left = intersections[index]
+        val right = intersections[index + 1]
+        val firstInteriorX = floor(left).toInt() + 1
+        val lastInteriorX = ceil(right).toInt() - 1
+        if (firstInteriorX <= lastInteriorX) {
+            val x = ((left + right) / 2.0).toInt().coerceIn(firstInteriorX, lastInteriorX)
+            val clearance = minOf(x - left, right - x)
+            if (best == null || clearance > best.clearance) {
+                best = InteriorPointCandidate(VectorCoordinate(x, y), clearance)
+            }
+        }
+        index += 2
+    }
+    return best?.point
+}
+
+/** Half-open edge crossing keeps a scanline through a vertex from counting that vertex twice. */
+private fun scanlineIntersections(points: List<VectorCoordinate>, y: Double): List<Double> {
+    if (points.size < 3) return emptyList()
+    return buildList {
+        for (index in points.indices) {
+            val start = points[index]
+            val end = points[(index + 1) % points.size]
+            val crosses = (start.y <= y && end.y > y) || (end.y <= y && start.y > y)
+            if (crosses) {
+                add(start.x + (y - start.y) * (end.x - start.x).toDouble() / (end.y - start.y))
+            }
+        }
+    }
+}
+
+private fun lineAnchor(points: List<VectorCoordinate>): GeometryAnchor? {
+    if (points.size < 2) return null
+    val lengths = points.zipWithNext { a, b -> hypot((b.x - a.x).toDouble(), (b.y - a.y).toDouble()) }
+    val total = lengths.sum()
+    if (total <= 0.0) return null
+    var remaining = total / 2.0
+    for (index in lengths.indices) {
+        val length = lengths[index]
+        if (remaining <= length) {
+            val start = points[index]
+            val end = points[index + 1]
+            val fraction = if (length == 0.0) 0.0 else remaining / length
+            return GeometryAnchor(
+                point = VectorCoordinate(
+                    x = (start.x + (end.x - start.x) * fraction).toInt(),
+                    y = (start.y + (end.y - start.y) * fraction).toInt(),
+                ),
+                line = points,
+                rotationDegrees = atan2((end.y - start.y).toDouble(), (end.x - start.x).toDouble()) * 180.0 / PI,
+            )
+        }
+        remaining -= length
+    }
+    return null
+}
 
 private fun StyleValue.asNumberPair(property: String, tile: TileId): Pair<Double, Double> {
     val values = (this as? StyleValue.ArrayValue)?.values

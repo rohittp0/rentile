@@ -1,4 +1,41 @@
 {
+  "capabilityDispositions": {
+    "background": "rasterized",
+    "background-pattern": "rasterized",
+    "expression-greater-than": "evaluated",
+    "expression-not-equal": "evaluated",
+    "expression-slice": "evaluated",
+    "expression-to-string": "evaluated",
+    "fill": "rasterized",
+    "fill-pattern": "rasterized",
+    "flat-extrusion": "rasterized",
+    "geojson-line": "rasterized",
+    "hillshade": "rasterized",
+    "independent-line-icon": "rasterized",
+    "independent-point-icon": "rasterized",
+    "label-candidate": "label-candidate",
+    "legacy-filter": "evaluated",
+    "legacy-function": "evaluated",
+    "line": "rasterized",
+    "line-pattern": "rasterized",
+    "line-round-limit": "rasterized",
+    "modern-expression": "evaluated",
+    "modern-filter": "evaluated",
+    "raster": "rasterized",
+    "raster-overzoom": "resource-acquired",
+    "rgba-sprite": "sprite-decoded",
+    "sdf-sprite": "sprite-decoded",
+    "symbol-functional-placement": "label-candidate",
+    "symbol-functional-text-anchor": "label-candidate",
+    "symbol-functional-text-padding": "label-candidate",
+    "symbol-functional-text-transform": "label-candidate",
+    "symbol-icon-text-fit": "label-candidate",
+    "symbol-line-placement": "label-candidate",
+    "symbol-text": "label-candidate",
+    "symbol-text-icon": "label-candidate",
+    "vector-overzoom": "resource-acquired",
+    "xyz-source": "resource-acquired"
+  },
   "cases": [
     {
       "id": "whole-mercator-z0",
@@ -417,6 +454,19 @@
       ]
     }
   ],
+  "fidelityPolicy": {
+    "forbiddenLabelDiagnosticCodes": [
+      "LINE_PLACEMENT_LABEL_EXCLUDED",
+      "UNSUPPORTED_TEXT_CONSTRUCT"
+    ],
+    "forbiddenPreparationDiagnosticCodes": [
+      "LINE_PLACEMENT_LABEL_EXCLUDED",
+      "TEXT_COUPLED_ICON_LAYER_EXCLUDED",
+      "UNSUPPORTED_TEXT_CONSTRUCT"
+    ],
+    "requireAllVisibleTextVectorSymbolsHaveDescriptors": true,
+    "requireEveryDescriptorToContribute": false
+  },
   "outputZoomRange": {
     "maximum": 22,
     "minimum": 0
@@ -425,6 +475,10 @@
   "requiredCapabilities": [
     "background",
     "background-pattern",
+    "expression-greater-than",
+    "expression-not-equal",
+    "expression-slice",
+    "expression-to-string",
     "fill",
     "fill-pattern",
     "flat-extrusion",
@@ -437,13 +491,21 @@
     "legacy-function",
     "line",
     "line-pattern",
+    "line-round-limit",
     "modern-expression",
     "modern-filter",
     "raster",
     "raster-overzoom",
     "rgba-sprite",
     "sdf-sprite",
-    "tms-source",
+    "symbol-functional-placement",
+    "symbol-functional-text-anchor",
+    "symbol-functional-text-padding",
+    "symbol-functional-text-transform",
+    "symbol-icon-text-fit",
+    "symbol-line-placement",
+    "symbol-text",
+    "symbol-text-icon",
     "vector-overzoom",
     "xyz-source"
   ],

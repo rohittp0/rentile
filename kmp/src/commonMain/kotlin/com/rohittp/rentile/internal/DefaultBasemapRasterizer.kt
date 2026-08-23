@@ -98,6 +98,7 @@ import com.rohittp.rentile.internal.style.SymbolPlacement
 import com.rohittp.rentile.internal.style.StyleCompiler
 import com.rohittp.rentile.internal.style.StyleValue
 import com.rohittp.rentile.internal.style.parseCssColor
+import com.rohittp.rentile.internal.style.iconAnchorOrNull
 import com.rohittp.rentile.internal.style.spriteAnchoring
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -147,6 +148,7 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.atan
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -177,7 +179,7 @@ private const val MAX_ANCESTOR_DISTANCE = 2
  * layout or packing change without bumping this and a consumer's cache looks valid forever — it
  * will keep serving stale label geometry and never learn otherwise.
  */
-private const val LABEL_SEMANTICS_VERSION = "label-candidates-1"
+private const val LABEL_SEMANTICS_VERSION = "label-candidates-2"
 private val SUBSTITUTABLE_RESOURCE_CLASSES = setOf(
     ResourceClass.VECTOR_TILE,
     ResourceClass.RASTER_TILE,
@@ -243,7 +245,7 @@ private class DefaultBasemapRasterizer(
         val compiled = requireOwnedStyle(style)
         validateTile(tile, compiled.policy)
         return buildString {
-            append("rentile-output-request-1\n")
+            append("rentile-output-request-2\n")
             append(compiled.digest)
             append('\n')
             append(tile.z)
@@ -1325,7 +1327,7 @@ private class DefaultBasemapRasterizer(
         }.toMap()
         val contentKeys = tiles.associateWith { tile ->
             buildString {
-                append("rentile-output-2\n")
+                append("rentile-output-3\n")
                 append(style.digest)
                 append('\n')
                 append(tile.z)
@@ -2030,7 +2032,7 @@ private class DefaultBasemapRasterizer(
                         for (strokeOffset in strokes) {
                             val strokePoints = offsetPolyline(pixels, strokeOffset)
                             val path = buildLinePath(strokePoints)
-                            val pathEffect = dashValues?.let { values ->
+                            val dashStroke = dashValues?.let { values ->
                                 val intervals = (if (values.size % 2 == 0) values else values + values)
                                     .map { value -> (value * width).toFloat() }
                                     .toFloatArray()
@@ -2047,11 +2049,20 @@ private class DefaultBasemapRasterizer(
                                 } else {
                                     0f
                                 }
-                                PathEffect.makeDash(intervals, phase)
+                                DashStroke(intervals, phase)
                             }
+                            val pathEffect = dashStroke?.makePathEffect()
                             paint.pathEffect = pathEffect
                             try {
-                                surface.canvas.drawPath(path, paint)
+                                drawLinePath(
+                                    surface = surface,
+                                    path = path,
+                                    paint = paint,
+                                    points = strokePoints,
+                                    roundLimit = layer.roundLimit.toDouble(),
+                                    blur = blur,
+                                    dashStroke = dashStroke,
+                                )
                             } finally {
                                 paint.pathEffect = null
                                 pathEffect?.close()
@@ -2081,7 +2092,7 @@ private class DefaultBasemapRasterizer(
         diagnostics: MutableList<RenderDiagnostic>,
     ): Map<Int, List<PlacedIcon>> {
         val accepted = mutableMapOf<Int, MutableList<PlacedIcon>>()
-        val collisionBoxes = mutableListOf<CollisionBox>()
+        val collisionBoxes = mutableListOf<IconCollision>()
         for (layer in layers.sortedByDescending(IconDrawLayer::layerOrder)) {
             val resource = resources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest } ?: continue
             val sourceLayer = resource.tile.layers.singleOrNull { it.name == layer.sourceLayer } ?: continue
@@ -2120,8 +2131,18 @@ private class DefaultBasemapRasterizer(
                     val haloBlur = evaluatedNumber(layer.haloBlur.evaluate(baseContext), "icon-halo-blur", tile)
                     val rotate = evaluatedNumber(layer.rotate.evaluate(baseContext), "icon-rotate", tile)
                     val spacing = evaluatedNumber(layer.spacing.evaluate(baseContext), "symbol-spacing", tile)
+                    val padding = evaluatedNumber(layer.padding.evaluate(baseContext), "icon-padding", tile)
+                    val placement = when ((layer.placement.evaluate(baseContext) as? StyleValue.StringValue)?.value) {
+                        "point" -> SymbolPlacement.POINT
+                        "line" -> SymbolPlacement.LINE
+                        "line-center" -> SymbolPlacement.LINE_CENTER
+                        else -> throw RasterizationException(
+                            message = "symbol-placement did not evaluate to a supported value",
+                            affectedTiles = listOf(tile),
+                        )
+                    }
                     if (size <= 0.0) continue
-                    if (haloWidth < 0.0 || haloBlur < 0.0 || spacing <= 0.0) {
+                    if (haloWidth < 0.0 || haloBlur < 0.0 || spacing <= 0.0 || padding < 0.0) {
                         throw RasterizationException(
                             message = "Retained icon halo or spacing values are outside their valid range",
                             affectedTiles = listOf(tile),
@@ -2129,9 +2150,42 @@ private class DefaultBasemapRasterizer(
                     }
                     val offset = evaluatedNumberArray(layer.offset.evaluate(baseContext), "icon-offset", tile, 2)
                     val translate = evaluatedNumberArray(layer.translate.evaluate(baseContext), "icon-translate", tile, 2)
+                    val anchor = iconAnchorOrNull(
+                        evaluatedString(layer.anchor.evaluate(baseContext), "icon-anchor", tile),
+                    ) ?: throw RasterizationException(
+                        message = "icon-anchor did not evaluate to a supported value",
+                        affectedTiles = listOf(tile),
+                    )
+                    // Output Tiles are north-up and unpitched, so map and viewport translation and
+                    // pitch frames are geometrically identical here. They are still evaluated and
+                    // validated: an expression must never be silently replaced by the default.
+                    evaluatedAlignment(
+                        layer.translateAnchor.evaluate(baseContext), "icon-translate-anchor", tile, autoAllowed = false,
+                    )
+                    val rotationAlignment = evaluatedAlignment(
+                        layer.rotationAlignment.evaluate(baseContext), "icon-rotation-alignment", tile,
+                    )
+                    evaluatedAlignment(layer.pitchAlignment.evaluate(baseContext), "icon-pitch-alignment", tile)
+                    val keepUpright = evaluatedBoolean(
+                        layer.keepUpright.evaluate(baseContext), "icon-keep-upright", tile,
+                    )
+                    val ignorePlacement = evaluatedBoolean(
+                        layer.ignorePlacement.evaluate(baseContext), "icon-ignore-placement", tile,
+                    )
+                    val textOverlap = layer.textOverlap?.let { property ->
+                        evaluatedIconOverlap(property.evaluate(baseContext), tile)
+                    }
+                    val textIgnorePlacement = layer.textIgnorePlacement?.let { property ->
+                        evaluatedBoolean(property.evaluate(baseContext), "text-ignore-placement", tile)
+                    }
+                    val avoidEdges = evaluatedBoolean(
+                        layer.avoidEdges.evaluate(baseContext), "symbol-avoid-edges", tile,
+                    )
+                    val overlap = evaluatedIconOverlap(layer.overlap.evaluate(baseContext), tile)
+                    val zOrder = evaluatedSymbolZOrder(layer.zOrder.evaluate(baseContext), tile)
                     val anchoring = spriteAnchoring(
                         entry = sprite.entry,
-                        anchor = layer.anchor,
+                        anchor = anchor,
                         size = size,
                         offsetX = offset[0],
                         offsetY = offset[1],
@@ -2142,7 +2196,7 @@ private class DefaultBasemapRasterizer(
                     val logicalHeight = anchoring.height
                     val anchors = iconAnchors(
                         geometry = feature.geometry,
-                        placement = layer.placement,
+                        placement = placement,
                         resource = resource,
                         extent = sourceLayer.extent,
                         sizePx = sizePx,
@@ -2153,28 +2207,76 @@ private class DefaultBasemapRasterizer(
                         else -> evaluatedNumber(value, "symbol-sort-key", tile)
                     }
                     anchors.forEachIndexed { anchorIndex, anchor ->
-                        val centerX = anchor.x + anchoring.centerShiftX
-                        val centerY = anchor.y + anchoring.centerShiftY
-                        if (centerX !in 0.0..<sizePx.toDouble() || centerY !in 0.0..<sizePx.toDouble()) return@forEachIndexed
-                        val padding = layer.padding + haloWidth
-                        val box = CollisionBox(
-                            left = centerX - logicalWidth / 2.0 - padding,
-                            top = centerY - logicalHeight / 2.0 - padding,
-                            right = centerX + logicalWidth / 2.0 + padding,
-                            bottom = centerY + logicalHeight / 2.0 + padding,
+                        val effectiveRotationAlignment = when (rotationAlignment) {
+                            IconAlignment.AUTO -> if (placement == SymbolPlacement.POINT) {
+                                IconAlignment.VIEWPORT
+                            } else {
+                                IconAlignment.MAP
+                            }
+                            else -> rotationAlignment
+                        }
+                        val rotationDegrees = uprightRotation(
+                            rotate + if (effectiveRotationAlignment == IconAlignment.VIEWPORT) {
+                                0.0
+                            } else {
+                                anchor.rotationDegrees
+                            },
+                            keepUpright && placement != SymbolPlacement.POINT &&
+                                effectiveRotationAlignment == IconAlignment.MAP,
                         )
-                        if (layer.avoidEdges && !box.isInside(sizePx.toDouble())) return@forEachIndexed
+                        val rotationRadians = rotationDegrees * PI / 180.0
+                        val rotationCosine = cos(rotationRadians)
+                        val rotationSine = sin(rotationRadians)
+                        // icon-anchor and icon-offset are icon-local: they rotate with the image.
+                        // icon-translate remains a separate displacement in the selected map or
+                        // viewport frame (the two frames coincide for a north-up Output Tile).
+                        val localShiftX = anchoring.anchorShiftX + anchoring.offsetX
+                        val localShiftY = anchoring.anchorShiftY + anchoring.offsetY
+                        val centerX = anchor.x +
+                            localShiftX * rotationCosine - localShiftY * rotationSine +
+                            anchoring.translateX
+                        val centerY = anchor.y +
+                            localShiftX * rotationSine + localShiftY * rotationCosine +
+                            anchoring.translateY
+                        if (centerX !in 0.0..<sizePx.toDouble() || centerY !in 0.0..<sizePx.toDouble()) return@forEachIndexed
+                        val collisionShape = OrientedCollisionBox(
+                            centerX = centerX,
+                            centerY = centerY,
+                            halfWidth = logicalWidth / 2.0 + padding,
+                            halfHeight = logicalHeight / 2.0 + padding,
+                            cosine = rotationCosine,
+                            sine = rotationSine,
+                        )
+                        if (avoidEdges && !collisionShape.isInside(sizePx.toDouble())) return@forEachIndexed
+                        val eitherHalfAllowsOverlap = overlap != IconOverlap.NEVER ||
+                            textOverlap?.let { it != IconOverlap.NEVER } == true
+                        val usesViewportY = when (zOrder) {
+                            IconZOrder.VIEWPORT_Y -> eitherHalfAllowsOverlap || !ignorePlacement ||
+                                textIgnorePlacement == false
+                            IconZOrder.AUTO -> layer.sortKey == null &&
+                                (eitherHalfAllowsOverlap || !ignorePlacement || textIgnorePlacement == false)
+                            IconZOrder.SOURCE -> false
+                        }
+                        val primaryOrder = when {
+                            zOrder != IconZOrder.VIEWPORT_Y && layer.sortKey != null -> sortKey
+                            // viewport-y orders the projected symbol anchor, not the icon's centre
+                            // after icon-anchor, icon-offset and icon-translate displacements.
+                            usesViewportY -> anchor.y
+                            else -> featureIndex.toDouble() * 1_000_000.0 + anchorIndex
+                        }
                         candidates += IconCandidate(
                             stableOrder = featureIndex.toLong() * 1_000_000L + anchorIndex,
-                            sortKey = sortKey,
-                            box = box,
+                            primaryOrder = primaryOrder,
+                            collisionShape = collisionShape,
+                            overlap = overlap,
+                            ignorePlacement = ignorePlacement,
                             icon = PlacedIcon(
                                 sprite = sprite,
                                 centerX = centerX,
                                 centerY = centerY,
                                 width = logicalWidth,
                                 height = logicalHeight,
-                                rotationDegrees = rotate + anchor.rotationDegrees,
+                                rotationDegrees = rotationDegrees,
                                 opacity = opacity,
                                 color = evaluatedColor(layer.color.evaluate(baseContext), "icon-color", tile),
                                 haloColor = evaluatedColor(layer.haloColor.evaluate(baseContext), "icon-halo-color", tile),
@@ -2238,9 +2340,17 @@ private class DefaultBasemapRasterizer(
                 recordDiagnosticSafely(diagnostic)
                 diagnostics += diagnostic
             }
-            for (candidate in candidates.sortedWith(compareBy(IconCandidate::sortKey, IconCandidate::stableOrder))) {
-                if (!layer.allowOverlap && collisionBoxes.any { it.intersects(candidate.box) }) continue
-                collisionBoxes += candidate.box
+            for (candidate in candidates.sortedWith(compareBy(IconCandidate::primaryOrder, IconCandidate::stableOrder))) {
+                val collisions = collisionBoxes.filter { it.shape.intersects(candidate.collisionShape) }
+                val canPlace = when (candidate.overlap) {
+                    IconOverlap.ALWAYS -> true
+                    IconOverlap.NEVER -> collisions.isEmpty()
+                    IconOverlap.COOPERATIVE -> collisions.all { it.overlap != IconOverlap.NEVER }
+                }
+                if (!canPlace) continue
+                if (!candidate.ignorePlacement) {
+                    collisionBoxes += IconCollision(candidate.collisionShape, candidate.overlap)
+                }
                 accepted.getOrPut(layer.layerOrder, ::mutableListOf) += candidate.icon
             }
         }
@@ -2280,7 +2390,21 @@ private class DefaultBasemapRasterizer(
                 is DecodedVectorGeometry.Lines -> geometry.lines.flatMap { line -> repeatedLineAnchors(line.map(::pixel), spacing) }
                 else -> emptyList()
             }
+            SymbolPlacement.LINE_CENTER -> when (geometry) {
+                is DecodedVectorGeometry.Lines -> geometry.lines.mapNotNull { line ->
+                    line.takeIf { it.size >= 2 }?.map(::pixel)?.let(::midpointAnchor)
+                }
+                else -> emptyList()
+            }
         }
+    }
+
+    private fun uprightRotation(rotation: Double, keepUpright: Boolean): Double {
+        if (!keepUpright) return rotation
+        var normalized = ((rotation + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
+        if (normalized > 90.0) normalized -= 180.0
+        if (normalized < -90.0) normalized += 180.0
+        return normalized
     }
 
     private fun drawIcons(surface: Surface, icons: List<PlacedIcon>) {
@@ -2500,6 +2624,66 @@ private class DefaultBasemapRasterizer(
                 affectedTiles = listOf(tile),
             )
 
+    private fun evaluatedString(value: StyleValue, property: String, tile: TileId): String =
+        (value as? StyleValue.StringValue)?.value
+            ?: throw RasterizationException(
+                message = "$property did not evaluate to a string",
+                affectedTiles = listOf(tile),
+            )
+
+    private fun evaluatedBoolean(value: StyleValue, property: String, tile: TileId): Boolean =
+        (value as? StyleValue.BooleanValue)?.value
+            ?: throw RasterizationException(
+                message = "$property did not evaluate to a boolean",
+                affectedTiles = listOf(tile),
+            )
+
+    private fun evaluatedAlignment(
+        value: StyleValue,
+        property: String,
+        tile: TileId,
+        autoAllowed: Boolean = true,
+    ): IconAlignment = when (evaluatedString(value, property, tile)) {
+        "map" -> IconAlignment.MAP
+        "viewport" -> IconAlignment.VIEWPORT
+        "auto" -> if (autoAllowed) IconAlignment.AUTO else throw RasterizationException(
+            message = "$property did not evaluate to a supported value",
+            affectedTiles = listOf(tile),
+        )
+        else -> throw RasterizationException(
+            message = "$property did not evaluate to a supported value",
+            affectedTiles = listOf(tile),
+        )
+    }
+
+    private fun evaluatedIconOverlap(value: StyleValue, tile: TileId): IconOverlap = when (value) {
+        is StyleValue.BooleanValue -> if (value.value) IconOverlap.ALWAYS else IconOverlap.NEVER
+        is StyleValue.StringValue -> when (value.value) {
+            "always" -> IconOverlap.ALWAYS
+            "never" -> IconOverlap.NEVER
+            "cooperative" -> IconOverlap.COOPERATIVE
+            else -> throw RasterizationException(
+                message = "icon-overlap did not evaluate to a supported value",
+                affectedTiles = listOf(tile),
+            )
+        }
+        else -> throw RasterizationException(
+            message = "icon-overlap did not evaluate to an overlap value",
+            affectedTiles = listOf(tile),
+        )
+    }
+
+    private fun evaluatedSymbolZOrder(value: StyleValue, tile: TileId): IconZOrder =
+        when (evaluatedString(value, "symbol-z-order", tile)) {
+            "auto" -> IconZOrder.AUTO
+            "source" -> IconZOrder.SOURCE
+            "viewport-y" -> IconZOrder.VIEWPORT_Y
+            else -> throw RasterizationException(
+                message = "symbol-z-order did not evaluate to a supported value",
+                affectedTiles = listOf(tile),
+            )
+        }
+
     private fun recordDiagnosticSafely(diagnostic: RenderDiagnostic) {
         configuration.diagnosticSink.recordSafely(diagnostic)
     }
@@ -2550,21 +2734,70 @@ private data class PlacedIcon(
 
 private data class IconCandidate(
     val stableOrder: Long,
-    val sortKey: Double,
-    val box: CollisionBox,
+    val primaryOrder: Double,
+    val collisionShape: OrientedCollisionBox,
+    val overlap: IconOverlap,
+    val ignorePlacement: Boolean,
     val icon: PlacedIcon,
 )
 
-private data class CollisionBox(
-    val left: Double,
-    val top: Double,
-    val right: Double,
-    val bottom: Double,
-) {
-    fun intersects(other: CollisionBox): Boolean =
-        left < other.right && right > other.left && top < other.bottom && bottom > other.top
+private enum class IconOverlap {
+    NEVER,
+    ALWAYS,
+    COOPERATIVE,
+}
 
-    fun isInside(size: Double): Boolean = left >= 0.0 && top >= 0.0 && right <= size && bottom <= size
+private enum class IconAlignment {
+    MAP,
+    VIEWPORT,
+    AUTO,
+}
+
+private enum class IconZOrder {
+    AUTO,
+    SOURCE,
+    VIEWPORT_Y,
+}
+
+private data class IconCollision(
+    val shape: OrientedCollisionBox,
+    val overlap: IconOverlap,
+)
+
+private data class OrientedCollisionBox(
+    val centerX: Double,
+    val centerY: Double,
+    val halfWidth: Double,
+    val halfHeight: Double,
+    val cosine: Double,
+    val sine: Double,
+) {
+    private val axisX: CollisionAxis get() = CollisionAxis(cosine, sine)
+    private val axisY: CollisionAxis get() = CollisionAxis(-sine, cosine)
+
+    private fun projectionRadius(axis: CollisionAxis): Double =
+        halfWidth * abs(axisX.dot(axis)) + halfHeight * abs(axisY.dot(axis))
+
+    fun intersects(other: OrientedCollisionBox): Boolean {
+        val delta = CollisionAxis(other.centerX - centerX, other.centerY - centerY)
+        return listOf(axisX, axisY, other.axisX, other.axisY).all { axis ->
+            abs(delta.dot(axis)) < projectionRadius(axis) + other.projectionRadius(axis)
+        }
+    }
+
+    private val axisAlignedHalfWidth: Double
+        get() = abs(cosine) * halfWidth + abs(sine) * halfHeight
+
+    private val axisAlignedHalfHeight: Double
+        get() = abs(sine) * halfWidth + abs(cosine) * halfHeight
+
+    fun isInside(size: Double): Boolean =
+        centerX - axisAlignedHalfWidth >= 0.0 && centerY - axisAlignedHalfHeight >= 0.0 &&
+            centerX + axisAlignedHalfWidth <= size && centerY + axisAlignedHalfHeight <= size
+}
+
+private data class CollisionAxis(val x: Double, val y: Double) {
+    fun dot(other: CollisionAxis): Double = x * other.x + y * other.y
 }
 
 private fun midpointAnchor(points: List<RenderPoint>): IconPlacementAnchor? {
@@ -2741,6 +2974,184 @@ private fun buildLinePath(points: List<RenderPoint>) = PathBuilder().let { build
     } finally {
         builder.close()
     }
+}
+
+private data class DashStroke(
+    val intervals: FloatArray,
+    val phase: Float,
+) {
+    val period: Float = intervals.sum()
+
+    fun makePathEffect(distanceFromOriginalStart: Double = 0.0): PathEffect {
+        val localPhase = if (period > 0f) {
+            ((phase + distanceFromOriginalStart) % period + period).toFloat() % period
+        } else {
+            0f
+        }
+        return PathEffect.makeDash(intervals, localPhase)
+    }
+}
+
+/**
+ * Draws one line path while honoring MapLibre's `line-round-limit`: a round join whose
+ * geometric miter ratio is below the limit is rendered as a miter join. Skia exposes one join
+ * for an entire path, so the round path and one local three-point miter path per selected join are
+ * first composed on a transparent temporary layer, then that layer is blended onto the Output Tile
+ * once. A whole miter-path redraw is not local enough: with short segments or a wide/blurred stroke,
+ * an adjacent sharp miter can enter the selected join's circular clip. The local contour has only
+ * the selected vertex as a join, and its dash phase is advanced to the contour's original path
+ * distance. This also avoids whole-path boolean operations, whose cost becomes pathological on
+ * detailed road geometries.
+ *
+ * Within the temporary layer, `BlendMode.SRC` is load-bearing: using normal source-over would apply
+ * translucent line opacity twice at converted joins, while using SRC directly on the Output Tile
+ * would erase the opaque background beneath a translucent line.
+ */
+private fun drawLinePath(
+    surface: Surface,
+    path: Path,
+    paint: Paint,
+    points: List<RenderPoint>,
+    roundLimit: Double,
+    blur: Double,
+    dashStroke: DashStroke?,
+) {
+    if (paint.strokeJoin != PaintStrokeJoin.ROUND) {
+        surface.canvas.drawPath(path, paint)
+        return
+    }
+    val replacements = selectedRoundJoinReplacements(
+        points,
+        paint.strokeWidth.toDouble() / 2.0,
+        roundLimit,
+        blur,
+    )
+    if (replacements.isEmpty()) {
+        surface.canvas.drawPath(path, paint)
+        return
+    }
+
+    val originalJoin = paint.strokeJoin
+    val originalMiter = paint.strokeMiter
+    val originalCap = paint.strokeCap
+    val originalBlendMode = paint.blendMode
+    val originalPathEffect = paint.pathEffect
+    val canvas = surface.canvas
+    val layerSaveCount = canvas.saveLayer(
+        0f,
+        0f,
+        surface.width.toFloat(),
+        surface.height.toFloat(),
+        null,
+    )
+    try {
+        canvas.drawPath(path, paint)
+        paint.strokeJoin = PaintStrokeJoin.MITER
+        paint.strokeCap = PaintStrokeCap.BUTT
+        // `line-miter-limit` governs authored miter joins. It must not veto a round join that
+        // `line-round-limit` explicitly selected for conversion: every selected geometric ratio
+        // is strictly below roundLimit, so this ceiling is sufficient for every local pass.
+        paint.strokeMiter = maxOf(originalMiter, roundLimit.toFloat())
+        paint.blendMode = BlendMode.SRC
+        for (replacement in replacements) {
+            val localPath = buildLinePath(listOf(replacement.previous, replacement.current, replacement.next))
+            val mask = PathBuilder().let { builder ->
+                try {
+                    builder.addCircle(
+                        replacement.current.x.toFloat(),
+                        replacement.current.y.toFloat(),
+                        replacement.maskRadius.toFloat(),
+                    )
+                    builder.detach()
+                } finally {
+                    builder.close()
+                }
+            }
+            val localPathEffect = dashStroke?.makePathEffect(replacement.distanceAtPrevious)
+            val clipSaveCount = canvas.save()
+            try {
+                canvas.clipPath(mask, ClipMode.INTERSECT, true)
+                paint.pathEffect = localPathEffect
+                canvas.drawPath(localPath, paint)
+            } finally {
+                paint.pathEffect = originalPathEffect
+                canvas.restoreToCount(clipSaveCount)
+                localPathEffect?.close()
+                mask.close()
+                localPath.close()
+            }
+        }
+    } finally {
+        canvas.restoreToCount(layerSaveCount)
+        paint.pathEffect = originalPathEffect
+        paint.blendMode = originalBlendMode
+        paint.strokeMiter = originalMiter
+        paint.strokeCap = originalCap
+        paint.strokeJoin = originalJoin
+    }
+}
+
+private data class RoundJoinReplacement(
+    val previous: RenderPoint,
+    val current: RenderPoint,
+    val next: RenderPoint,
+    val maskRadius: Double,
+    val distanceAtPrevious: Double,
+)
+
+private fun selectedRoundJoinReplacements(
+    points: List<RenderPoint>,
+    halfWidth: Double,
+    roundLimit: Double,
+    blur: Double,
+): List<RoundJoinReplacement> {
+    if (points.size < 3 || halfWidth <= 0.0 || roundLimit <= 1.0) return emptyList()
+    val distanceAtPoint = DoubleArray(points.size)
+    for (index in 1 until points.size) {
+        distanceAtPoint[index] = distanceAtPoint[index - 1] + hypot(
+            points[index].x - points[index - 1].x,
+            points[index].y - points[index - 1].y,
+        )
+    }
+    return (1 until points.lastIndex).mapNotNull { index ->
+        val ratio = roundJoinMiterRatio(points[index - 1], points[index], points[index + 1])
+            ?: return@mapNotNull null
+        if (ratio >= roundLimit) return@mapNotNull null
+        RoundJoinReplacement(
+            previous = points[index - 1],
+            current = points[index],
+            next = points[index + 1],
+            // Skia clips after the mask filter. Three sigmas keeps the local miter pass's blur
+            // away from the clip edge, avoiding a hard circular seam around the selected join.
+            maskRadius = halfWidth * ratio + blur * 3.0 + 0.01,
+            distanceAtPrevious = distanceAtPoint[index - 1],
+        )
+    }
+}
+
+private fun roundJoinMiterRatio(
+    previous: RenderPoint,
+    current: RenderPoint,
+    next: RenderPoint,
+): Double? {
+    val incomingX = current.x - previous.x
+    val incomingY = current.y - previous.y
+    val outgoingX = next.x - current.x
+    val outgoingY = next.y - current.y
+    val incomingLength = hypot(incomingX, incomingY)
+    val outgoingLength = hypot(outgoingX, outgoingY)
+    if (incomingLength <= 1e-9 || outgoingLength <= 1e-9) return null
+
+    val unitIncomingX = incomingX / incomingLength
+    val unitIncomingY = incomingY / incomingLength
+    val unitOutgoingX = outgoingX / outgoingLength
+    val unitOutgoingY = outgoingY / outgoingLength
+    val cross = unitIncomingX * unitOutgoingY - unitIncomingY * unitOutgoingX
+    if (cross in -1e-9..1e-9) return null
+    val dot = (unitIncomingX * unitOutgoingX + unitIncomingY * unitOutgoingY).coerceIn(-1.0, 1.0)
+    val cosineHalfAngleSquared = (1.0 + dot) / 2.0
+    if (cosineHalfAngleSquared <= 1e-12) return null
+    return 1.0 / sqrt(cosineHalfAngleSquared)
 }
 
 private data class EvaluatedRasterPaint(

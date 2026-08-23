@@ -115,10 +115,12 @@ internal object StyleExpressionCompiler {
             "any" -> LogicalExpression(arguments.map { compile(it, StyleType.BOOLEAN) }, all = false)
             "+" -> NumericFoldExpression(requireAtLeast(operator, arguments, 2).map { compile(it, StyleType.NUMBER) }, add = true)
             "*" -> NumericFoldExpression(requireAtLeast(operator, arguments, 2).map { compile(it, StyleType.NUMBER) }, add = false)
-            "==", "<=", ">=" -> compileComparison(operator, arguments)
+            "==", "!=", "<", "<=", ">", ">=" -> compileComparison(operator, arguments)
             "in" -> compileIn(arguments)
+            "slice" -> compileSlice(arguments)
             "boolean" -> BooleanAssertionExpression(requireAtLeast(operator, arguments, 1).map(::compileNode))
             "to-number" -> ToNumberExpression(requireAtLeast(operator, arguments, 1).map(::compileNode))
+            "to-string" -> ToStringExpression(compileExact(operator, arguments, 1, StyleType.VALUE))
             "coalesce" -> compileCoalesce(arguments)
             "concat" -> compileConcat(arguments)
             "is-supported-script" -> compileIsSupportedScript(arguments)
@@ -156,9 +158,14 @@ internal object StyleExpressionCompiler {
         requireCount(operator, arguments, 2)
         val left = compileNode(arguments[0])
         val right = compileNode(arguments[1])
-        if (operator != "==") {
-            requireComparable(left.resultType, operator)
-            requireComparable(right.resultType, operator)
+        requireComparable(left.resultType, operator)
+        requireComparable(right.resultType, operator)
+        if (
+            left.resultType != right.resultType &&
+            left.resultType != StyleType.VALUE &&
+            right.resultType != StyleType.VALUE
+        ) {
+            fail("$operator operands must have the same type")
         }
         return ComparisonExpression(operator, left, right)
     }
@@ -166,6 +173,20 @@ internal object StyleExpressionCompiler {
     private fun compileIn(arguments: List<JsonElement>): StyleExpression {
         requireCount("in", arguments, 2)
         return InExpression(compileNode(arguments[0]), compileNode(arguments[1]))
+    }
+
+    private fun compileSlice(arguments: List<JsonElement>): StyleExpression {
+        if (arguments.size !in 2..3) fail("slice requires exactly 2 or 3 arguments")
+        val input = compileNode(arguments[0])
+        if (input.resultType !in setOf(StyleType.STRING, StyleType.ARRAY, StyleType.VALUE)) {
+            fail("slice input must be a string or array")
+        }
+        return SliceExpression(
+            input = input,
+            beginIndex = compile(arguments[1], StyleType.NUMBER),
+            endIndex = arguments.getOrNull(2)?.let { compile(it, StyleType.NUMBER) },
+            resultType = input.resultType,
+        )
     }
 
     private fun compileCoalesce(arguments: List<JsonElement>): StyleExpression {
@@ -313,8 +334,19 @@ internal object StyleExpressionCompiler {
     }
 
     private fun requireComparable(type: StyleType, operator: String) {
-        if (type !in setOf(StyleType.NUMBER, StyleType.STRING, StyleType.VALUE)) {
-            fail("$operator operands must be numbers or strings")
+        val supportedTypes = if (operator == "==" || operator == "!=") {
+            setOf(StyleType.NULL, StyleType.BOOLEAN, StyleType.NUMBER, StyleType.STRING, StyleType.VALUE)
+        } else {
+            setOf(StyleType.NUMBER, StyleType.STRING, StyleType.VALUE)
+        }
+        if (type !in supportedTypes) {
+            fail(
+                if (operator == "==" || operator == "!=") {
+                    "$operator operands must be nulls, booleans, numbers, or strings"
+                } else {
+                    "$operator operands must be numbers or strings"
+                },
+            )
         }
     }
 
@@ -430,7 +462,10 @@ private data class ComparisonExpression(
         val rightValue = right.evaluate(context)
         val result = when (operator) {
             "==" -> leftValue == rightValue
+            "!=" -> leftValue != rightValue
+            "<" -> compare(leftValue, rightValue)?.let { it < 0 } ?: return StyleValue.Null
             "<=" -> compare(leftValue, rightValue)?.let { it <= 0 } ?: return StyleValue.Null
+            ">" -> compare(leftValue, rightValue)?.let { it > 0 } ?: return StyleValue.Null
             ">=" -> compare(leftValue, rightValue)?.let { it >= 0 } ?: return StyleValue.Null
             else -> return StyleValue.Null
         }
@@ -461,6 +496,32 @@ private data class InExpression(
     }
 }
 
+private data class SliceExpression(
+    val input: StyleExpression,
+    val beginIndex: StyleExpression,
+    val endIndex: StyleExpression?,
+    override val resultType: StyleType,
+) : StyleExpression {
+    override fun evaluate(context: StyleEvaluationContext): StyleValue {
+        val begin = (beginIndex.evaluate(context) as? StyleValue.NumberValue)?.value ?: return StyleValue.Null
+        val end = endIndex?.let {
+            (it.evaluate(context) as? StyleValue.NumberValue)?.value ?: return StyleValue.Null
+        }
+        return when (val value = input.evaluate(context)) {
+            is StyleValue.StringValue -> {
+                val characters = value.value.styleCharacters()
+                val bounds = sliceBounds(characters.size, begin, end)
+                StyleValue.StringValue(characters.subList(bounds.first, bounds.second).joinToString(""))
+            }
+            is StyleValue.ArrayValue -> {
+                val bounds = sliceBounds(value.values.size, begin, end)
+                StyleValue.ArrayValue(value.values.subList(bounds.first, bounds.second))
+            }
+            else -> StyleValue.Null
+        }
+    }
+}
+
 private data class BooleanAssertionExpression(
     val expressions: List<StyleExpression>,
 ) : StyleExpression {
@@ -488,6 +549,15 @@ private data class ToNumberExpression(
     }
 }
 
+private data class ToStringExpression(
+    val expression: StyleExpression,
+) : StyleExpression {
+    override val resultType: StyleType = StyleType.STRING
+
+    override fun evaluate(context: StyleEvaluationContext): StyleValue =
+        StyleValue.StringValue(expression.evaluate(context).stringifyForText())
+}
+
 private data class CoalesceExpression(
     val expressions: List<StyleExpression>,
     override val resultType: StyleType,
@@ -503,14 +573,7 @@ private data class ConcatExpression(
 
     override fun evaluate(context: StyleEvaluationContext): StyleValue =
         StyleValue.StringValue(
-            expressions.joinToString("") { expression ->
-                when (val value = expression.evaluate(context)) {
-                    is StyleValue.StringValue -> value.value
-                    is StyleValue.NumberValue -> value.value.stringifyForText()
-                    is StyleValue.BooleanValue -> value.value.toString()
-                    else -> ""
-                }
-            },
+            expressions.joinToString("") { expression -> expression.evaluate(context).stringifyForText() },
         )
 }
 
@@ -625,8 +688,68 @@ private fun StyleValue.asColor(): CompiledColor? = when (this) {
     else -> null
 }
 
+private fun sliceBounds(length: Int, begin: Double, end: Double?): Pair<Int, Int> {
+    val startIndex = normalizeSliceIndex(begin, length)
+    val endIndex = end?.let { normalizeSliceIndex(it, length) } ?: length
+    return startIndex to endIndex.coerceAtLeast(startIndex)
+}
+
+private fun normalizeSliceIndex(index: Double, length: Int): Int = when {
+    index.isNaN() -> 0
+    index >= length -> length
+    index <= -length -> 0
+    index < 0.0 -> length + index.toInt()
+    else -> index.toInt()
+}
+
+private fun String.styleCharacters(): List<String> = buildList {
+    var index = 0
+    while (index < length) {
+        val first = this@styleCharacters[index]
+        val isSurrogatePair =
+            first.code in HIGH_SURROGATE_RANGE &&
+                index + 1 < length &&
+                this@styleCharacters[index + 1].code in LOW_SURROGATE_RANGE
+        val end = index + if (isSurrogatePair) 2 else 1
+        add(substring(index, end))
+        index = end
+    }
+}
+
+private fun StyleValue.stringifyForText(): String = when (this) {
+    StyleValue.Null -> ""
+    is StyleValue.BooleanValue -> value.toString()
+    is StyleValue.NumberValue -> value.stringifyForText()
+    is StyleValue.StringValue -> value
+    is StyleValue.ArrayValue -> values.joinToString(separator = ",", prefix = "[", postfix = "]") { it.stringifyAsJson() }
+    is StyleValue.ObjectValue -> values.entries.joinToString(separator = ",", prefix = "{", postfix = "}") { (key, value) ->
+        "${JsonPrimitive(key)}:${value.stringifyAsJson()}"
+    }
+    is StyleValue.ImageValue -> name
+    is StyleValue.ColorValue -> value.stringifyForText()
+}
+
+private fun StyleValue.stringifyAsJson(): String = when (this) {
+    StyleValue.Null -> "null"
+    is StyleValue.BooleanValue -> value.toString()
+    is StyleValue.NumberValue -> value.stringifyForText()
+    is StyleValue.StringValue -> JsonPrimitive(value).toString()
+    is StyleValue.ArrayValue -> values.joinToString(separator = ",", prefix = "[", postfix = "]") { it.stringifyAsJson() }
+    is StyleValue.ObjectValue -> values.entries.joinToString(separator = ",", prefix = "{", postfix = "}") { (key, value) ->
+        "${JsonPrimitive(key)}:${value.stringifyAsJson()}"
+    }
+    is StyleValue.ImageValue -> JsonPrimitive(name).toString()
+    is StyleValue.ColorValue -> JsonPrimitive(value.stringifyForText()).toString()
+}
+
+private fun CompiledColor.stringifyForText(): String =
+    "rgba($red,$green,$blue,${(alpha / 255.0).stringifyForText()})"
+
 private fun Double.stringifyForText(): String =
     if (this == toLong().toDouble()) toLong().toString() else toString()
+
+private val HIGH_SURROGATE_RANGE = 0xD800..0xDBFF
+private val LOW_SURROGATE_RANGE = 0xDC00..0xDFFF
 
 internal fun JsonElement.toStyleValue(): StyleValue = when (this) {
     JsonNull -> StyleValue.Null

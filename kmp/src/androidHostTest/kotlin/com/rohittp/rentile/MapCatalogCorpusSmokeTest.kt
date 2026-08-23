@@ -2,14 +2,19 @@ package com.rohittp.rentile
 
 import com.rohittp.rentile.internal.glyph.ScriptSupport
 import com.rohittp.rentile.internal.metadata.resolveHttpReference
+import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import org.jetbrains.skia.Color
 import org.jetbrains.skia.EncodedImageFormat
@@ -26,6 +31,7 @@ import java.nio.file.StandardOpenOption
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * Opt-in smoke test for the rolling public map catalog.
@@ -67,16 +73,64 @@ class MapCatalogCorpusSmokeTest {
             rasterizer.awaitClosed()
         }
 
-        writeReports(outputDirectory, coverage, results)
+        val declaredCapabilities = results.flatMapTo(mutableSetOf()) { it.declaredCapabilities }
+        val runtimeLabelCapabilities = results.flatMapTo(mutableSetOf()) { it.runtimeLabelCapabilities }
+        val nonLabelEvidence = declaredCapabilities +
+            transport.observedSpriteCapabilities
+        val observedCapabilities = coverage.requiredCapabilities.filterTo(mutableSetOf()) { capability ->
+            if (coverage.capabilityDispositions[capability] == LABEL_CANDIDATE_DISPOSITION) {
+                capability in runtimeLabelCapabilities
+            } else {
+                capability in nonLabelEvidence
+            }
+        }
+        val runtimeLabelEvidence = results
+            .flatMap { it.runtimeLabelEvidence.entries }
+            .groupBy({ it.key }, { it.value })
+            .mapValues { (_, values) -> values.flatten().toSet() }
+        val corpusFidelityErrors = if (selectedStyleId == null) {
+            (coverage.requiredCapabilities.toSet() - observedCapabilities).sorted().map { capability ->
+                if (coverage.capabilityDispositions[capability] == LABEL_CANDIDATE_DISPOSITION) {
+                    "LABEL_CAPABILITY_NOT_EMITTED: $capability was declared by the rolling corpus " +
+                        "but no sampled LabelCandidate provided its required semantic evidence"
+                } else {
+                    "CAPABILITY_NOT_EXERCISED: $capability was required by the Coverage Manifest " +
+                        "but no live style or decoded sprite exercised it"
+                }
+            }
+        } else {
+            // A single-style run is a debugging aid. It still enforces every per-style fidelity
+            // invariant, but cannot prove that the complete rolling corpus exercises every
+            // capability in the manifest.
+            emptyList()
+        }
+
+        writeReports(
+            outputDirectory,
+            coverage,
+            results,
+            declaredCapabilities,
+            observedCapabilities,
+            runtimeLabelEvidence,
+            corpusFidelityErrors,
+        )
         val completedStyles = results.count { result ->
             result.preparationErrorCode == null &&
                 result.tiles.values.all { it.status == SmokeStatus.RENDERED } &&
-                result.labelResults.all { it.errorCode == null }
+                result.labelResults.all { it.errorCode == null } &&
+                result.fidelityErrors.isEmpty()
         }
         assertEquals(
-            expected = results.size,
-            actual = completedStyles,
-            message = "Only $completedStyles/${results.size} styles passed the Coverage Manifest; inspect ${outputDirectory.resolve("index.html")}",
+            expected = true,
+            actual = completedStyles == results.size && corpusFidelityErrors.isEmpty(),
+            message = buildString {
+                append("Only $completedStyles/${results.size} styles passed the Coverage Manifest")
+                if (corpusFidelityErrors.isNotEmpty()) {
+                    append("; ")
+                    append(corpusFidelityErrors.joinToString(" | "))
+                }
+                append("; inspect ${outputDirectory.resolve("index.html")}")
+            },
         )
     }
 
@@ -98,6 +152,11 @@ class MapCatalogCorpusSmokeTest {
                 tiles = emptyMap(),
                 mosaics = emptyMap(),
                 labelResults = emptyList(),
+                declaredCapabilities = emptySet(),
+                runtimeLabelCapabilities = emptySet(),
+                runtimeLabelEvidence = emptyMap(),
+                fidelityErrors = emptyList(),
+                fidelityObservations = emptyList(),
             )
         } catch (error: Throwable) {
             return StyleSmokeResult(
@@ -108,15 +167,68 @@ class MapCatalogCorpusSmokeTest {
                 tiles = emptyMap(),
                 mosaics = emptyMap(),
                 labelResults = emptyList(),
+                declaredCapabilities = emptySet(),
+                runtimeLabelCapabilities = emptySet(),
+                runtimeLabelEvidence = emptyMap(),
+                fidelityErrors = emptyList(),
+                fidelityObservations = emptyList(),
             )
         }
 
+        val styleJson = catalogJson.parseToJsonElement(transport.styleBody(style.url).decodeToString()).jsonObject
+        val inspection = inspectStyle(styleJson, coverage)
+        val descriptorIds = rasterizer.labelLayerDescriptors(prepared).mapTo(mutableSetOf()) { it.id }
+        val missingDescriptors = inspection.textVectorSymbolLayerIds - descriptorIds
+        val forbiddenPreparationDiagnostics = prepared.diagnostics.filter { diagnostic ->
+            diagnostic.code.name in coverage.fidelityPolicy.forbiddenPreparationDiagnosticCodes
+        }
+        val preparationFidelityErrors = buildList {
+            if (coverage.fidelityPolicy.requireAllVisibleTextVectorSymbolsHaveDescriptors) {
+                missingDescriptors.sorted().forEach { layerId ->
+                    add(
+                        "TEXT_VECTOR_SYMBOL_WITHOUT_DESCRIPTOR: layerIdDigest=${layerId.sha256Hex()} " +
+                            "is a visible text-bearing vector symbol layer but has no LabelLayerDescriptor",
+                    )
+                }
+            }
+            forbiddenPreparationDiagnostics.forEach { diagnostic ->
+                add("FORBIDDEN_PREPARATION_DIAGNOSTIC: ${diagnostic.code.name}")
+            }
+            inspection.labelCandidateLayers.forEach { (capability, layerIds) ->
+                if (coverage.capabilityDispositions[capability] == LABEL_CANDIDATE_DISPOSITION) {
+                    (layerIds - descriptorIds).sorted().forEach { layerId ->
+                        add(
+                            "CAPABILITY_WITHOUT_DESCRIPTOR: $capability layerIdDigest=${layerId.sha256Hex()} " +
+                                "has no LabelLayerDescriptor",
+                        )
+                    }
+                }
+            }
+        }.distinct()
         val uniqueTiles = coverage.cases.flatMap(CoverageCase::tiles).map(CoverageTile::asTileId).distinct()
         val outcomes = uniqueTiles.associateWith { tile ->
             renderTile(rasterizer, prepared, style.id, tile, outputDirectory)
         }
         val mosaics = createMosaics(style.id, coverage, outcomes, outputDirectory)
-        val labelResults = acquireLabelSmoke(rasterizer, prepared, style, transport, coverage)
+        val labelResults = acquireLabelSmoke(rasterizer, prepared, style, styleJson, transport, coverage)
+        val runtimeLabelObservation = observeLabelCandidateSemantics(
+            inspection,
+            labelResults.flatMap(LabelCaseSmokeResult::candidateEvidence),
+        )
+        val contributingLabelLayerIds = labelResults.flatMapTo(mutableSetOf()) { it.contributingLayerIds }
+        val unobservedDescriptorIds = descriptorIds - contributingLabelLayerIds
+        val contributionObservation = unobservedDescriptorIds.takeIf(Set<String>::isNotEmpty)?.let { missing ->
+            "LABEL_CONTRIBUTION_UNOBSERVED: ${missing.size} descriptors produced no candidate in the " +
+                "sampled low/high-zoom cases; layerIdDigests=" +
+                missing.sorted().take(MAX_REPORTED_LAYER_DIGESTS).joinToString(",") { it.sha256Hex() }
+        }
+        val fidelityErrors = preparationFidelityErrors + if (
+            coverage.fidelityPolicy.requireEveryDescriptorToContribute && contributionObservation != null
+        ) {
+            listOf(contributionObservation)
+        } else {
+            emptyList()
+        }
         return StyleSmokeResult(
             styleId = style.id,
             styleName = style.name,
@@ -125,33 +237,56 @@ class MapCatalogCorpusSmokeTest {
             tiles = outcomes,
             mosaics = mosaics,
             labelResults = labelResults,
+            declaredCapabilities = inspection.declaredCapabilities,
+            runtimeLabelCapabilities = runtimeLabelObservation.capabilities,
+            runtimeLabelEvidence = runtimeLabelObservation.evidence,
+            fidelityErrors = fidelityErrors,
+            fidelityObservations = listOfNotNull(contributionObservation),
         )
     }
 
     /**
      * Acquires label candidates for the three cases whose geography and script exercise the
-     * label pipeline against live styles: [LABEL_SMOKE_CASE_IDS]. Only the lowest-zoom tile of
-     * each case is used - place-name labels (continent, country, state, city, town) live at low
-     * zoom and are sparse or entirely absent by deep overzoom, so the lowest zoom is the one that
-     * actually exercises label volume and glyph-range fan-out; a highest-zoom tile would prove
-     * nothing here. Label correctness itself varies by geography and script, not by zoom, so
-     * acquiring every case at every zoom would add runtime without adding signal - the publish
-     * gate is already a long-running job. See `compatibility/README.md`.
+     * label pipeline against live styles: [LABEL_SMOKE_CASE_IDS]. The lowest and highest zoom tile
+     * of each case are used, plus New York z14: low zoom exercises settlement labels and glyph-
+     * range fan-out, high zoom reaches road, POI, water and other labels, and z14 intersects the
+     * z9/z12 functional text-transform layers in the live catalog while still carrying place
+     * features. Acquiring every intermediate tile would add substantial runtime without turning
+     * a missing source feature into stronger evidence. See `compatibility/README.md`.
      */
     private suspend fun acquireLabelSmoke(
         rasterizer: BasemapRasterizer,
         prepared: PreparedStyle,
         style: CatalogStyleEntry,
+        styleJson: JsonObject,
         transport: GlyphClosureRecordingTransport,
         coverage: CoverageManifest,
     ): List<LabelCaseSmokeResult> {
-        val styleJson = catalogJson.parseToJsonElement(transport.styleBody(style.url).decodeToString()).jsonObject
-        return LABEL_SMOKE_CASE_IDS.map { caseId ->
+        return LABEL_SMOKE_CASE_IDS.flatMap { caseId ->
             val case = coverage.cases.first { it.id == caseId }
-            val tile = case.tiles.minBy(CoverageTile::z).asTileId()
-            acquireLabelCaseSmoke(rasterizer, prepared, caseId, tile, style.url, styleJson, transport)
+            labelSmokeTiles(case)
+                .map { coverageTile ->
+                    acquireLabelCaseSmoke(
+                        rasterizer,
+                        prepared,
+                        caseId,
+                        coverageTile.asTileId(),
+                        style.url,
+                        styleJson,
+                        transport,
+                        coverage.fidelityPolicy,
+                    )
+                }
         }
     }
+
+    private fun labelSmokeTiles(case: CoverageCase): List<CoverageTile> = buildList {
+        add(case.tiles.minBy(CoverageTile::z))
+        if (case.id == NEW_YORK_CASE_ID) {
+            add(case.tiles.single { tile -> tile.z == FUNCTIONAL_TEXT_SAMPLE_ZOOM })
+        }
+        add(case.tiles.maxBy(CoverageTile::z))
+    }.distinct()
 
     /**
      * Mirrors [renderTile]'s architecture deliberately: a failed invariant becomes an
@@ -177,6 +312,7 @@ class MapCatalogCorpusSmokeTest {
         styleUrl: String,
         styleJson: JsonObject,
         transport: GlyphClosureRecordingTransport,
+        fidelityPolicy: FidelityPolicy,
     ): LabelCaseSmokeResult {
         // Cleared per case: [unpredictedGlyphUrls] below must reflect only what this case's own
         // acquisition requests, not leftovers from a previous case or style.
@@ -279,7 +415,15 @@ class MapCatalogCorpusSmokeTest {
             val unpredictedGlyphUrls = transport.recordedGlyphUrls
                 .mapTo(mutableSetOf()) { it.withRedactedAuthenticationQuery() } -
                 predictedGlyphUrls.mapTo(mutableSetOf()) { it.withRedactedAuthenticationQuery() }
-            acquireLabelCaseSmokeResult(rasterizer, prepared, caseId, tile, batch, unpredictedGlyphUrls)
+            acquireLabelCaseSmokeResult(
+                rasterizer,
+                prepared,
+                caseId,
+                tile,
+                batch,
+                unpredictedGlyphUrls,
+                fidelityPolicy,
+            )
         }
     }
 
@@ -290,6 +434,7 @@ class MapCatalogCorpusSmokeTest {
         tile: TileId,
         batch: LabelCandidateBatch,
         unpredictedGlyphUrls: Set<String>,
+        fidelityPolicy: FidelityPolicy,
     ): LabelCaseSmokeResult {
         // Distinct (font stack, 256-codepoint block) pairs: what `maxGlyphRangesPerBatch` counts.
         val glyphRangeCount = batch.atlas.entries
@@ -312,6 +457,14 @@ class MapCatalogCorpusSmokeTest {
                 "over the $MAX_GLYPH_RANGES_PER_BATCH maxGlyphRangesPerBatch ceiling " +
                 "acquireLabelCandidates is supposed to enforce"
         }
+        val forbiddenDiagnostics = batch.diagnostics.filter { diagnostic ->
+            diagnostic.code.name in fidelityPolicy.forbiddenLabelDiagnosticCodes
+        }
+        if (forbiddenDiagnostics.isNotEmpty()) {
+            errorCode = errorCode ?: "FORBIDDEN_LABEL_DIAGNOSTIC"
+            diagnostics += "FORBIDDEN_LABEL_DIAGNOSTIC: label acquisition reported " +
+                forbiddenDiagnostics.joinToString(",") { it.code.name }
+        }
         if (caseId == CAIRO_CASE_ID) {
             when (val outcome = classifyCairoOutcome(rasterizer, prepared, batch)) {
                 is CairoOutcome.Invalid -> {
@@ -319,12 +472,12 @@ class MapCatalogCorpusSmokeTest {
                     diagnostics += "CAIRO_SCRIPT_OUTCOME_INVALID: ${outcome.detail}"
                 }
                 CairoOutcome.NoLabelLayers -> diagnostics += "CAIRO_NO_LABEL_LAYERS: style " +
-                    "declares no place-name label layers at all, so it cannot say anything about " +
+                    "declares no label layers at all, so it cannot say anything about " +
                     "complex-script handling one way or the other"
-                CairoOutcome.NoPlaceFeatures -> diagnostics += "CAIRO_NO_PLACE_FEATURES: style " +
-                    "has place-name label layers, but this tile carried zero label candidates and " +
+                CairoOutcome.NoMatchingFeatures -> diagnostics += "CAIRO_NO_MATCHING_FEATURES: style " +
+                    "has label layers, but this tile carried zero label candidates and " +
                     "no label-relevant diagnostic; acceptable only when the tile genuinely has no " +
-                    "place-name features. Surfaced here rather than silently accepted in case this " +
+                    "matching features. Surfaced here rather than silently accepted in case this " +
                     "turns out to be the common outcome instead of the rare one"
                 CairoOutcome.SupportedScriptCandidates, CairoOutcome.ExcludedByComplexScript -> Unit
             }
@@ -339,6 +492,29 @@ class MapCatalogCorpusSmokeTest {
             atlasHeight = batch.atlas.height,
             glyphRangeCount = glyphRangeCount,
             diagnostics = diagnostics,
+            contributingLayerIds = batch.layerStyles.mapTo(mutableSetOf()) { it.layerId },
+            candidateEvidence = batch.candidates.map { candidate ->
+                val layerId = batch.layerStyles.getOrNull(candidate.layerStyleIndex)?.layerId
+                    ?: error("LabelCandidate references a missing layer style")
+                val resolvedText = candidate.glyphs.joinToString(separator = "") { quad ->
+                    String(Character.toChars(batch.atlas.entries[quad.entryIndex].codepoint))
+                }
+                LabelCandidateEvidence(
+                    layerId = layerId,
+                    hasGlyphs = candidate.glyphs.isNotEmpty(),
+                    hasResolvedGeometry = candidate.glyphs.isNotEmpty() &&
+                        candidate.boundingBox.left.isFinite() &&
+                        candidate.boundingBox.top.isFinite() &&
+                        candidate.boundingBox.right.isFinite() &&
+                        candidate.boundingBox.bottom.isFinite(),
+                    placement = candidate.placement,
+                    hasLineGeometry = candidate.line.isNotEmpty(),
+                    hasIcon = candidate.icon != null,
+                    iconTextFit = candidate.icon?.textFit ?: IconTextFit.NONE,
+                    padding = candidate.padding,
+                    resolvedTextCase = resolvedTextCase(resolvedText),
+                )
+            },
         )
     }
 
@@ -351,12 +527,12 @@ class MapCatalogCorpusSmokeTest {
      * - [CairoOutcome.ExcludedByComplexScript]: no candidates exist because
      *   [DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED] reported the exclusion.
      * - [CairoOutcome.NoLabelLayers]: `labelLayerDescriptors` is empty for this style, so it has no
-     *   place-name label layers at all and cannot say anything about complex-script handling
-     *   either way. Checked and reported ahead of [NoPlaceFeatures] deliberately - "no label
+     *   label layers at all and cannot say anything about complex-script handling
+     *   either way. Checked and reported ahead of [NoMatchingFeatures] deliberately - "no label
      *   layers exist" and "label layers exist but none matched this tile" are different situations
      *   a corpus reader needs to tell apart, not one outcome hiding the other.
-     * - [CairoOutcome.NoPlaceFeatures]: the style does have label layers, but no candidates and no
-     *   *label-relevant* diagnostic came back for this tile - it genuinely carries no place-name
+     * - [CairoOutcome.NoMatchingFeatures]: the style does have label layers, but no candidates and
+     *   no *label-relevant* diagnostic came back for this tile - it genuinely carries no matching
      *   features. Keyed on label-relevant diagnostics only
      *   ([LABEL_RELEVANT_DIAGNOSTIC_CODES]: [DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED],
      *   [DiagnosticCode.GLYPH_RANGE_UNAVAILABLE], [DiagnosticCode.LABEL_FEATURE_SKIPPED],
@@ -377,7 +553,7 @@ class MapCatalogCorpusSmokeTest {
         data object SupportedScriptCandidates : CairoOutcome
         data object ExcludedByComplexScript : CairoOutcome
         data object NoLabelLayers : CairoOutcome
-        data object NoPlaceFeatures : CairoOutcome
+        data object NoMatchingFeatures : CairoOutcome
         data class Invalid(val detail: String) : CairoOutcome
     }
 
@@ -394,7 +570,7 @@ class MapCatalogCorpusSmokeTest {
             return when {
                 labelDiagnostics.any { it.code == DiagnosticCode.COMPLEX_SCRIPT_LABEL_EXCLUDED } ->
                     CairoOutcome.ExcludedByComplexScript
-                labelDiagnostics.isEmpty() -> CairoOutcome.NoPlaceFeatures
+                labelDiagnostics.isEmpty() -> CairoOutcome.NoMatchingFeatures
                 else -> CairoOutcome.Invalid(
                     "no label candidates were acquired without COMPLEX_SCRIPT_LABEL_EXCLUDED being " +
                         "reported, and other label-relevant diagnostics were present instead (" +
@@ -419,6 +595,295 @@ class MapCatalogCorpusSmokeTest {
                     "script via is-supported-script or the label must be excluded entirely",
             )
         }
+    }
+
+    /**
+     * Builds credential-free capability evidence from the style document already fetched by
+     * [BasemapRasterizer.prepare]. This is deliberately an inventory, not a second style
+     * compiler: this records static declarations only. [observeLabelCandidateSemantics] separately
+     * proves label-candidate dispositions from sampled public output, while focused tests pin the
+     * detailed evaluation semantics.
+     */
+    private fun inspectStyle(styleJson: JsonObject, coverage: CoverageManifest): StyleInspection {
+        val sources = styleJson["sources"] as? JsonObject ?: JsonObject(emptyMap())
+        val layers = styleJson["layers"] as? JsonArray ?: JsonArray(emptyList())
+        val capabilities = mutableSetOf<String>()
+        val textVectorSymbolLayerIds = mutableSetOf<String>()
+        val labelCandidateLayers = mutableMapOf<String, MutableSet<String>>()
+
+        fun recordLabelCapability(capability: String, layerId: String) {
+            capabilities += capability
+            labelCandidateLayers.getOrPut(capability, ::mutableSetOf) += layerId
+        }
+
+        val visibleLayers = layers.mapNotNull { it as? JsonObject }.filterNot { layer ->
+            val layout = layer["layout"] as? JsonObject
+            (layout?.get("visibility") as? JsonPrimitive)?.content == "none"
+        }
+        val usedSourceIds = visibleLayers.mapNotNullTo(mutableSetOf()) { layer ->
+            (layer["source"] as? JsonPrimitive)?.takeIf(JsonPrimitive::isString)?.content
+        }
+        usedSourceIds.forEach { sourceId ->
+            val source = sources[sourceId] as? JsonObject ?: return@forEach
+            val sourceType = source.string("type")
+            when (source.string("scheme")) {
+                "tms" -> capabilities += "tms-source"
+                else -> capabilities += "xyz-source"
+            }
+            when (sourceType) {
+                "geojson" -> capabilities += "geojson-line"
+                "raster" -> if (coverage.hasOverzoomCoverage()) capabilities += "raster-overzoom"
+                "vector" -> if (coverage.hasOverzoomCoverage()) capabilities += "vector-overzoom"
+            }
+        }
+
+        visibleLayers.forEach { layer ->
+            val layerId = layer.string("id") ?: return@forEach
+            val type = layer.string("type") ?: return@forEach
+            val layout = layer["layout"] as? JsonObject ?: JsonObject(emptyMap())
+            val paint = layer["paint"] as? JsonObject ?: JsonObject(emptyMap())
+            when (type) {
+                "background" -> {
+                    capabilities += "background"
+                    if ("background-pattern" in paint) capabilities += "background-pattern"
+                }
+                "fill" -> {
+                    capabilities += "fill"
+                    if ("fill-pattern" in paint) capabilities += "fill-pattern"
+                }
+                "fill-extrusion" -> capabilities += "flat-extrusion"
+                "hillshade" -> capabilities += "hillshade"
+                "line" -> {
+                    capabilities += "line"
+                    if ("line-pattern" in paint) capabilities += "line-pattern"
+                    if ("line-round-limit" in layout) capabilities += "line-round-limit"
+                }
+                "raster" -> capabilities += "raster"
+            }
+
+            layer["filter"]?.let { filter ->
+                if (filter is JsonArray && isLegacyFilter(filter)) {
+                    capabilities += "legacy-filter"
+                } else {
+                    capabilities += "modern-filter"
+                }
+            }
+            scanStyleValue(layer, capabilities)
+
+            if (type != "symbol") return@forEach
+            val sourceId = layer.string("source") ?: return@forEach
+            if ((sources[sourceId] as? JsonObject)?.string("type") != "vector") return@forEach
+            val meaningfulText = layout.hasMeaningfulValue("text-field")
+            val meaningfulIcon = layout.hasMeaningfulValue("icon-image")
+            val placement = (layout["symbol-placement"] as? JsonPrimitive)
+                ?.takeIf(JsonPrimitive::isString)
+                ?.content
+            val iconTextFitValue = layout["icon-text-fit"]
+            val iconTextFit = (iconTextFitValue as? JsonPrimitive)
+                ?.takeIf(JsonPrimitive::isString)
+                ?.content
+            val iconIndependentOfText = meaningfulIcon &&
+                (!meaningfulText || iconTextFitValue == null || iconTextFit == "none")
+
+            if (iconIndependentOfText) {
+                capabilities += if (placement == "line" || placement == "line-center") {
+                    "independent-line-icon"
+                } else {
+                    "independent-point-icon"
+                }
+            }
+            if (!meaningfulText) return@forEach
+
+            textVectorSymbolLayerIds += layerId
+            recordLabelCapability("label-candidate", layerId)
+            recordLabelCapability("symbol-text", layerId)
+            if (meaningfulIcon) recordLabelCapability("symbol-text-icon", layerId)
+            if (meaningfulIcon && iconTextFitValue != null && iconTextFit != "none") {
+                recordLabelCapability("symbol-icon-text-fit", layerId)
+            }
+            if (placement == "line" || placement == "line-center") {
+                recordLabelCapability("symbol-line-placement", layerId)
+            }
+            if (layout["symbol-placement"] is JsonObject || layout["symbol-placement"] is JsonArray) {
+                recordLabelCapability("symbol-functional-placement", layerId)
+            }
+            if (layout["text-anchor"] is JsonObject || layout["text-anchor"] is JsonArray) {
+                recordLabelCapability("symbol-functional-text-anchor", layerId)
+            }
+            if (layout["text-transform"] is JsonObject || layout["text-transform"] is JsonArray) {
+                recordLabelCapability("symbol-functional-text-transform", layerId)
+            }
+            if (layout["text-padding"] is JsonObject || layout["text-padding"] is JsonArray) {
+                recordLabelCapability("symbol-functional-text-padding", layerId)
+            }
+        }
+        return StyleInspection(
+            declaredCapabilities = capabilities,
+            textVectorSymbolLayerIds = textVectorSymbolLayerIds,
+            labelCandidateLayers = labelCandidateLayers.mapValues { it.value.toSet() },
+        )
+    }
+
+    /**
+     * Converts sampled candidate values into capability evidence. Static style inspection answers
+     * only "is this construct declared?"; this function answers "did the public candidate API emit
+     * the semantics that construct requires?" without retaining provider layer names in reports.
+     */
+    private fun observeLabelCandidateSemantics(
+        inspection: StyleInspection,
+        candidates: List<LabelCandidateEvidence>,
+    ): RuntimeLabelObservation {
+        val capabilities = mutableSetOf<String>()
+        val evidence = mutableMapOf<String, MutableSet<String>>()
+
+        fun matching(capability: String): List<LabelCandidateEvidence> {
+            val layers = inspection.labelCandidateLayers[capability].orEmpty()
+            return candidates.filter { it.layerId in layers }
+        }
+
+        fun record(capability: String, values: Collection<String>, satisfiesCapability: Boolean = true) {
+            if (values.isEmpty()) return
+            evidence.getOrPut(capability, ::mutableSetOf) += values
+            if (satisfiesCapability) capabilities += capability
+        }
+
+        record("label-candidate", matching("label-candidate").map { "candidate" })
+        record(
+            "symbol-text",
+            matching("symbol-text").filter(LabelCandidateEvidence::hasGlyphs).map { "glyphs" },
+        )
+        record(
+            "symbol-text-icon",
+            matching("symbol-text-icon").filter(LabelCandidateEvidence::hasIcon).map { "icon" },
+        )
+        record(
+            "symbol-icon-text-fit",
+            matching("symbol-icon-text-fit")
+                .filter { it.hasIcon && it.iconTextFit != IconTextFit.NONE }
+                .map { "text-fit:${it.iconTextFit.name}" },
+        )
+        record(
+            "symbol-line-placement",
+            matching("symbol-line-placement")
+                .filter { it.hasLineGeometry && it.placement in setOf(LabelPlacement.LINE, LabelPlacement.LINE_CENTER) }
+                .map { "placement:${it.placement.name},line-geometry" },
+        )
+
+        val functionalPlacements = matching("symbol-functional-placement")
+        val placementValues = functionalPlacements.map(LabelCandidateEvidence::placement).distinct()
+        record(
+            "symbol-functional-placement",
+            functionalPlacements.map { "resolved:${it.placement.name}" } +
+                if (placementValues.size > 1) {
+                    listOf("differing-values")
+                } else {
+                    emptyList()
+                },
+            satisfiesCapability = placementValues.size > 1 || placementValues.any { it != LabelPlacement.POINT },
+        )
+        record(
+            "symbol-functional-text-anchor",
+            matching("symbol-functional-text-anchor")
+                .filter(LabelCandidateEvidence::hasResolvedGeometry)
+                .map { "candidate-local-geometry" },
+        )
+        val functionalPaddings = matching("symbol-functional-text-padding")
+        val paddingValues = functionalPaddings.map(LabelCandidateEvidence::padding).distinct()
+        record(
+            "symbol-functional-text-padding",
+            functionalPaddings.map { candidate ->
+                val kind = if (candidate.padding == DEFAULT_TEXT_PADDING) "default" else "non-default"
+                "$kind:${candidate.padding}"
+            } + if (paddingValues.size > 1) {
+                listOf("differing-values")
+            } else {
+                emptyList()
+            },
+            satisfiesCapability = paddingValues.size > 1 || paddingValues.any { it != DEFAULT_TEXT_PADDING },
+        )
+        val functionalTransforms = matching("symbol-functional-text-transform")
+            .filter { it.resolvedTextCase != ResolvedTextCase.UNCASED }
+        val transformValues = functionalTransforms.map(LabelCandidateEvidence::resolvedTextCase).distinct()
+        record(
+            "symbol-functional-text-transform",
+            functionalTransforms.map { "resolved-text:${it.resolvedTextCase.name}" } +
+                if (transformValues.size > 1) {
+                    listOf("differing-values")
+                } else {
+                    emptyList()
+                },
+            satisfiesCapability = transformValues.size > 1 ||
+                transformValues.any { it == ResolvedTextCase.UPPERCASE || it == ResolvedTextCase.LOWERCASE },
+        )
+        return RuntimeLabelObservation(
+            capabilities = capabilities,
+            evidence = evidence.mapValues { it.value.toSet() },
+        )
+    }
+
+    private fun resolvedTextCase(text: String): ResolvedTextCase {
+        val uppercase = text.uppercase()
+        val lowercase = text.lowercase()
+        if (uppercase == lowercase) return ResolvedTextCase.UNCASED
+        return when (text) {
+            uppercase -> ResolvedTextCase.UPPERCASE
+            lowercase -> ResolvedTextCase.LOWERCASE
+            else -> ResolvedTextCase.MIXED_CASE
+        }
+    }
+
+    private fun scanStyleValue(element: JsonElement, capabilities: MutableSet<String>, filterRoot: Boolean = false) {
+        when (element) {
+            is JsonObject -> {
+                if ("stops" in element) capabilities += "legacy-function"
+                element.forEach { (key, value) ->
+                    scanStyleValue(value, capabilities, filterRoot = key == "filter")
+                }
+            }
+            is JsonArray -> {
+                val operator = (element.firstOrNull() as? JsonPrimitive)
+                    ?.takeIf(JsonPrimitive::isString)
+                    ?.content
+                val legacyFilterNode = filterRoot && isLegacyFilter(element)
+                if (operator in EXPRESSION_OPERATORS && !legacyFilterNode) {
+                    capabilities += "modern-expression"
+                }
+                if (!legacyFilterNode) {
+                    EXPRESSION_CAPABILITIES[operator]?.let(capabilities::add)
+                }
+                val legacyLogicalChildren = legacyFilterNode && operator in setOf("all", "any", "none")
+                element.drop(1).forEach { child ->
+                    scanStyleValue(child, capabilities, filterRoot = legacyLogicalChildren)
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    private fun isLegacyFilter(filter: JsonArray): Boolean {
+        val operator = (filter.firstOrNull() as? JsonPrimitive)
+            ?.takeIf(JsonPrimitive::isString)
+            ?.content
+            ?: return false
+        return when (operator) {
+            "has", "!has" -> filter.getOrNull(1) is JsonPrimitive
+            "==", "!=", "<", "<=", ">", ">=", "in", "!in" ->
+                (filter.getOrNull(1) as? JsonPrimitive)?.isString == true
+            "all", "any", "none" -> filter.drop(1).all { child -> child is JsonArray && isLegacyFilter(child) }
+            else -> false
+        }
+    }
+
+    private fun CoverageManifest.hasOverzoomCoverage(): Boolean =
+        cases.any { case -> case.tags.any { tag -> tag.endsWith("-overzoom") } }
+
+    private fun JsonObject.string(name: String): String? =
+        (get(name) as? JsonPrimitive)?.takeIf(JsonPrimitive::isString)?.content
+
+    private fun JsonObject.hasMeaningfulValue(name: String): Boolean = when (val value = get(name)) {
+        null -> false
+        is JsonPrimitive -> !value.isString || value.content.isNotEmpty()
+        else -> true
     }
 
     @Test
@@ -449,6 +914,190 @@ class MapCatalogCorpusSmokeTest {
 
         assertEquals(listOf(PUBLIC_MAP_CATALOG_URL, secondPage), requested)
         assertEquals(listOf("17", "49"), styles.map(CatalogStyleEntry::id))
+    }
+
+    @Test
+    fun labelSmokeSamplingIncludesTheLiveFunctionalTextZoom() {
+        val zoomLadder = CoverageCase(
+            id = NEW_YORK_CASE_ID,
+            tags = listOf("zoom-ladder"),
+            tiles = listOf(
+                CoverageTile(1, 0, 0),
+                CoverageTile(FUNCTIONAL_TEXT_SAMPLE_ZOOM, 4823, 6160),
+                CoverageTile(22, 1234919, 1576977),
+            ),
+        )
+
+        assertEquals(
+            listOf(1, FUNCTIONAL_TEXT_SAMPLE_ZOOM, 22),
+            labelSmokeTiles(zoomLadder).map(CoverageTile::z),
+        )
+    }
+
+    @Test
+    fun styleInspectionFindsOmissionCapabilitiesWithoutFreezingLayerCounts() {
+        val style = catalogJson.parseToJsonElement(
+            """
+            {
+              "version": 8,
+              "sources": {
+                "vector": {"type": "vector", "tiles": ["https://tiles.invalid/{z}/{x}/{y}.mvt"]},
+                "raster": {"type": "raster", "tiles": ["https://tiles.invalid/{z}/{x}/{y}.png"]}
+              },
+              "layers": [
+                {
+                  "id": "round-road",
+                  "type": "line",
+                  "source": "vector",
+                  "source-layer": "road",
+                  "layout": {"line-round-limit": 0.5}
+                },
+                {
+                  "id": "complete-symbol",
+                  "type": "symbol",
+                  "source": "vector",
+                  "source-layer": "place",
+                  "filter": ["!=", ["get", "class"], "hidden"],
+                  "layout": {
+                    "symbol-placement": {"stops": [[0, "point"], [10, "line"]]},
+                    "text-field": ["concat", ["slice", ["get", "name"], 0, 3], ["to-string", ["get", "ref"]]],
+                    "text-anchor": ["step", ["zoom"], "center", 10, "top"],
+                    "text-transform": {"stops": [[0, "none"], [10, "uppercase"]]},
+                    "text-padding": {"stops": [[0, 2], [10, 4]]},
+                    "icon-image": ["to-string", ["get", "icon"]],
+                    "icon-text-fit": "both"
+                  },
+                  "paint": {
+                    "text-opacity": ["case", [">", ["zoom"], 5], 1, 0],
+                    "text-halo-width": ["case", ["<", ["zoom"], 5], 0, 1]
+                  }
+                },
+                {
+                  "id": "hidden-symbol",
+                  "type": "symbol",
+                  "source": "vector",
+                  "source-layer": "place",
+                  "layout": {"visibility": "none", "text-field": ["get", "name"]}
+                },
+                {
+                  "id": "raster-symbol",
+                  "type": "symbol",
+                  "source": "raster",
+                  "layout": {"text-field": ["get", "name"]}
+                }
+              ]
+            }
+            """.trimIndent(),
+        ).jsonObject
+        val coverage = CoverageManifest(
+            schemaVersion = 1,
+            profileId = "rentile-v1",
+            outputZoomRange = ZoomRange(0, 22),
+            styleRefs = listOf("fixture"),
+            requiredCapabilities = emptyList(),
+            capabilityDispositions = emptyMap(),
+            fidelityPolicy = FidelityPolicy(emptyList(), emptyList(), true, false),
+            cases = listOf(CoverageCase("overzoom", listOf("vector-overzoom"), listOf(CoverageTile(22, 0, 0)))),
+        )
+
+        val inspection = inspectStyle(style, coverage)
+        val expected = setOf(
+            "expression-greater-than",
+            "expression-less-than",
+            "expression-not-equal",
+            "expression-slice",
+            "expression-to-string",
+            "label-candidate",
+            "legacy-function",
+            "line-round-limit",
+            "modern-expression",
+            "modern-filter",
+            "symbol-functional-placement",
+            "symbol-functional-text-anchor",
+            "symbol-functional-text-padding",
+            "symbol-functional-text-transform",
+            "symbol-icon-text-fit",
+            "symbol-text",
+            "symbol-text-icon",
+            "vector-overzoom",
+            "xyz-source",
+        )
+        assertEquals(emptySet(), expected - inspection.declaredCapabilities)
+        assertEquals(setOf("complete-symbol"), inspection.textVectorSymbolLayerIds)
+        assertEquals(setOf("complete-symbol"), inspection.labelCandidateLayers.getValue("symbol-icon-text-fit"))
+    }
+
+    @Test
+    fun labelCapabilityEvidenceComesFromResolvedCandidateSemantics() {
+        val capabilityLayers = setOf(
+            "label-candidate",
+            "symbol-text",
+            "symbol-text-icon",
+            "symbol-icon-text-fit",
+            "symbol-line-placement",
+            "symbol-functional-placement",
+            "symbol-functional-text-anchor",
+            "symbol-functional-text-padding",
+            "symbol-functional-text-transform",
+        ).associateWith { setOf("semantic-symbol") }
+        val inspection = StyleInspection(
+            declaredCapabilities = capabilityLayers.keys,
+            textVectorSymbolLayerIds = setOf("semantic-symbol"),
+            labelCandidateLayers = capabilityLayers,
+        )
+        val observation = observeLabelCandidateSemantics(
+            inspection,
+            listOf(
+                LabelCandidateEvidence(
+                    layerId = "semantic-symbol",
+                    hasGlyphs = true,
+                    hasResolvedGeometry = true,
+                    placement = LabelPlacement.LINE,
+                    hasLineGeometry = true,
+                    hasIcon = true,
+                    iconTextFit = IconTextFit.BOTH,
+                    padding = 7.0,
+                    resolvedTextCase = ResolvedTextCase.UPPERCASE,
+                ),
+                LabelCandidateEvidence(
+                    layerId = "semantic-symbol",
+                    hasGlyphs = true,
+                    hasResolvedGeometry = true,
+                    placement = LabelPlacement.POINT,
+                    hasLineGeometry = false,
+                    hasIcon = false,
+                    iconTextFit = IconTextFit.NONE,
+                    padding = DEFAULT_TEXT_PADDING,
+                    resolvedTextCase = ResolvedTextCase.MIXED_CASE,
+                ),
+            ),
+        )
+
+        assertEquals(capabilityLayers.keys, observation.capabilities)
+        assertEquals(setOf("text-fit:BOTH"), observation.evidence.getValue("symbol-icon-text-fit"))
+        assertTrue("placement:LINE,line-geometry" in observation.evidence.getValue("symbol-line-placement"))
+        assertTrue("differing-values" in observation.evidence.getValue("symbol-functional-placement"))
+        assertTrue("non-default:7.0" in observation.evidence.getValue("symbol-functional-text-padding"))
+        assertTrue("resolved-text:UPPERCASE" in observation.evidence.getValue("symbol-functional-text-transform"))
+    }
+
+    @Test
+    fun corpusSafetyLimitDiagnosticsRetainCredentialFreeObservedCounts() {
+        val error = SafetyLimitException(
+            message = "bounded failure",
+            limitName = "maxGlyphRangesPerBatch",
+            limit = 256,
+            observed = 257,
+            stage = PipelineStage.RESOURCE_ACQUISITION,
+        )
+
+        assertEquals(
+            listOf(
+                "bounded failure",
+                "SAFETY_LIMIT_DETAIL: limitName=maxGlyphRangesPerBatch limit=256 observed=257",
+            ),
+            error.redactedDiagnosticSummaries(),
+        )
     }
 
     private suspend fun renderTile(
@@ -644,12 +1293,50 @@ class MapCatalogCorpusSmokeTest {
         require(LABEL_SMOKE_CASE_IDS.all { id -> coverage.cases.any { case -> case.id == id } }) {
             "Coverage Manifest is missing a case the corpus gate acquires label candidates for"
         }
+        require(coverage.requiredCapabilities == coverage.requiredCapabilities.distinct().sorted()) {
+            "Coverage Manifest capability requirements must be unique and sorted"
+        }
+        require(coverage.capabilityDispositions.keys == coverage.requiredCapabilities.toSet()) {
+            "Every required capability must have exactly one disposition"
+        }
+        require(coverage.capabilityDispositions.values.all { it in CAPABILITY_DISPOSITIONS }) {
+            "Coverage Manifest contains an unsupported capability disposition"
+        }
+        val diagnosticCodes = DiagnosticCode.entries.mapTo(mutableSetOf()) { it.name }
+        require(coverage.fidelityPolicy.forbiddenPreparationDiagnosticCodes.all { it in diagnosticCodes }) {
+            "Coverage Manifest contains an unknown forbidden preparation diagnostic"
+        }
+        require(coverage.fidelityPolicy.forbiddenLabelDiagnosticCodes.all { it in diagnosticCodes }) {
+            "Coverage Manifest contains an unknown forbidden label diagnostic"
+        }
+        require(
+            coverage.fidelityPolicy.forbiddenPreparationDiagnosticCodes
+                .containsAll(REQUIRED_FORBIDDEN_PREPARATION_DIAGNOSTICS),
+        ) {
+            "Coverage Manifest must reject known layer-level preparation omissions"
+        }
+        require(
+            coverage.fidelityPolicy.forbiddenLabelDiagnosticCodes
+                .containsAll(REQUIRED_FORBIDDEN_LABEL_DIAGNOSTICS),
+        ) {
+            "Coverage Manifest must reject known layer-level label omissions"
+        }
+        require(DiagnosticCode.TEXT_ONLY_LAYER_EXCLUDED.name !in coverage.fidelityPolicy.forbiddenPreparationDiagnosticCodes) {
+            "TEXT_ONLY_LAYER_EXCLUDED describes the PNG path and remains valid when the layer is emitted as labels"
+        }
+        require(coverage.fidelityPolicy.requireAllVisibleTextVectorSymbolsHaveDescriptors) {
+            "Coverage Manifest must require descriptors for every visible text-bearing vector symbol layer"
+        }
     }
 
     private fun writeReports(
         outputDirectory: Path,
         coverage: CoverageManifest,
         results: List<StyleSmokeResult>,
+        declaredCapabilities: Set<String>,
+        observedCapabilities: Set<String>,
+        runtimeLabelEvidence: Map<String, Set<String>>,
+        corpusFidelityErrors: List<String>,
     ) {
         val rows = buildList {
             results.forEach { result ->
@@ -731,7 +1418,17 @@ class MapCatalogCorpusSmokeTest {
         )
         Files.writeString(
             outputDirectory.resolve("capabilities.txt"),
-            coverage.requiredCapabilities.joinToString(separator = "\n", postfix = "\n"),
+            coverage.requiredCapabilities.joinToString(separator = "\n", postfix = "\n") { capability ->
+                val disposition = coverage.capabilityDispositions.getValue(capability)
+                val status = when {
+                    capability in observedCapabilities && disposition == LABEL_CANDIDATE_DISPOSITION -> "EMITTED"
+                    capability in observedCapabilities -> "EXERCISED"
+                    capability in declaredCapabilities -> "DECLARED_ONLY"
+                    else -> "MISSING"
+                }
+                val evidence = runtimeLabelEvidence[capability].orEmpty().sorted().joinToString(",")
+                "$capability\t$disposition\t$status\t$evidence"
+            },
             StandardOpenOption.CREATE,
             StandardOpenOption.TRUNCATE_EXISTING,
         )
@@ -741,7 +1438,8 @@ class MapCatalogCorpusSmokeTest {
         val complete = results.count { result ->
             result.preparationErrorCode == null &&
                 result.tiles.values.all { it.status == SmokeStatus.RENDERED } &&
-                result.labelResults.all { it.errorCode == null }
+                result.labelResults.all { it.errorCode == null } &&
+                result.fidelityErrors.isEmpty()
         }
         val html = buildString {
             appendLine("<!doctype html>")
@@ -757,6 +1455,11 @@ class MapCatalogCorpusSmokeTest {
             appendLine("</style></head><body>")
             appendLine("<h1>Rentile rolling map corpus</h1>")
             appendLine("<p class=\"summary\">$z0Rendered/${results.size} z0 maps and $complete/${results.size} complete style coverage runs succeeded. Failed cards are not substitute images.</p>")
+            if (corpusFidelityErrors.isNotEmpty()) {
+                appendLine("<details open><summary>Corpus capability failures</summary><ul>")
+                corpusFidelityErrors.forEach { appendLine("<li><code>${it.htmlSafe()}</code></li>") }
+                appendLine("</ul></details>")
+            }
             appendLine("<main class=\"grid\">")
             results.forEach { result ->
                 val z0Outcome = result.tiles[z0]
@@ -779,6 +1482,16 @@ class MapCatalogCorpusSmokeTest {
                 if (result.diagnostics.isNotEmpty()) {
                     appendLine("<details><summary>${result.diagnostics.size} preparation diagnostics</summary><ul>")
                     result.diagnostics.forEach { appendLine("<li><code>${it.htmlSafe()}</code></li>") }
+                    appendLine("</ul></details>")
+                }
+                if (result.fidelityErrors.isNotEmpty()) {
+                    appendLine("<details open><summary>${result.fidelityErrors.size} fidelity failures</summary><ul>")
+                    result.fidelityErrors.forEach { appendLine("<li><code>${it.htmlSafe()}</code></li>") }
+                    appendLine("</ul></details>")
+                }
+                if (result.fidelityObservations.isNotEmpty()) {
+                    appendLine("<details><summary>${result.fidelityObservations.size} fidelity observations</summary><ul>")
+                    result.fidelityObservations.forEach { appendLine("<li><code>${it.htmlSafe()}</code></li>") }
                     appendLine("</ul></details>")
                 }
                 if (result.labelResults.isNotEmpty()) {
@@ -888,6 +1601,7 @@ class MapCatalogCorpusSmokeTest {
         private val delegate: ResourceTransport,
     ) : ResourceTransport {
         val recordedGlyphUrls: MutableSet<String> = ConcurrentHashMap.newKeySet()
+        val observedSpriteCapabilities: MutableSet<String> = ConcurrentHashMap.newKeySet()
         private val styleBodies = ConcurrentHashMap<String, ByteArray>()
 
         override suspend fun execute(request: TransportRequest): TransportResponse {
@@ -895,6 +1609,9 @@ class MapCatalogCorpusSmokeTest {
             when (request.resourceClass) {
                 ResourceClass.GLYPH_RANGE -> recordedGlyphUrls += request.url
                 ResourceClass.STYLE -> styleBodies[request.url] = response.body
+                ResourceClass.SPRITE_JSON -> if (response.statusCode in 200..299) {
+                    recordSpriteCapabilities(response.body)
+                }
                 else -> Unit
             }
             return response
@@ -902,10 +1619,29 @@ class MapCatalogCorpusSmokeTest {
 
         fun styleBody(url: String): ByteArray =
             styleBodies[url] ?: error("No STYLE response was recorded for this style's URL")
+
+        private fun recordSpriteCapabilities(bytes: ByteArray) {
+            val entries = runCatching {
+                catalogJson.parseToJsonElement(bytes.decodeToString()) as? JsonObject
+            }.getOrNull() ?: return
+            entries.values.forEach { value ->
+                val entry = value as? JsonObject ?: return@forEach
+                val sdf = (entry["sdf"] as? JsonPrimitive)?.booleanOrNull ?: false
+                observedSpriteCapabilities += if (sdf) "sdf-sprite" else "rgba-sprite"
+            }
+        }
     }
 
     private fun RentileException.redactedDiagnosticSummaries(): List<String> =
-        (listOfNotNull(message) + diagnostics.map { "${it.code}: ${it.message}" }).distinct()
+        (
+            listOfNotNull(message) +
+                if (this is SafetyLimitException) {
+                    listOf("SAFETY_LIMIT_DETAIL: limitName=$limitName limit=$limit observed=$observed")
+                } else {
+                    emptyList()
+                } +
+                diagnostics.map { "${it.code}: ${it.message}" }
+            ).distinct()
 
     private fun catalogPageJson(count: Int, next: String?, id: Int, name: String): String =
         """{"count":$count,"next":${next?.let { "\"$it\"" } ?: "null"},"previous":null,"results":[{"free_for":0,"id":$id,"map_url":"https://dashboard.lascade.com/travel_animator/v0/maps/$id/","name":"$name","premium":false,"thumbnail":"https://dashboard.lascade.com/static/$id.png"}]}"""
@@ -937,7 +1673,17 @@ class MapCatalogCorpusSmokeTest {
         val outputZoomRange: ZoomRange,
         val styleRefs: List<String>,
         val requiredCapabilities: List<String>,
+        val capabilityDispositions: Map<String, String>,
+        val fidelityPolicy: FidelityPolicy,
         val cases: List<CoverageCase>,
+    )
+
+    @Serializable
+    private data class FidelityPolicy(
+        val forbiddenPreparationDiagnosticCodes: List<String>,
+        val forbiddenLabelDiagnosticCodes: List<String>,
+        val requireAllVisibleTextVectorSymbolsHaveDescriptors: Boolean,
+        val requireEveryDescriptorToContribute: Boolean,
     )
 
     @Serializable
@@ -970,6 +1716,17 @@ class MapCatalogCorpusSmokeTest {
         val tiles: Map<TileId, TileSmokeResult>,
         val mosaics: Map<String, String>,
         val labelResults: List<LabelCaseSmokeResult>,
+        val declaredCapabilities: Set<String>,
+        val runtimeLabelCapabilities: Set<String>,
+        val runtimeLabelEvidence: Map<String, Set<String>>,
+        val fidelityErrors: List<String>,
+        val fidelityObservations: List<String>,
+    )
+
+    private data class StyleInspection(
+        val declaredCapabilities: Set<String>,
+        val textVectorSymbolLayerIds: Set<String>,
+        val labelCandidateLayers: Map<String, Set<String>>,
     )
 
     private data class TileSmokeResult(
@@ -988,7 +1745,33 @@ class MapCatalogCorpusSmokeTest {
         val atlasHeight: Int,
         val glyphRangeCount: Int,
         val diagnostics: List<String>,
+        val contributingLayerIds: Set<String> = emptySet(),
+        val candidateEvidence: List<LabelCandidateEvidence> = emptyList(),
     )
+
+    private data class LabelCandidateEvidence(
+        val layerId: String,
+        val hasGlyphs: Boolean,
+        val hasResolvedGeometry: Boolean,
+        val placement: LabelPlacement,
+        val hasLineGeometry: Boolean,
+        val hasIcon: Boolean,
+        val iconTextFit: IconTextFit,
+        val padding: Double,
+        val resolvedTextCase: ResolvedTextCase,
+    )
+
+    private data class RuntimeLabelObservation(
+        val capabilities: Set<String>,
+        val evidence: Map<String, Set<String>>,
+    )
+
+    private enum class ResolvedTextCase {
+        UPPERCASE,
+        LOWERCASE,
+        MIXED_CASE,
+        UNCASED,
+    }
 
     private enum class SmokeStatus {
         RENDERED,
@@ -1036,14 +1819,76 @@ class MapCatalogCorpusSmokeTest {
         const val MAX_CATALOG_PAGE_BYTES = 1024L * 1024L
         const val MAX_CATALOG_PAGES = 10
         const val MAX_CATALOG_STYLES = 1_000
+        const val MAX_REPORTED_LAYER_DIGESTS = 10
+        const val DEFAULT_TEXT_PADDING = 2.0
+        const val LABEL_CANDIDATE_DISPOSITION = "label-candidate"
+
+        val CAPABILITY_DISPOSITIONS: Set<String> = setOf(
+            "evaluated",
+            LABEL_CANDIDATE_DISPOSITION,
+            "rasterized",
+            "resource-acquired",
+            "sprite-decoded",
+        )
+        val REQUIRED_FORBIDDEN_PREPARATION_DIAGNOSTICS: Set<String> = setOf(
+            DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED.name,
+            DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT.name,
+            DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED.name,
+        )
+        val REQUIRED_FORBIDDEN_LABEL_DIAGNOSTICS: Set<String> = setOf(
+            DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT.name,
+            DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED.name,
+        )
+        val EXPRESSION_CAPABILITIES: Map<String, String> = mapOf(
+            "!=" to "expression-not-equal",
+            "<" to "expression-less-than",
+            ">" to "expression-greater-than",
+            "slice" to "expression-slice",
+            "to-string" to "expression-to-string",
+        )
+        val EXPRESSION_OPERATORS: Set<String> = setOf(
+            "literal",
+            "zoom",
+            "geometry-type",
+            "get",
+            "has",
+            "image",
+            "!",
+            "all",
+            "any",
+            "+",
+            "*",
+            "==",
+            "!=",
+            "<",
+            "<=",
+            ">",
+            ">=",
+            "in",
+            "slice",
+            "boolean",
+            "to-number",
+            "to-string",
+            "coalesce",
+            "concat",
+            "is-supported-script",
+            "case",
+            "match",
+            "step",
+            "interpolate",
+        )
 
         /**
-         * Cases the corpus gate acquires label candidates for, one lowest-zoom tile each: a Latin
-         * baseline, and the two non-Latin cases exercising CJK glyph-range fan-out and the
-         * complex-script exclusion path. Lowest zoom, not highest: place-name labels live at low
-         * zoom and are sparse or absent by deep overzoom. See `compatibility/README.md`.
+         * Cases the corpus gate acquires label candidates for, one lowest- and one highest-zoom
+         * tile each: a Latin baseline, and the two non-Latin cases exercising CJK glyph-range
+         * fan-out and the complex-script exclusion path. The two zoom extremes reach both
+         * settlement labels and the road/POI/water labels visible deeper in the map; New York z14
+         * supplies runtime evidence for the catalog's z9/z12 functional text-transform layers.
+         * See `compatibility/README.md`.
          */
         val LABEL_SMOKE_CASE_IDS: List<String> = listOf("new-york-zoom-ladder", "tokyo-cjk-dense", "cairo-rtl")
+        const val NEW_YORK_CASE_ID = "new-york-zoom-ladder"
+        const val FUNCTIONAL_TEXT_SAMPLE_ZOOM = 14
         const val CAIRO_CASE_ID = "cairo-rtl"
 
         /**

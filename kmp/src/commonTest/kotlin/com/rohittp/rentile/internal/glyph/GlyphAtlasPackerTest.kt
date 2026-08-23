@@ -146,12 +146,13 @@ class GlyphAtlasPackerTest {
 
     @Test
     fun packsAsManyDenseRangesAsTheBatchCeilingAllows() {
-        // The test that keeps two numbers agreeing. maxGlyphRangesPerBatch promises 64 ranges as
-        // headroom over a measured 15, and the packer must actually hold them: a shelf too narrow
+        // The test that keeps two numbers agreeing. maxGlyphRangesPerBatch promises 256 ranges as
+        // measured corpus headroom, and the packer must actually hold them: a shelf too narrow
         // makes the range check pass, every range get fetched, and the packer then throw - paying
-        // the whole network cost for a failure. A 1024 shelf held about 41.
+        // the whole network cost for a failure. A 4096 shelf cannot hold 256 ranges of ordinary
+        // 28-pixel cells inside the default height ceiling.
         //
-        // 64 full ranges of 256 dense CJK-sized glyphs is the worst case that ceiling admits.
+        // 256 full ranges of 256 dense CJK-sized glyphs pins the corpus-shaped upper bound.
         val limits = ResourceLimits()
         val dense = (0 until limits.maxGlyphRangesPerBatch).map { rangeIndex ->
             val start = rangeIndex * 256

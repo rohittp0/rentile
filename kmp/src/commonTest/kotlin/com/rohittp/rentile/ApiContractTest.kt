@@ -91,7 +91,7 @@ class ApiContractTest {
         val limits = ResourceLimits()
 
         assertEquals(1L * 1024L * 1024L, limits.maxGlyphRangeBytes)
-        assertEquals(64, limits.maxGlyphRangesPerBatch)
+        assertEquals(256, limits.maxGlyphRangesPerBatch)
         assertFailsWith<IllegalArgumentException> { ResourceLimits(maxGlyphRangeBytes = 0) }
         assertFailsWith<IllegalArgumentException> { ResourceLimits(maxGlyphRangesPerBatch = 0) }
     }
@@ -117,13 +117,28 @@ class ApiContractTest {
             requestedTile = TileId(14, 14547, 6451),
             sourceTile = TileId(14, 14547, 6451),
             longitude = 139.6503, latitude = 35.6762,
+            placement = LabelPlacement.POINT,
+            line = emptyList(),
+            rotationDegrees = 0.0,
+            symbolSpacing = 250.0,
+            keepUpright = true,
+            avoidEdges = false,
+            zOrder = SymbolZOrder.AUTO,
+            textRotationDegrees = 0.0,
+            maxAngleDegrees = 45.0,
+            rotationAlignment = SymbolAlignment.AUTO,
+            pitchAlignment = SymbolAlignment.AUTO,
+            textOptional = false,
             glyphs = listOf(LabelGlyphQuad(entryIndex = 0, x = 0.0, y = 0.0, scale = 1.0)),
             boundingBox = LabelBox(left = -1.0, top = -1.0, right = 1.0, bottom = 1.0),
             icon = null,
-            allowOverlap = false, ignorePlacement = false,
-            padding = 2.0, sortKey = 0.0, opacity = 1.0,
+            overlap = SymbolOverlap.NEVER, ignorePlacement = false,
+            padding = 2.0, sortKey = 0.0,
+            color = 0xff000000.toInt(), haloColor = 0x00000000,
+            opacity = 1.0,
             haloWidth = 0.0, haloBlur = 0.0,
             translateX = 0.0, translateY = 0.0,
+            translateAlignment = SymbolAlignment.MAP,
         )
 
         assertEquals(0, candidate.layerStyleIndex)

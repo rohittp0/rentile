@@ -13,6 +13,12 @@ the wiring looks the way it does — the native-runtime owner, the host adapters
 caching and the verification list below are all still current. Do not re-run unrelated setup steps
 against a working tree.
 
+`0.6.0` is a deliberate breaking minor on the still-prerelease API. Before raising a consumer from
+`0.5.x`, follow the complete [0.6.0 migration ledger](docs/migrations/0.6.0.md). In particular, rebuild
+against the changed label data classes and discard candidate and rendered-output cache entries made
+with the old semantic keys. The source declaration is not proof of publication; resolve the exact
+coordinate from the public repository before changing Travel Animator.
+
 ## The published artifact
 
 One consumer coordinate, resolved from Rentile's public Maven repository for new releases:
@@ -296,7 +302,14 @@ existing style selection
 
 Keep Rentile's raw cache and Travel Animator's output PNG cache in distinct namespaces. Keep the current remote-rendered path available as a separately keyed fallback during rollout.
 
-Rentile does not draw labels and never will, but it does prepare place-name label candidates: a host that wants them calls `acquireLabelCandidates` and does its own placement and rendering on top. A host that must know its glyph URLs before they are fetched calls `planLabelCandidates` first and reads them from the plan. Do not route atmosphere, route overlays, vehicles, globe/plane mapping, or UI camera state through Rentile.
+Rentile does not draw labels and never will, but it prepares candidates for every visible
+text-bearing vector symbol layer. A host that wants them calls `acquireLabelCandidates` and performs
+projection, cross-tile collision, occlusion, and drawing on top. Point, line, and line-center
+candidates carry the geometry needed for that placement. When a label layer also declares an icon,
+the candidate carries that paired icon's sprite geometry, paint, collision, alignment, and text-fit
+inputs so the host places text and icon as one symbol. A host that must know its Glyph Range URLs
+before they are fetched calls `planLabelCandidates` first and reads them from the plan. Do not route
+atmosphere, route overlays, vehicles, globe/plane mapping, or UI camera state through Rentile.
 
 ## 10. Local consumer verification
 
