@@ -29,6 +29,12 @@ internal data class RasterResource(
     val diagnostics: List<RenderDiagnostic>,
     val exactSample: RasterSample = sample,
     val substitution: ResourceSubstitution? = null,
+    /**
+     * Canonical RGBA8, unpremultiplied, top-down and tightly packed at `width * 4` bytes per row -
+     * the pixels the validating decode already produced, kept only for callers that asked for
+     * them. Null everywhere else, so an ordinary raster acquisition holds no decoded copy.
+     */
+    val rgba: ByteArray? = null,
 )
 
 internal fun CompiledRasterSource.sampleFor(tile: TileId): RasterSample? {

@@ -13,11 +13,13 @@ the wiring looks the way it does — the native-runtime owner, the host adapters
 caching and the verification list below are all still current. Do not re-run unrelated setup steps
 against a working tree.
 
-`0.6.0` is a deliberate breaking minor on the still-prerelease API. Before raising a consumer from
-`0.5.x`, follow the complete [0.6.0 migration ledger](docs/migrations/0.6.0.md). In particular, rebuild
+`0.6.0` and `0.7.0` are each a deliberate breaking minor on the still-prerelease API. Before raising
+a consumer from `0.5.x`, follow the complete [0.6.0 migration ledger](docs/migrations/0.6.0.md): rebuild
 against the changed label data classes and discard candidate and rendered-output cache entries made
-with the old semantic keys. The source declaration is not proof of publication; resolve the exact
-coordinate from the public repository before changing Travel Animator.
+with the old semantic keys. Before raising one from `0.6.x`, follow the
+[0.7.0 migration ledger](docs/migrations/0.7.0.md); it appends decoded texels to `ValidatedDemTile`,
+so consumers recompile but discard no cache entries. The source declaration is not proof of
+publication; resolve the exact coordinate from the public repository before changing Travel Animator.
 
 ## The published artifact
 

@@ -3,6 +3,7 @@ package com.rohittp.rentile.internal
 import com.rohittp.rentile.BasemapRasterizer
 import com.rohittp.rentile.BatchRenderException
 import com.rohittp.rentile.CompatibilityPolicy
+import com.rohittp.rentile.DemTexels
 import com.rohittp.rentile.DiagnosticCode
 import com.rohittp.rentile.DiagnosticSeverity
 import com.rohittp.rentile.ForeignLabelCandidatePlanException
@@ -666,12 +667,24 @@ private class DefaultBasemapRasterizer(
         val samples = stableTiles.mapNotNull { tile -> source.sampleFor(tile) }.distinctBy { it.identity to it.outputTile }
         val outcomes = supervisorScope {
             samples.map { sample ->
-                async { sample to acquireOutcome { rasterAcquirer.acquire(sample, resourceAccess) } }
+                async {
+                    sample to acquireOutcome {
+                        rasterAcquirer.acquire(sample, resourceAccess, retainPixels = true)
+                    }
+                }
             }.awaitAll()
         }
         throwAcquisitionFailures(outcomes.map { it.second })
         outcomes.map { (sample, outcome) ->
             val resource = (outcome as AcquisitionOutcome.Success).value
+            // retainPixels = true above, so this is unreachable rather than merely unlikely; it
+            // stays a typed failure because an NPE here would cross the public boundary.
+            val rgba = resource.rgba ?: throw ResourceDecodeException(
+                message = "Validated DEM tile carries no decoded pixels",
+                resourceClass = ResourceClass.DEM_TILE,
+                sanitizedResourceId = sample.identity.sha256Hex(),
+                affectedTiles = listOf(sample.outputTile),
+            )
             ValidatedDemTile(
                 requestedTile = sample.outputTile,
                 sourceTile = TileId(sample.sourceZ, sample.sourceX, sample.sourceY),
@@ -679,6 +692,10 @@ private class DefaultBasemapRasterizer(
                 encoding = source.demEncoding.toPublicEncoding(),
                 bytes = resource.bytes.copyOf(),
                 contentDigest = resource.contentDigest,
+                // Copied for the same reason bytes is: one single-flight result is shared by every
+                // joiner, so two requested tiles backed by one source tile would otherwise hand
+                // consumers the same mutable array.
+                texels = DemTexels(resource.width, resource.height, rgba.copyOf()),
             )
         }
     }

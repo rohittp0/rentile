@@ -618,6 +618,25 @@ final class com.rohittp.rentile/CompatibilityPolicy { // com.rohittp.rentile/Com
     }
 }
 
+final class com.rohittp.rentile/DemTexels { // com.rohittp.rentile/DemTexels|null[0]
+    constructor <init>(kotlin/Int, kotlin/Int, kotlin/ByteArray) // com.rohittp.rentile/DemTexels.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.ByteArray){}[0]
+
+    final val height // com.rohittp.rentile/DemTexels.height|{}height[0]
+        final fun <get-height>(): kotlin/Int // com.rohittp.rentile/DemTexels.height.<get-height>|<get-height>(){}[0]
+    final val rgba // com.rohittp.rentile/DemTexels.rgba|{}rgba[0]
+        final fun <get-rgba>(): kotlin/ByteArray // com.rohittp.rentile/DemTexels.rgba.<get-rgba>|<get-rgba>(){}[0]
+    final val width // com.rohittp.rentile/DemTexels.width|{}width[0]
+        final fun <get-width>(): kotlin/Int // com.rohittp.rentile/DemTexels.width.<get-width>|<get-width>(){}[0]
+
+    final fun component1(): kotlin/Int // com.rohittp.rentile/DemTexels.component1|component1(){}[0]
+    final fun component2(): kotlin/Int // com.rohittp.rentile/DemTexels.component2|component2(){}[0]
+    final fun component3(): kotlin/ByteArray // com.rohittp.rentile/DemTexels.component3|component3(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Int = ..., kotlin/ByteArray = ...): com.rohittp.rentile/DemTexels // com.rohittp.rentile/DemTexels.copy|copy(kotlin.Int;kotlin.Int;kotlin.ByteArray){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/DemTexels.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/DemTexels.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/DemTexels.toString|toString(){}[0]
+}
+
 final class com.rohittp.rentile/ExactRecoveryResult { // com.rohittp.rentile/ExactRecoveryResult|null[0]
     constructor <init>(kotlin.collections/Set<com.rohittp.rentile/TileId>, kotlin.collections/Set<com.rohittp.rentile/TileId>, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ...) // com.rohittp.rentile/ExactRecoveryResult.<init>|<init>(kotlin.collections.Set<com.rohittp.rentile.TileId>;kotlin.collections.Set<com.rohittp.rentile.TileId>;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>){}[0]
 
@@ -1654,7 +1673,7 @@ final class com.rohittp.rentile/TransportResponseMetadata { // com.rohittp.renti
 }
 
 final class com.rohittp.rentile/ValidatedDemTile { // com.rohittp.rentile/ValidatedDemTile|null[0]
-    constructor <init>(com.rohittp.rentile/TileId, com.rohittp.rentile/TileId, kotlin/String, com.rohittp.rentile/TerrainDemEncoding, kotlin/ByteArray, kotlin/String) // com.rohittp.rentile/ValidatedDemTile.<init>|<init>(com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.String;com.rohittp.rentile.TerrainDemEncoding;kotlin.ByteArray;kotlin.String){}[0]
+    constructor <init>(com.rohittp.rentile/TileId, com.rohittp.rentile/TileId, kotlin/String, com.rohittp.rentile/TerrainDemEncoding, kotlin/ByteArray, kotlin/String, com.rohittp.rentile/DemTexels) // com.rohittp.rentile/ValidatedDemTile.<init>|<init>(com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.String;com.rohittp.rentile.TerrainDemEncoding;kotlin.ByteArray;kotlin.String;com.rohittp.rentile.DemTexels){}[0]
 
     final val bytes // com.rohittp.rentile/ValidatedDemTile.bytes|{}bytes[0]
         final fun <get-bytes>(): kotlin/ByteArray // com.rohittp.rentile/ValidatedDemTile.bytes.<get-bytes>|<get-bytes>(){}[0]
@@ -1668,6 +1687,8 @@ final class com.rohittp.rentile/ValidatedDemTile { // com.rohittp.rentile/Valida
         final fun <get-sourceId>(): kotlin/String // com.rohittp.rentile/ValidatedDemTile.sourceId.<get-sourceId>|<get-sourceId>(){}[0]
     final val sourceTile // com.rohittp.rentile/ValidatedDemTile.sourceTile|{}sourceTile[0]
         final fun <get-sourceTile>(): com.rohittp.rentile/TileId // com.rohittp.rentile/ValidatedDemTile.sourceTile.<get-sourceTile>|<get-sourceTile>(){}[0]
+    final val texels // com.rohittp.rentile/ValidatedDemTile.texels|{}texels[0]
+        final fun <get-texels>(): com.rohittp.rentile/DemTexels // com.rohittp.rentile/ValidatedDemTile.texels.<get-texels>|<get-texels>(){}[0]
 
     final fun component1(): com.rohittp.rentile/TileId // com.rohittp.rentile/ValidatedDemTile.component1|component1(){}[0]
     final fun component2(): com.rohittp.rentile/TileId // com.rohittp.rentile/ValidatedDemTile.component2|component2(){}[0]
@@ -1675,7 +1696,8 @@ final class com.rohittp.rentile/ValidatedDemTile { // com.rohittp.rentile/Valida
     final fun component4(): com.rohittp.rentile/TerrainDemEncoding // com.rohittp.rentile/ValidatedDemTile.component4|component4(){}[0]
     final fun component5(): kotlin/ByteArray // com.rohittp.rentile/ValidatedDemTile.component5|component5(){}[0]
     final fun component6(): kotlin/String // com.rohittp.rentile/ValidatedDemTile.component6|component6(){}[0]
-    final fun copy(com.rohittp.rentile/TileId = ..., com.rohittp.rentile/TileId = ..., kotlin/String = ..., com.rohittp.rentile/TerrainDemEncoding = ..., kotlin/ByteArray = ..., kotlin/String = ...): com.rohittp.rentile/ValidatedDemTile // com.rohittp.rentile/ValidatedDemTile.copy|copy(com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.String;com.rohittp.rentile.TerrainDemEncoding;kotlin.ByteArray;kotlin.String){}[0]
+    final fun component7(): com.rohittp.rentile/DemTexels // com.rohittp.rentile/ValidatedDemTile.component7|component7(){}[0]
+    final fun copy(com.rohittp.rentile/TileId = ..., com.rohittp.rentile/TileId = ..., kotlin/String = ..., com.rohittp.rentile/TerrainDemEncoding = ..., kotlin/ByteArray = ..., kotlin/String = ..., com.rohittp.rentile/DemTexels = ...): com.rohittp.rentile/ValidatedDemTile // com.rohittp.rentile/ValidatedDemTile.copy|copy(com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.String;com.rohittp.rentile.TerrainDemEncoding;kotlin.ByteArray;kotlin.String;com.rohittp.rentile.DemTexels){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/ValidatedDemTile.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/ValidatedDemTile.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/ValidatedDemTile.toString|toString(){}[0]

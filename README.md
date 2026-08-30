@@ -6,11 +6,13 @@ Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a
 
 Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
-The source tree currently declares `VERSION_NAME=0.6.0`, a deliberate prerelease minor because its
-label-candidate data classes and coverage contract break the `0.5.x` API. It is not a published
-release until the `Build and Publish` workflow has passed and the coordinate is publicly
-resolvable. Consumers upgrading from `0.5.x` must follow the
-[0.6.0 migration guide](docs/migrations/0.6.0.md).
+`0.6.0` is published and is the newest version on the public line. The source tree currently
+declares `VERSION_NAME=0.7.0`, a deliberate prerelease minor because appending decoded texels to
+`ValidatedDemTile` breaks that class's constructor and destructuring. It is not a published release
+until the `Build and Publish` workflow has passed and the coordinate is publicly resolvable.
+Consumers upgrading from `0.6.x` must follow the
+[0.7.0 migration guide](docs/migrations/0.7.0.md), and those still on `0.5.x` the
+[0.6.0 migration guide](docs/migrations/0.6.0.md) first.
 
 ## Targets
 
@@ -90,6 +92,20 @@ cross-tile collision, depth, and final drawing. Rentile does not publish a secon
 through the label batch.
 See [ADR 0024](docs/adr/0024-label-placement-belongs-to-the-consumer.md) and the
 [0.6.0 migration guide](docs/migrations/0.6.0.md).
+
+## Terrain tiles
+
+`acquireTerrainTiles` returns the exact encoded DEM bytes **and** the pixels the decode that
+validated them produced. `ValidatedDemTile.texels` is canonical 8-bit RGBA - fixed red, green, blue,
+alpha byte order, rows top-down and tightly packed at `width * 4` bytes, never premultiplied and
+never colour-converted - so a consumer reads elevation without owning a decoder for whichever
+container the provider serves, which in a real style corpus is usually WebP rather than PNG.
+
+Those are packed channel values, not metres: apply the tile's own `encoding` to them. `bytes`
+remains the exact resource and remains the right value to hash for cache identity. Nothing but
+terrain acquisition retains decoded pixels, and nothing is decoded twice.
+See [ADR 0029](docs/adr/0029-expose-decoded-dem-texels.md) and the
+[0.7.0 migration guide](docs/migrations/0.7.0.md).
 
 ### Static documentation version convention
 

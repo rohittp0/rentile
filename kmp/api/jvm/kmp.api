@@ -70,6 +70,21 @@ public final class com/rohittp/rentile/CredentialProvider$Companion {
 	public final fun getNone ()Lcom/rohittp/rentile/CredentialProvider;
 }
 
+public final class com/rohittp/rentile/DemTexels {
+	public fun <init> (II[B)V
+	public final fun component1 ()I
+	public final fun component2 ()I
+	public final fun component3 ()[B
+	public final fun copy (II[B)Lcom/rohittp/rentile/DemTexels;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/DemTexels;II[BILjava/lang/Object;)Lcom/rohittp/rentile/DemTexels;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHeight ()I
+	public final fun getRgba ()[B
+	public final fun getWidth ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class com/rohittp/rentile/DiagnosticCode : java/lang/Enum {
 	public static final field COMPLEX_SCRIPT_LABEL_EXCLUDED Lcom/rohittp/rentile/DiagnosticCode;
 	public static final field EMPTY_ICON_IMAGE_NO_DRAW Lcom/rohittp/rentile/DiagnosticCode;
@@ -1189,15 +1204,16 @@ public final class com/rohittp/rentile/TransportResponseMetadata {
 }
 
 public final class com/rohittp/rentile/ValidatedDemTile {
-	public fun <init> (Lcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;Ljava/lang/String;Lcom/rohittp/rentile/TerrainDemEncoding;[BLjava/lang/String;)V
+	public fun <init> (Lcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;Ljava/lang/String;Lcom/rohittp/rentile/TerrainDemEncoding;[BLjava/lang/String;Lcom/rohittp/rentile/DemTexels;)V
 	public final fun component1 ()Lcom/rohittp/rentile/TileId;
 	public final fun component2 ()Lcom/rohittp/rentile/TileId;
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Lcom/rohittp/rentile/TerrainDemEncoding;
 	public final fun component5 ()[B
 	public final fun component6 ()Ljava/lang/String;
-	public final fun copy (Lcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;Ljava/lang/String;Lcom/rohittp/rentile/TerrainDemEncoding;[BLjava/lang/String;)Lcom/rohittp/rentile/ValidatedDemTile;
-	public static synthetic fun copy$default (Lcom/rohittp/rentile/ValidatedDemTile;Lcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;Ljava/lang/String;Lcom/rohittp/rentile/TerrainDemEncoding;[BLjava/lang/String;ILjava/lang/Object;)Lcom/rohittp/rentile/ValidatedDemTile;
+	public final fun component7 ()Lcom/rohittp/rentile/DemTexels;
+	public final fun copy (Lcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;Ljava/lang/String;Lcom/rohittp/rentile/TerrainDemEncoding;[BLjava/lang/String;Lcom/rohittp/rentile/DemTexels;)Lcom/rohittp/rentile/ValidatedDemTile;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/ValidatedDemTile;Lcom/rohittp/rentile/TileId;Lcom/rohittp/rentile/TileId;Ljava/lang/String;Lcom/rohittp/rentile/TerrainDemEncoding;[BLjava/lang/String;Lcom/rohittp/rentile/DemTexels;ILjava/lang/Object;)Lcom/rohittp/rentile/ValidatedDemTile;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getBytes ()[B
 	public final fun getContentDigest ()Ljava/lang/String;
@@ -1205,6 +1221,7 @@ public final class com/rohittp/rentile/ValidatedDemTile {
 	public final fun getRequestedTile ()Lcom/rohittp/rentile/TileId;
 	public final fun getSourceId ()Ljava/lang/String;
 	public final fun getSourceTile ()Lcom/rohittp/rentile/TileId;
+	public final fun getTexels ()Lcom/rohittp/rentile/DemTexels;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }

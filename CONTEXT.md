@@ -56,6 +56,14 @@ _Avoid_: Label icon layer, public sprite atlas, pre-fit anchor shift
 A vector tile consumed as input while producing Label Candidates rather than an Output Tile.
 _Avoid_: Source Tile, label candidate
 
+**Decoded DEM Texels**:
+The pixels of one elevation Source Tile as canonical 8-bit RGBA - a fixed red, green, blue, alpha
+byte order, rows top-down and tightly packed, never premultiplied and never colour-converted -
+produced by the decode that already validates the tile and carried on its acquisition result so a
+consumer needs no image decoder of its own. They are packed channel values, not elevations: the
+consumer still applies the tile's `TerrainDemEncoding` to obtain metres.
+_Avoid_: Elevation samples, height array, DEM bitmap, decoded raster
+
 **Glyph Range**:
 One block of 256 consecutive Unicode codepoints of a font stack, acquired as signed-distance-field glyph bitmaps and their metrics.
 _Avoid_: Font file, glyph page, character set
@@ -102,7 +110,7 @@ Performance profiling and numeric acceptance budgets are intentionally deferred 
 
 ## Distribution
 
-The public consumer coordinate is `com.rohittp.rentile:kmp`. Releases `0.1.0` through `0.1.4` remain on Maven Central; the shared repository at `https://maven.rohittp.com` is canonical after the migration and is also the version line: each release takes the highest version already published there and advances its patch component. `VERSION_NAME` in the root `gradle.properties` governs only when it names a version strictly above everything public, which is how a deliberate minor or major release is requested. The source tree declares `0.6.0` for the breaking label-candidate expansion; that declaration is a release request, not proof that the coordinate has been published. Snapshot versions never govern and remain local-repository-only. Every push to `main` outside documentation publishes; documentation-only commits do not consume a version, and releases are serialised so concurrent pushes cannot race for one coordinate. The release workflow rejects an existing primary POM before upload, requires the exact version to pass signed local publication plus Android, JVM, iOS, macOS, Linux, and rolling-corpus gates, verifies every public artifact, then resolves it from a fresh credential-free consumer. A GitHub Release is not required. Version numbers are cheap and non-contiguous; a gap does not imply a withdrawn version.
+The public consumer coordinate is `com.rohittp.rentile:kmp`. Releases `0.1.0` through `0.1.4` remain on Maven Central; the shared repository at `https://maven.rohittp.com` is canonical after the migration and is also the version line: each release takes the highest version already published there and advances its patch component. `VERSION_NAME` in the root `gradle.properties` governs only when it names a version strictly above everything public, which is how a deliberate minor or major release is requested. `0.6.0` is published, and is the highest version on that line. The source tree declares `0.7.0` for the breaking terrain-texel addition; that declaration is a release request, not proof that the coordinate has been published. Snapshot versions never govern and remain local-repository-only. Every push to `main` outside documentation publishes; documentation-only commits do not consume a version, and releases are serialised so concurrent pushes cannot race for one coordinate. The release workflow rejects an existing primary POM before upload, requires the exact version to pass signed local publication plus Android, JVM, iOS, macOS, Linux, and rolling-corpus gates, verifies every public artifact, then resolves it from a fresh credential-free consumer. A GitHub Release is not required. Version numbers are cheap and non-contiguous; a gap does not imply a withdrawn version.
 
 Rentile is licensed under Apache-2.0. Published artifacts also carry a maintained third-party notices inventory for dependencies and copied or adapted upstream code.
 

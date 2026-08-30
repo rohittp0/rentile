@@ -579,7 +579,61 @@ public data class GroundRadianceDescriptor(
     public val blue: Double,
 )
 
-/** Validated encoded DEM image bytes acquired through Rentile's transport and raw cache. */
+/**
+ * The decoded pixels of one elevation Source Tile, carrying the exact channel values its
+ * [TerrainDemEncoding] packed rather than elevations. A consumer still applies that encoding's own
+ * formula to [rgba] to obtain metres; Rentile decodes the image container and nothing beyond it.
+ *
+ * **Layout.** [rgba] holds `width * height * 4` bytes: one texel per four bytes in red, green,
+ * blue, alpha order, rows tightly packed at `width * 4` bytes with no padding, and rows ordered
+ * **top-down**, so index `(y * width + x) * 4` is the texel at column `x` of row `y` counting `y`
+ * from the tile's top edge, which is its north edge under XYZ. A consumer that walks these rows
+ * bottom-up gets a mirrored planet rather than a failure.
+ *
+ * **Alpha.** [rgba] is **never premultiplied**. A DEM packs elevation across red, green and blue,
+ * so scaling those channels by a non-opaque alpha would corrupt the elevation silently instead of
+ * merely darkening a picture. Rentile reads these pixels as `ColorAlphaType.UNPREMUL` and
+ * preserves whatever alpha the encoded image carried rather than assuming it is opaque, and it
+ * requests no colour-space conversion, so the channel values are the ones the image encoded even
+ * when it declares a colour profile.
+ */
+public data class DemTexels(
+    public val width: Int,
+    public val height: Int,
+    public val rgba: ByteArray,
+) {
+    init {
+        require(width > 0 && height > 0) { "DEM texel dimensions must be positive" }
+        require(rgba.size.toLong() == width.toLong() * height.toLong() * 4L) {
+            "DEM texels must hold exactly one tightly packed RGBA8 texel per pixel"
+        }
+    }
+
+    override fun equals(other: Any?): Boolean =
+        other is DemTexels &&
+            width == other.width &&
+            height == other.height &&
+            rgba.contentEquals(other.rgba)
+
+    override fun hashCode(): Int {
+        var result = width
+        result = 31 * result + height
+        result = 31 * result + rgba.contentHashCode()
+        return result
+    }
+
+    override fun toString(): String = "DemTexels(width=$width, height=$height, byteCount=${rgba.size})"
+}
+
+/**
+ * Validated encoded DEM image bytes acquired through Rentile's transport and raw cache, together
+ * with the [texels] that the decode which validated them already produced.
+ *
+ * [bytes] stays the exact encoded resource the provider served - a WebP for most Terrain RGB
+ * sources, a PNG for some - and remains the right value to hash for cache identity. [texels] is
+ * that same image decoded once, so a consumer needs no decoder of its own for whichever container
+ * the provider chose.
+ */
 public data class ValidatedDemTile(
     public val requestedTile: TileId,
     public val sourceTile: TileId,
@@ -587,7 +641,34 @@ public data class ValidatedDemTile(
     public val encoding: TerrainDemEncoding,
     public val bytes: ByteArray,
     public val contentDigest: String,
-)
+    /** Appended, not inserted, for the reason recorded on [ResourceLimits.maxGlyphRangeBytes]. */
+    public val texels: DemTexels,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is ValidatedDemTile &&
+            requestedTile == other.requestedTile &&
+            sourceTile == other.sourceTile &&
+            sourceId == other.sourceId &&
+            encoding == other.encoding &&
+            bytes.contentEquals(other.bytes) &&
+            contentDigest == other.contentDigest &&
+            texels == other.texels
+
+    override fun hashCode(): Int {
+        var result = requestedTile.hashCode()
+        result = 31 * result + sourceTile.hashCode()
+        result = 31 * result + sourceId.hashCode()
+        result = 31 * result + encoding.hashCode()
+        result = 31 * result + bytes.contentHashCode()
+        result = 31 * result + contentDigest.hashCode()
+        result = 31 * result + texels.hashCode()
+        return result
+    }
+
+    override fun toString(): String =
+        "ValidatedDemTile(requestedTile=$requestedTile, sourceTile=$sourceTile, sourceId=$sourceId, " +
+            "encoding=$encoding, byteCount=${bytes.size}, contentDigest=$contentDigest, texels=$texels)"
+}
 
 /** Operational limits owned by one long-lived [BasemapRasterizer]. */
 public data class ExecutionPolicy(
