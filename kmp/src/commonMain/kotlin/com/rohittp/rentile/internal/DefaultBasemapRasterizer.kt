@@ -101,6 +101,8 @@ import com.rohittp.rentile.internal.style.StyleValue
 import com.rohittp.rentile.internal.style.parseCssColor
 import com.rohittp.rentile.internal.style.iconAnchorOrNull
 import com.rohittp.rentile.internal.style.spriteAnchoring
+import com.rohittp.rentile.RawRenderBatch
+import com.rohittp.rentile.RawRenderedTile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -144,6 +146,7 @@ import org.jetbrains.skia.PathFillMode
 import org.jetbrains.skia.Rect
 import org.jetbrains.skia.SamplingMode
 import org.jetbrains.skia.Surface
+import org.jetbrains.skia.ColorInfo
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
@@ -162,6 +165,8 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sinh
 import kotlin.math.sqrt
+import kotlinx.coroutines.coroutineScope
+import kotlin.time.TimeSource
 
 internal fun createBasemapRasterizer(configuration: RentileConfiguration): BasemapRasterizer =
     DefaultBasemapRasterizer(configuration)
@@ -708,9 +713,13 @@ private class DefaultBasemapRasterizer(
             requested.forEach { tile ->
                 if (tile !in lease.state.contentKeys) throw TileNotInPreparedBatchException(tile)
             }
-            val tileResults = requested.map { tile ->
-                currentCoroutineContext().ensureActive()
-                renderPermits.withPermit { renderTile(prepared, lease.state.resources, tile) }
+            val tileResults = coroutineScope {
+                requested.map { tile ->
+                    async {
+                        currentCoroutineContext().ensureActive()
+                        renderPermits.withPermit { renderTile(prepared, lease.state.resources, tile) }
+                    }
+                }.awaitAll()
             }
             val rendered = tileResults.map { result ->
                 configuration.metricsSink.recordSafely(
@@ -731,6 +740,44 @@ private class DefaultBasemapRasterizer(
             lease.close()
         }
     }
+
+    override suspend fun renderRaw(batch: PreparedBatch, tiles: List<TileId>): RawRenderBatch =
+        operation {
+            val prepared = requireOwnedBatch(batch)
+            val lease = prepared.acquireRenderLease()
+            try {
+                val requested = tiles.toList()
+                requested.forEach { tile ->
+                    if (tile !in lease.state.contentKeys) throw TileNotInPreparedBatchException(tile)
+                }
+                val results = coroutineScope {
+                    requested.map { tile ->
+                        async {
+                            currentCoroutineContext().ensureActive()
+                            renderPermits.withPermit {
+                                renderTileRaw(prepared, lease.state.resources, tile)
+                            }
+                        }
+                    }.awaitAll()
+                }
+                val rendered = results.map { result ->
+                    configuration.metricsSink.recordSafely(
+                        RentileMetric(MetricName.TILE_RENDERED, resourceClass = null),
+                    )
+                    RawRenderedTile(
+                        id = result.tile,
+                        rgbaBytes = result.rgba,
+                        widthPx = result.widthPx,
+                        heightPx = result.heightPx,
+                        contentKey = lease.state.contentKeys.getValue(result.tile),
+                        diagnostics = lease.state.diagnostics + result.diagnostics,
+                    )
+                }
+                RawRenderBatch(rendered, lease.state.diagnostics)
+            } finally {
+                lease.close()
+            }
+        }
 
     override suspend fun render(
         style: PreparedStyle,
@@ -1467,6 +1514,35 @@ private class DefaultBasemapRasterizer(
         return TileRender(tile, png, renderDiagnostics.toList())
     }
 
+    private class RawTileRender(
+        val tile: TileId,
+        val rgba: ByteArray,
+        val widthPx: Int,
+        val heightPx: Int,
+        val diagnostics: List<RenderDiagnostic>,
+    )
+
+    private fun renderTileRaw(
+        batch: DefaultPreparedBatch,
+        resources: PreparedResources,
+        tile: TileId,
+    ): RawTileRender {
+        val activeLayers = batch.style.drawLayers.filter { it.isActiveAt(tile.z) }
+        val renderDiagnostics = mutableListOf<RenderDiagnostic>()
+        val size = batch.options.outputSizePx
+        val rgba = renderCompositedTileRaw(
+            style = batch.style,
+            layers = activeLayers,
+            rasterResources = resources.raster[tile].orEmpty(),
+            vectorResources = resources.vector[tile].orEmpty(),
+            sizePx = size,
+            tile = tile,
+            diagnostics = renderDiagnostics,
+        )
+        return RawTileRender(tile, rgba, size, size, renderDiagnostics.toList())
+    }
+
+    /** PNG output: draws once, then encodes. */
     private fun renderCompositedTile(
         style: CompiledPreparedStyle,
         layers: List<CompiledDrawLayer>,
@@ -1475,7 +1551,91 @@ private class DefaultBasemapRasterizer(
         sizePx: Int,
         tile: TileId,
         diagnostics: MutableList<RenderDiagnostic>,
-    ): ByteArray {
+    ): ByteArray = drawCompositedTile(
+        style, layers, rasterResources, vectorResources, sizePx, tile, diagnostics,
+    ) { surface ->
+        val encodeStarted = TimeSource.Monotonic.markNow()
+        val image = surface.makeImageSnapshot()
+        try {
+            val data = image.encodeToData(EncodedImageFormat.PNG)
+                ?: throw PngEncodingException("Skia could not encode PNG", affectedTiles = listOf(tile))
+            try {
+                configuration.metricsSink.recordSafely(
+                    RentileMetric(
+                        MetricName.TILE_PNG_ENCODE_NANOS,
+                        value = encodeStarted.elapsedNow().inWholeNanoseconds,
+                    ),
+                )
+                data.bytes
+            } finally {
+                data.close()
+            }
+        } finally {
+            image.close()
+        }
+    }
+
+    /**
+     * Raw output: draws once, then reads premultiplied N32 pixels straight out of the surface.
+     *
+     * This is the same drawing as [renderCompositedTile]; it simply skips the PNG encode, which a
+     * caller uploading to a GL texture would only have to decode again.
+     */
+    private fun renderCompositedTileRaw(
+        style: CompiledPreparedStyle,
+        layers: List<CompiledDrawLayer>,
+        rasterResources: List<RasterResource>,
+        vectorResources: List<VectorResource>,
+        sizePx: Int,
+        tile: TileId,
+        diagnostics: MutableList<RenderDiagnostic>,
+    ): ByteArray = drawCompositedTile(
+        style, layers, rasterResources, vectorResources, sizePx, tile, diagnostics,
+    ) { surface ->
+        val image = surface.makeImageSnapshot()
+        try {
+            // Straight-alpha RGBA8888, explicitly -- NOT allocN32Pixels. N32 is BGRA on some
+            // platforms and premultiplied everywhere, so a consumer uploading these bytes to a
+            // texture would get swapped channels and wrong alpha. This matches byte for byte what
+            // decoding the PNG produces, which is the whole point: the two paths must be
+            // interchangeable at the pixel level, not merely both "raw".
+            val info = ImageInfo(
+                ColorInfo(ColorType.RGBA_8888, ColorAlphaType.UNPREMUL, null),
+                image.width,
+                image.height,
+            )
+            val bitmap = Bitmap()
+            try {
+                if (!bitmap.allocPixels(info) || !image.readPixels(bitmap)) {
+                    throw RasterizationException(
+                        message = "Rendered tile pixels cannot be read",
+                        affectedTiles = listOf(tile),
+                    )
+                }
+                bitmap.readPixels()
+                    ?: throw RasterizationException(
+                        message = "Rendered tile pixels cannot be read",
+                        affectedTiles = listOf(tile),
+                    )
+            } finally {
+                bitmap.close()
+            }
+        } finally {
+            image.close()
+        }
+    }
+
+    private fun <T> drawCompositedTile(
+        style: CompiledPreparedStyle,
+        layers: List<CompiledDrawLayer>,
+        rasterResources: List<RasterResource>,
+        vectorResources: List<VectorResource>,
+        sizePx: Int,
+        tile: TileId,
+        diagnostics: MutableList<RenderDiagnostic>,
+        finish: (Surface) -> T,
+    ): T {
+        val drawStarted = TimeSource.Monotonic.markNow()
         val surface = Surface.makeRasterN32Premul(sizePx, sizePx)
         val spriteContext = style.spriteAtlas?.let(::SpriteRenderContext)
         try {
@@ -1524,18 +1684,10 @@ private class DefaultBasemapRasterizer(
                     is IconDrawLayer -> drawIcons(surface, placedIcons[layer.layerOrder].orEmpty())
                 }
             }
-            val image = surface.makeImageSnapshot()
-            try {
-                val data = image.encodeToData(EncodedImageFormat.PNG)
-                    ?: throw PngEncodingException("Skia could not encode PNG", affectedTiles = listOf(tile))
-                try {
-                    return data.bytes
-                } finally {
-                    data.close()
-                }
-            } finally {
-                image.close()
-            }
+            configuration.metricsSink.recordSafely(
+                RentileMetric(MetricName.TILE_DRAW_NANOS, value = drawStarted.elapsedNow().inWholeNanoseconds),
+            )
+            return finish(surface)
         } catch (error: CancellationException) {
             throw error
         } catch (error: PngEncodingException) {

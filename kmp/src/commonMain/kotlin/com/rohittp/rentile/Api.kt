@@ -788,6 +788,32 @@ public data class RenderedTile(
     public val diagnostics: List<RenderDiagnostic> = emptyList(),
 )
 
+/**
+ * One output tile as premultiplied N32 pixels, skipping PNG entirely.
+ *
+ * A host that uploads tiles straight to a GL texture reads [rgbaBytes] and is done. The PNG path
+ * makes it encode and then immediately decode the same image -- measured at ~65 ms of encode per
+ * 256 px tile on a mid-range phone, plus the decode, purely to feed a disk cache the live path
+ * never reads back within a session.
+ *
+ * [contentKey] is identical to the PNG path's for the same tile: the pixel format is a transport
+ * choice, not part of content identity, so a tile rendered either way shares one cache entry.
+ */
+public data class RawRenderedTile(
+    public val id: TileId,
+    public val rgbaBytes: ByteArray,
+    public val widthPx: Int,
+    public val heightPx: Int,
+    public val contentKey: String,
+    public val diagnostics: List<RenderDiagnostic> = emptyList(),
+)
+
+/** All-or-error result for a raw-pixel render operation. */
+public data class RawRenderBatch(
+    public val tiles: List<RawRenderedTile>,
+    public val diagnostics: List<RenderDiagnostic> = emptyList(),
+)
+
 /** All-or-error result for a caller-defined render operation. */
 public data class RenderBatch(
     public val tiles: List<RenderedTile>,
@@ -899,6 +925,15 @@ public interface BasemapRasterizer : AutoCloseable {
         batch: PreparedBatch,
         tiles: List<TileId> = batch.tiles,
     ): RenderBatch
+
+    /**
+     * Renders to premultiplied N32 pixels instead of PNG. Same drawing, same content identity;
+     * only the encode is skipped. See [RawRenderedTile].
+     */
+    public suspend fun renderRaw(
+        batch: PreparedBatch,
+        tiles: List<TileId> = batch.tiles,
+    ): RawRenderBatch
 
     public suspend fun render(
         style: PreparedStyle,

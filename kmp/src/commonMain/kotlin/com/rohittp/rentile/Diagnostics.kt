@@ -223,6 +223,12 @@ public enum class MetricName {
     TILE_EXACT_RECOVERED,
     TILE_RENDERED,
     PNG_ENCODED_BYTES,
+
+    /** Nanoseconds spent evaluating style and drawing one output tile, excluding PNG encoding. */
+    TILE_DRAW_NANOS,
+
+    /** Nanoseconds spent PNG-encoding one output tile, excluding drawing. */
+    TILE_PNG_ENCODE_NANOS,
 }
 
 public data class RentileMetric(
