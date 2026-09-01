@@ -100,7 +100,9 @@ final enum class com.rohittp.rentile/MetricName : kotlin/Enum<com.rohittp.rentil
     enum entry RESOURCE_REQUEST // com.rohittp.rentile/MetricName.RESOURCE_REQUEST|null[0]
     enum entry RESOURCE_WIRE_BYTES // com.rohittp.rentile/MetricName.RESOURCE_WIRE_BYTES|null[0]
     enum entry SINGLE_FLIGHT_JOIN // com.rohittp.rentile/MetricName.SINGLE_FLIGHT_JOIN|null[0]
+    enum entry TILE_DRAW_NANOS // com.rohittp.rentile/MetricName.TILE_DRAW_NANOS|null[0]
     enum entry TILE_EXACT_RECOVERED // com.rohittp.rentile/MetricName.TILE_EXACT_RECOVERED|null[0]
+    enum entry TILE_PNG_ENCODE_NANOS // com.rohittp.rentile/MetricName.TILE_PNG_ENCODE_NANOS|null[0]
     enum entry TILE_RENDERED // com.rohittp.rentile/MetricName.TILE_RENDERED|null[0]
     enum entry TILE_RESOURCE_SUBSTITUTED // com.rohittp.rentile/MetricName.TILE_RESOURCE_SUBSTITUTED|null[0]
 
@@ -311,6 +313,7 @@ abstract interface com.rohittp.rentile/BasemapRasterizer : kotlin/AutoCloseable 
     abstract suspend fun prepareBatch(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ..., com.rohittp.rentile/TileSubstitutionPolicy = ...): com.rohittp.rentile/PreparedBatch // com.rohittp.rentile/BasemapRasterizer.prepareBatch|prepareBatch(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode;com.rohittp.rentile.TileSubstitutionPolicy){}[0]
     abstract suspend fun render(com.rohittp.rentile/PreparedBatch, kotlin.collections/List<com.rohittp.rentile/TileId> = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedBatch;kotlin.collections.List<com.rohittp.rentile.TileId>){}[0]
     abstract suspend fun render(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ..., com.rohittp.rentile/TileSubstitutionPolicy = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode;com.rohittp.rentile.TileSubstitutionPolicy){}[0]
+    abstract suspend fun renderRaw(com.rohittp.rentile/PreparedBatch, kotlin.collections/List<com.rohittp.rentile/TileId> = ...): com.rohittp.rentile/RawRenderBatch // com.rohittp.rentile/BasemapRasterizer.renderRaw|renderRaw(com.rohittp.rentile.PreparedBatch;kotlin.collections.List<com.rohittp.rentile.TileId>){}[0]
     abstract suspend fun retryExact(com.rohittp.rentile/PreparedBatch): com.rohittp.rentile/ExactRecoveryResult // com.rohittp.rentile/BasemapRasterizer.retryExact|retryExact(com.rohittp.rentile.PreparedBatch){}[0]
 }
 
@@ -1177,6 +1180,50 @@ final class com.rohittp.rentile/RasterizationException : com.rohittp.rentile/Ren
 
 final class com.rohittp.rentile/RasterizerClosedException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/RasterizerClosedException|null[0]
     constructor <init>(kotlin/String = ...) // com.rohittp.rentile/RasterizerClosedException.<init>|<init>(kotlin.String){}[0]
+}
+
+final class com.rohittp.rentile/RawRenderBatch { // com.rohittp.rentile/RawRenderBatch|null[0]
+    constructor <init>(kotlin.collections/List<com.rohittp.rentile/RawRenderedTile>, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ...) // com.rohittp.rentile/RawRenderBatch.<init>|<init>(kotlin.collections.List<com.rohittp.rentile.RawRenderedTile>;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>){}[0]
+
+    final val diagnostics // com.rohittp.rentile/RawRenderBatch.diagnostics|{}diagnostics[0]
+        final fun <get-diagnostics>(): kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> // com.rohittp.rentile/RawRenderBatch.diagnostics.<get-diagnostics>|<get-diagnostics>(){}[0]
+    final val tiles // com.rohittp.rentile/RawRenderBatch.tiles|{}tiles[0]
+        final fun <get-tiles>(): kotlin.collections/List<com.rohittp.rentile/RawRenderedTile> // com.rohittp.rentile/RawRenderBatch.tiles.<get-tiles>|<get-tiles>(){}[0]
+
+    final fun component1(): kotlin.collections/List<com.rohittp.rentile/RawRenderedTile> // com.rohittp.rentile/RawRenderBatch.component1|component1(){}[0]
+    final fun component2(): kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> // com.rohittp.rentile/RawRenderBatch.component2|component2(){}[0]
+    final fun copy(kotlin.collections/List<com.rohittp.rentile/RawRenderedTile> = ..., kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ...): com.rohittp.rentile/RawRenderBatch // com.rohittp.rentile/RawRenderBatch.copy|copy(kotlin.collections.List<com.rohittp.rentile.RawRenderedTile>;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RawRenderBatch.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/RawRenderBatch.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/RawRenderBatch.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/RawRenderedTile { // com.rohittp.rentile/RawRenderedTile|null[0]
+    constructor <init>(com.rohittp.rentile/TileId, kotlin/ByteArray, kotlin/Int, kotlin/Int, kotlin/String, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ...) // com.rohittp.rentile/RawRenderedTile.<init>|<init>(com.rohittp.rentile.TileId;kotlin.ByteArray;kotlin.Int;kotlin.Int;kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>){}[0]
+
+    final val contentKey // com.rohittp.rentile/RawRenderedTile.contentKey|{}contentKey[0]
+        final fun <get-contentKey>(): kotlin/String // com.rohittp.rentile/RawRenderedTile.contentKey.<get-contentKey>|<get-contentKey>(){}[0]
+    final val diagnostics // com.rohittp.rentile/RawRenderedTile.diagnostics|{}diagnostics[0]
+        final fun <get-diagnostics>(): kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> // com.rohittp.rentile/RawRenderedTile.diagnostics.<get-diagnostics>|<get-diagnostics>(){}[0]
+    final val heightPx // com.rohittp.rentile/RawRenderedTile.heightPx|{}heightPx[0]
+        final fun <get-heightPx>(): kotlin/Int // com.rohittp.rentile/RawRenderedTile.heightPx.<get-heightPx>|<get-heightPx>(){}[0]
+    final val id // com.rohittp.rentile/RawRenderedTile.id|{}id[0]
+        final fun <get-id>(): com.rohittp.rentile/TileId // com.rohittp.rentile/RawRenderedTile.id.<get-id>|<get-id>(){}[0]
+    final val rgbaBytes // com.rohittp.rentile/RawRenderedTile.rgbaBytes|{}rgbaBytes[0]
+        final fun <get-rgbaBytes>(): kotlin/ByteArray // com.rohittp.rentile/RawRenderedTile.rgbaBytes.<get-rgbaBytes>|<get-rgbaBytes>(){}[0]
+    final val widthPx // com.rohittp.rentile/RawRenderedTile.widthPx|{}widthPx[0]
+        final fun <get-widthPx>(): kotlin/Int // com.rohittp.rentile/RawRenderedTile.widthPx.<get-widthPx>|<get-widthPx>(){}[0]
+
+    final fun component1(): com.rohittp.rentile/TileId // com.rohittp.rentile/RawRenderedTile.component1|component1(){}[0]
+    final fun component2(): kotlin/ByteArray // com.rohittp.rentile/RawRenderedTile.component2|component2(){}[0]
+    final fun component3(): kotlin/Int // com.rohittp.rentile/RawRenderedTile.component3|component3(){}[0]
+    final fun component4(): kotlin/Int // com.rohittp.rentile/RawRenderedTile.component4|component4(){}[0]
+    final fun component5(): kotlin/String // com.rohittp.rentile/RawRenderedTile.component5|component5(){}[0]
+    final fun component6(): kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> // com.rohittp.rentile/RawRenderedTile.component6|component6(){}[0]
+    final fun copy(com.rohittp.rentile/TileId = ..., kotlin/ByteArray = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/String = ..., kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ...): com.rohittp.rentile/RawRenderedTile // com.rohittp.rentile/RawRenderedTile.copy|copy(com.rohittp.rentile.TileId;kotlin.ByteArray;kotlin.Int;kotlin.Int;kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RawRenderedTile.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/RawRenderedTile.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/RawRenderedTile.toString|toString(){}[0]
 }
 
 final class com.rohittp.rentile/RawResourceKey { // com.rohittp.rentile/RawResourceKey|null[0]
