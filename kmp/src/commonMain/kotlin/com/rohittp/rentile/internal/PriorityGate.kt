@@ -2,6 +2,9 @@ package com.rohittp.rentile.internal
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -63,15 +66,33 @@ internal class PriorityGate(private val permits: Int) {
             // Either we are still queued and must leave, or a permit was handed to us between the
             // cancellation and now and must be passed on. Dropping it would leak a permit for the
             // life of the rasterizer.
-            mutex.withLock {
-                val stillQueued = acquisitionWaiters.remove(waiter) || warmWaiters.remove(waiter)
-                if (!stillQueued && waiter.isCompleted) releaseLocked()
+            withContext(NonCancellable) {
+                mutex.withLock {
+                    val stillQueued = acquisitionWaiters.remove(waiter) || warmWaiters.remove(waiter)
+                    if (!stillQueued && waiter.isCompleted) releaseLocked()
+                }
             }
             throw cancelled
         }
     }
 
-    private suspend fun release() = mutex.withLock { releaseLocked() }
+    /**
+     * NonCancellable is load-bearing, not defensive.
+     *
+     * Returning a permit takes the lock, and `Mutex.lock()` is cancellable whenever it has to
+     * suspend -- which it does exactly when another coroutine holds the lock. So a holder cancelled
+     * while the lock was contended threw out of its own release and never returned its permit. The
+     * uncontended path hides this completely, because acquiring a free mutex does not suspend and so
+     * never checks cancellation, which is why it took a contended test to see it.
+     *
+     * These gates belong to a process-wide rasterizer, so a leak outlives the session that caused
+     * it: Preview teardown cancelling warm fetches could empty a gate and wedge a later export in
+     * the same process, with every worker parked and no network traffic at all. The plain Semaphore
+     * this class replaced was immune because its `release()` never suspends.
+     */
+    private suspend fun release() {
+        withContext(NonCancellable) { mutex.withLock { releaseLocked() } }
+    }
 
     private fun releaseLocked() {
         val next = acquisitionWaiters.removeFirstOrNull() ?: warmWaiters.removeFirstOrNull()
@@ -79,4 +100,15 @@ internal class PriorityGate(private val permits: Int) {
     }
 
     internal suspend fun availableForTest(): Int = mutex.withLock { available }
+
+    /**
+     * Holds the internal lock until [until] completes, so a test can contend it deliberately.
+     *
+     * The contended case is the only one that matters and the only one a test cannot otherwise
+     * reach: `Mutex.lock()` acquires without suspending when free, and a non-suspending path never
+     * checks cancellation, so an uncontended release succeeds even from a cancelled coroutine.
+     */
+    internal suspend fun holdLockForTest(until: Deferred<Unit>) {
+        mutex.withLock { until.await() }
+    }
 }
