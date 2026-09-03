@@ -234,6 +234,17 @@ for (tile in result.tiles) {
 }
 ```
 
+`outputSizePx` accepts 256, 512, 1024 and 2048, and it is a device pixel ratio rather than a zoom
+shift: the style is evaluated at the tile's own zoom whatever the size, and `outputSizePx / 512`
+scales every pixel-valued style property. One coordinate therefore renders the same features, the
+same labels and the same relative ink at every size, only sharper. A consumer selecting basemap
+zoom by `log2(512 / tileSize)` on a high-density screen can raise `outputSizePx` to drop that zoom
+and cover a view with a sixteenth of the tiles at unchanged sharpness. Label geometry is in style
+pixels at ratio one and carries no output size, so apply the same ratio to it when compositing
+labels over a tile rendered above 512. See
+[ADR 0030](docs/adr/0030-scale-the-output-tile-by-its-pixel-ratio.md) for the cost curve and the
+limits.
+
 For deterministic export, acquire resources first and draw afterward:
 
 ```kotlin
