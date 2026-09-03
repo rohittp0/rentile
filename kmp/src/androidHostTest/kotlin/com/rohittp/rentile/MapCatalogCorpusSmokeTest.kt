@@ -15,6 +15,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import org.jetbrains.skia.Color
 import org.jetbrains.skia.EncodedImageFormat
@@ -134,6 +137,29 @@ class MapCatalogCorpusSmokeTest {
         )
     }
 
+    /**
+     * The style with [sourceName] and every layer reading it removed.
+     *
+     * Dropping the source alone would leave layers pointing at nothing, which is a different and
+     * less honest experiment than the one being run: the question is what the map looks like when
+     * that source is not part of the style at all.
+     */
+    private fun styleWithoutSource(styleBody: String, sourceName: String): String {
+        val style = catalogJson.parseToJsonElement(styleBody).jsonObject
+        val sources = style["sources"]?.jsonObject ?: JsonObject(emptyMap())
+        require(sourceName in sources) {
+            "style declares no source named '$sourceName'; nothing would change"
+        }
+        val kept = JsonObject(sources.filterKeys { it != sourceName })
+        val layers = style["layers"]?.jsonArray ?: JsonArray(emptyList())
+        val keptLayers = JsonArray(
+            layers.filter { layer ->
+                layer.jsonObject["source"]?.jsonPrimitive?.contentOrNull != sourceName
+            },
+        )
+        return JsonObject(style + mapOf("sources" to kept, "layers" to keptLayers)).toString()
+    }
+
     private suspend fun renderStyle(
         rasterizer: BasemapRasterizer,
         style: CatalogStyleEntry,
@@ -141,8 +167,27 @@ class MapCatalogCorpusSmokeTest {
         coverage: CoverageManifest,
         outputDirectory: Path,
     ): StyleSmokeResult {
+        // RENTILE_CORPUS_OMIT_SOURCE renders a style as if one of its sources did not exist, so the
+        // same coverage can be rendered with and without it and the two mosaics compared. A source
+        // costs one fetch per tile however few layers read it, so "is this source worth its
+        // acquisition" is a question about pixels, and this makes it answerable by looking.
+        val omitSource = System.getenv("RENTILE_CORPUS_OMIT_SOURCE")?.takeIf(String::isNotBlank)
         val prepared = try {
-            rasterizer.prepare(StyleInput.Remote(style.url))
+            if (omitSource == null) {
+                rasterizer.prepare(StyleInput.Remote(style.url))
+            } else {
+                // Fetched directly rather than via a first remote prepare: styleBody only returns a
+                // response the transport already recorded, and preparing twice on one rasterizer to
+                // record it made the second prepare fail acquiring the sprite.
+                val body = transport.execute(
+                    TransportRequest(
+                        url = style.url,
+                        resourceClass = ResourceClass.STYLE,
+                        maxResponseBytes = STYLE_BODY_LIMIT_BYTES,
+                    ),
+                ).body.decodeToString()
+                rasterizer.prepare(StyleInput.InlineJson(styleWithoutSource(body, omitSource)))
+            }
         } catch (error: RentileException) {
             return StyleSmokeResult(
                 styleId = style.id,
@@ -1813,6 +1858,7 @@ class MapCatalogCorpusSmokeTest {
     }
 
     private companion object {
+        const val STYLE_BODY_LIMIT_BYTES = 32L * 1024L * 1024L
         const val PUBLIC_MAP_CATALOG_URL = "https://dashboard.lascade.com/travel_animator/v0/maps/"
         const val PUBLIC_CATALOG_HOST = "dashboard.lascade.com"
         const val PUBLIC_CATALOG_PATH = "/travel_animator/v0/maps/"
