@@ -9,8 +9,18 @@ The `com.rohittp.rentile` Kotlin Multiplatform dependency that rasterizes the ap
 _Avoid_: Basemap Rasterizer, KML renderer
 
 **Output Tile**:
-An encoded PNG tile produced by Rentile for a requested XYZ coordinate.
-_Avoid_: Rendered provider tile
+An encoded PNG tile produced by Rentile for a requested XYZ coordinate. Its `outputSizePx` is a
+device pixel ratio expressed as a size, not a zoom shift: the style is evaluated at the tile's own
+zoom whatever the size, so 256, 512, 1024 and 2048 differ in pixels and never in cartography.
+_Avoid_: Rendered provider tile, output tile size as a zoom
+
+**Style Pixel**:
+The unit every pixel-valued style property is authored in, defined against a 512-pixel-wide tile.
+One Style Pixel is `outputSizePx / 512` Output Tile pixels, so a `line-width` of 4 is 4 px at 512
+and 16 px at 2048. The Output Tile draw path works entirely in Style Pixels; a Label Candidate's
+pixel-valued scalars are Style Pixels too, which is why the consumer applies the same ratio to
+label geometry itself.
+_Avoid_: Screen pixel, device pixel, logical pixel, output pixel
 
 **Source Tile**:
 A vector, raster, or elevation tile consumed as input while producing one or more output tiles.
@@ -125,4 +135,11 @@ Public documentation and the Maven POM project URL use `https://rohittp.com/rent
 - Three label keys serve three distinct questions and none substitutes for another: a request key answers "must I fetch?" before any network, a **Label Candidate Batch** content key answers "are my cached candidates still valid?" after acquisition, and the glyph atlas content key answers "must I re-upload the texture?". Candidate layout or public-field changes bump both candidate request and content semantics; glyph pixels alone govern the atlas key.
 - Output Tile request and content keys have their own renderer-semantics markers. Any change that can alter PNG pixels for identical style, tile, options, and resources must bump both markers so caller-owned caches cannot serve output from the previous renderer.
 - A **Repaired Layer** and an author-declared icon layer look alike in a style document but do not fail alike: the first degrades with a diagnostic, the second fails loudly. `text-optional: true` marks the author's intent and therefore selects the strict path. See [ADR 0026](docs/adr/0026-repaired-layers-degrade-and-author-intended-layers-fail.md).
+- "Output pixels" and "Style Pixels" were used interchangeably, and the code had it both ways: MVT
+  geometry was mapped through `outputSizePx` while every evaluated width, offset, blur, pattern
+  period and collision box was applied as a raw output pixel. The two agree only at 512. Resolved
+  by [ADR 0030](docs/adr/0030-scale-the-output-tile-by-its-pixel-ratio.md): the draw path works in
+  Style Pixels alone and `outputSizePx` reaches it only as a canvas transform, which also settled
+  two unit mismatches that had followed from the ambiguity — `symbol-spacing` compared against
+  output-pixel arc length, and a collision box whose extent and centre were in different units.
 - Rentile prepares Labels but does not draw them. The host routes label acquisition through Rentile, then owns projection, collision, occlusion, and drawing above the Output Tile texture.

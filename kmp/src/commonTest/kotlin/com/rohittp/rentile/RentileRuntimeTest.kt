@@ -588,14 +588,18 @@ class RentileRuntimeTest {
                 ),
             )
 
-            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+            // Rendered at the reference size, where one style pixel is one output pixel.
+            // Icon footprints, offsets and collision boxes are in style pixels and scale
+            // with outputSizePx (ADR 0013), so a size other than the reference would move
+            // every pixel asserted below without changing the placement rule under test.
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(512)).tiles.single()
 
-            // The point is at (128,128). Functional icon-anchor resolves to LEFT, putting the
-            // 8px sprite centre at x=132; x=135 is red. The old silent default CENTER ended at
-            // x=132 and left this pixel white.
+            // The point is at (256,256). Functional icon-anchor resolves to LEFT, putting the
+            // 8px sprite centre at x=260; x=263 is red. The old silent default CENTER ended at
+            // x=260 and left this pixel white.
             assertColorClose(
                 expected = Color.makeARGB(255, 255, 0, 0),
-                actual = output.pngBytes.pixelColor(135, 128),
+                actual = output.pngBytes.pixelColor(263, 256),
                 tolerance = 1,
             )
         } finally {
@@ -614,8 +618,8 @@ class RentileRuntimeTest {
         // ignore-placement=false retain both; only their 4px halos overlap. The false ignore flag
         // is therefore the only VIEWPORT_Y activation condition, pinning MapLibre's polarity.
         val vectorTile = iconPointVectorTile(
-            Triple(2048, 2112, "#ff0000"), // (128, 132), first in source and lower on screen.
-            Triple(2048, 1984, "#0000ff"), // (128, 124), second in source and higher on screen.
+            Triple(1024, 1056, "#ff0000"), // (128, 132), first in source and lower on screen.
+            Triple(1024, 992, "#0000ff"), // (128, 124), second in source and higher on screen.
         )
         val rasterizer = testRasterizer(
             transport = iconOutputTransport(vectorTile, spriteWidth = 4, spriteHeight = 4),
@@ -627,8 +631,12 @@ class RentileRuntimeTest {
             val sourceStyle = rasterizer.prepare(StyleInput.InlineJson(styleJson("source")))
             val viewportStyle = rasterizer.prepare(StyleInput.InlineJson(styleJson("viewport-y")))
             val tile = TileId(0, 0, 0)
-            val source = rasterizer.render(sourceStyle, listOf(tile), RenderOptions(256)).tiles.single()
-            val viewport = rasterizer.render(viewportStyle, listOf(tile), RenderOptions(256)).tiles.single()
+            // Rendered at the reference size, where one style pixel is one output pixel.
+            // Icon footprints, offsets and collision boxes are in style pixels and scale
+            // with outputSizePx (ADR 0013), so a size other than the reference would move
+            // every pixel asserted below without changing the placement rule under test.
+            val source = rasterizer.render(sourceStyle, listOf(tile), RenderOptions(512)).tiles.single()
+            val viewport = rasterizer.render(viewportStyle, listOf(tile), RenderOptions(512)).tiles.single()
 
             assertColorClose(
                 expected = Color.makeARGB(255, 0, 0, 255),
@@ -705,8 +713,8 @@ class RentileRuntimeTest {
         // placement emits no text collision box. Opposing offsets reverse centerY just as in the
         // explicit test above, so the overlap pixel distinguishes anchor order from source order.
         val vectorTile = iconPointVectorTile(
-            Triple(2048, 2112, "#ff0000"),
-            Triple(2048, 1984, "#0000ff"),
+            Triple(1024, 1056, "#ff0000"), // (128, 132) at the reference output size.
+            Triple(1024, 992, "#0000ff"), // (128, 124) at the reference output size.
         )
         val rasterizer = testRasterizer(
             transport = iconOutputTransport(vectorTile, spriteWidth = 16, spriteHeight = 16),
@@ -720,8 +728,12 @@ class RentileRuntimeTest {
                 StyleInput.InlineJson(styleJson(textLayout = "\"text-field\":\"folded\",")),
             )
             val tile = TileId(0, 0, 0)
-            val iconOnlyOutput = rasterizer.render(iconOnly, listOf(tile), RenderOptions(256)).tiles.single()
-            val foldedOutput = rasterizer.render(folded, listOf(tile), RenderOptions(256)).tiles.single()
+            // Rendered at the reference size, where one style pixel is one output pixel.
+            // Icon footprints, offsets and collision boxes are in style pixels and scale
+            // with outputSizePx (ADR 0013), so a size other than the reference would move
+            // every pixel asserted below without changing the placement rule under test.
+            val iconOnlyOutput = rasterizer.render(iconOnly, listOf(tile), RenderOptions(512)).tiles.single()
+            val foldedOutput = rasterizer.render(folded, listOf(tile), RenderOptions(512)).tiles.single()
 
             assertColorClose(
                 expected = Color.makeARGB(255, 0, 0, 255),
@@ -750,7 +762,7 @@ class RentileRuntimeTest {
     fun outputTileAvoidEdgesUsesTheRotatedNonSquareIconBounds() = runTest {
         // At x=4 an unrotated 16x4 footprint reaches x=-4 and avoid-edges rejects it. Rotated 90
         // degrees, its horizontal footprint is only 4px wide (x=2..6), so it belongs in the tile.
-        val vectorTile = iconPointVectorTile(Triple(64, 2048, "#ff0000"))
+        val vectorTile = iconPointVectorTile(Triple(32, 1024, "#ff0000")) // (4, 128) at 512.
         val rasterizer = testRasterizer(
             transport = iconOutputTransport(vectorTile, spriteWidth = 16, spriteHeight = 4),
         )
@@ -761,7 +773,11 @@ class RentileRuntimeTest {
                 ),
             )
 
-            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+            // Rendered at the reference size, where one style pixel is one output pixel.
+            // Icon footprints, offsets and collision boxes are in style pixels and scale
+            // with outputSizePx (ADR 0013), so a size other than the reference would move
+            // every pixel asserted below without changing the placement rule under test.
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(512)).tiles.single()
 
             assertColorClose(
                 expected = Color.makeARGB(255, 255, 0, 0),
@@ -776,7 +792,7 @@ class RentileRuntimeTest {
 
     @Test
     fun outputTileRotatesIconAnchorAndOffsetButNotTranslate() = runTest {
-        val vectorTile = iconPointVectorTile(Triple(2048, 2048, "#ff0000"))
+        val vectorTile = iconPointVectorTile(Triple(1024, 1024, "#ff0000")) // (128, 128) at 512.
         val rasterizer = testRasterizer(
             transport = iconOutputTransport(vectorTile, spriteWidth = 8, spriteHeight = 4),
         )
@@ -787,7 +803,11 @@ class RentileRuntimeTest {
                 ),
             )
 
-            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
+            // Rendered at the reference size, where one style pixel is one output pixel.
+            // Icon footprints, offsets and collision boxes are in style pixels and scale
+            // with outputSizePx (ADR 0013), so a size other than the reference would move
+            // every pixel asserted below without changing the placement rule under test.
+            val output = rasterizer.render(style, listOf(TileId(0, 0, 0)), RenderOptions(512)).tiles.single()
 
             // LEFT contributes +4 local x and icon-offset contributes +2 local x. A 90-degree
             // rotation turns that +6 into screen +y, while icon-translate remains screen +5 x:
@@ -2469,6 +2489,45 @@ class RentileRuntimeTest {
             assertEquals(512, output.pngBytes.pngWidth())
             assertEquals(512, output.pngBytes.pngHeight())
             assertTrue(output.diagnostics.none { it.code == DiagnosticCode.RASTER_PASSTHROUGH_USED })
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun rasterPassThroughIsUnreachableAboveTheStyleReferenceSizeAndTheTileIsStillFullSize() = runTest {
+        // Pass-through needs an exact source/output pixel-size match (ADR 0009). A provider's
+        // raster tileSize is capped at 512 by the Style Specification set Rentile accepts, so at
+        // 1024 and 2048 no source can ever match and every raster layer takes the composite path.
+        // The tile is still the requested size -- magnified, not truncated -- which is the honest
+        // outcome: a raster basemap cannot be sharpened beyond its source, so the large sizes buy
+        // a raster style fewer requests and nothing else.
+        val sourcePng = renderSyntheticPng(512)
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { TransportResponse(200, sourcePng) },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"tiles":{"type":"raster","tiles":["https://tiles.example.test/{z}/{x}/{y}.png"],"tileSize":512}},"layers":[{"id":"raster","type":"raster","source":"tiles"}]}""",
+                ),
+            )
+            val tile = TileId(0, 0, 0)
+
+            val passedThrough = rasterizer.render(style, listOf(tile), RenderOptions(512)).tiles.single()
+            assertTrue(passedThrough.diagnostics.any { it.code == DiagnosticCode.RASTER_PASSTHROUGH_USED })
+
+            for (size in listOf(1024, 2048)) {
+                val output = rasterizer.render(style, listOf(tile), RenderOptions(size)).tiles.single()
+                assertTrue(output.pngBytes.startsWithPngSignature())
+                assertEquals(size, output.pngBytes.pngWidth())
+                assertEquals(size, output.pngBytes.pngHeight())
+                assertTrue(
+                    output.diagnostics.none { it.code == DiagnosticCode.RASTER_PASSTHROUGH_USED },
+                    "a 512 px source must not pass through as an $size px output tile",
+                )
+            }
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()

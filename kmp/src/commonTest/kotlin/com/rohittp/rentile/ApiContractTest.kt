@@ -10,9 +10,29 @@ import kotlinx.coroutines.test.runTest
 class ApiContractTest {
     @Test
     fun outputSizeAcceptsOnlyVersionOneSizes() {
+        assertEquals(setOf(256, 512, 1024, 2048), RenderOptions.SUPPORTED_OUTPUT_SIZES)
         assertEquals(256, RenderOptions(256).outputSizePx)
         assertEquals(512, RenderOptions().outputSizePx)
-        assertFailsWith<IllegalArgumentException> { RenderOptions(1024) }
+        assertEquals(1024, RenderOptions(1024).outputSizePx)
+        assertEquals(2048, RenderOptions(2048).outputSizePx)
+        // The set is closed, and it is closed to powers of two either side of the supported run as
+        // well as to anything between them: every size has to be an exact ratio of the style
+        // reference size for `outputSizePx / 512` to be a pixel ratio rather than a resampling.
+        for (rejected in listOf(0, -512, 128, 384, 768, 1000, 4096)) {
+            assertFailsWith<IllegalArgumentException>("outputSizePx $rejected must be rejected") {
+                RenderOptions(rejected)
+            }
+        }
+    }
+
+    @Test
+    fun theStyleReferenceSizeIsFiveHundredAndTwelveIndependentlyOfTheDefault() {
+        // `outputSizePx / 512` is the pixel ratio the whole draw path is built on, and 512 is the
+        // size styles author their pixel values against. Asserting the literal keeps it from
+        // drifting after the default, which is a separate decision that happens to agree today.
+        assertEquals(512, STYLE_REFERENCE_TILE_SIZE_PX)
+        assertEquals(STYLE_REFERENCE_TILE_SIZE_PX, RenderOptions.DEFAULT_OUTPUT_SIZE_PX)
+        assertTrue(RenderOptions.SUPPORTED_OUTPUT_SIZES.all { it % 256 == 0 })
     }
 
     @Test

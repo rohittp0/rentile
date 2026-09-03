@@ -13,8 +13,8 @@ import kotlin.test.assertTrue
 /**
  * Is a tile derived from its four children the same quality as the exact tile?
  *
- * On raw resolution it ought to be better: four 256 px children downsampled into one 256 px output
- * is 512 px of source, i.e. 2x supersampling. This measures whether that holds once a real style is
+ * On raw resolution it ought to be better: four 512 px children downsampled into one 512 px output
+ * is 1024 px of source, i.e. 2x supersampling. This measures whether that holds once a real style is
  * involved.
  *
  * The geometry is identical in world terms in both arms -- one horizontal line across the upper
@@ -22,10 +22,14 @@ import kotlin.test.assertTrue
  * the map data.
  *
  * It does not hold, and the reason is more basic than cartographic generalisation: `line-width` is
- * in **screen pixels**. Each child draws its full-width stroke and composition then scales it by a
- * half, so every stroked feature in a derived tile comes out at half weight. Measured here at
- * 16 rows exact against 8 rows derived, with the line centred identically in both -- same content,
- * same position, half the weight.
+ * in **style pixels**, which one output tile renders at `outputSizePx / 512` whatever its own zoom.
+ * Each child draws its full-width stroke and composition then scales it by a half, so every stroked
+ * feature in a derived tile comes out at half weight. Measured here at 16 rows exact against 8 rows
+ * derived, with the line centred identically in both -- same content, same position, half the
+ * weight.
+ *
+ * Rendered at the reference size, so `line-width: 16` is 16 output pixels and the arithmetic below
+ * is the style's own. The defect is the composition step, not the size: it is a half either way.
  *
  * This style is deliberately zoom-independent (constant width, no minzoom, no interpolation), so
  * the effect is not the wrong zoom's styling. A zoom-dependent style stacks that error on top.
@@ -246,7 +250,7 @@ class ChildDerivedTileQualityTest {
     private fun zigZag(value: Int): Int = (value shl 1) xor (value shr 31)
 
     private companion object {
-        const val SIZE = 256
+        const val SIZE = 512
         const val EXTENT = 256
 
         /** Upper quarter of the parent, so it falls at the centre of the top children. */

@@ -83,7 +83,23 @@ public enum class ResourceAccessMode {
     CACHE_SUBSTITUTE_THEN_NETWORK,
 }
 
-/** Content-affecting controls for output-tile creation. */
+/**
+ * Content-affecting controls for output-tile creation.
+ *
+ * [outputSizePx] is a device pixel ratio expressed as a size, not a zoom shift. Style evaluation
+ * always happens at the output tile's own `z`; `outputSizePx / `[STYLE_REFERENCE_TILE_SIZE_PX]
+ * then scales everything the style measures in pixels. So one output zoom yields the same
+ * cartography at every supported size - the same features, the same relative ink - with more
+ * pixels: sharper, never denser. A 2048 px tile is emphatically not the `z + 2` tile whose pixel
+ * budget it shares.
+ *
+ * That is what makes the large sizes worth asking for. A consumer drawing on a 3x-density screen
+ * needs a fixed number of *device* pixels per unit of ground; taking them 2048 at a time instead
+ * of 512 covers the same view with a sixteenth of the tiles at identical sharpness. The cost moves
+ * from request fan-out to per-tile work: a 2048 px RGBA surface is 16 MiB against 1 MiB at 512,
+ * and one tile's draw and PNG encode grow with its pixel count, so the largest size suits a
+ * batched or offline consumer better than a latency-sensitive interactive one.
+ */
 public data class RenderOptions(
     public val outputSizePx: Int = DEFAULT_OUTPUT_SIZE_PX,
 ) {
@@ -95,9 +111,19 @@ public data class RenderOptions(
 
     public companion object {
         public const val DEFAULT_OUTPUT_SIZE_PX: Int = 512
-        public val SUPPORTED_OUTPUT_SIZES: Set<Int> = setOf(256, 512)
+        public val SUPPORTED_OUTPUT_SIZES: Set<Int> = setOf(256, 512, 1024, 2048)
     }
 }
+
+/**
+ * The tile size a style's pixel-valued properties are authored against.
+ *
+ * A `line-width` of 4 is 4 px in a tile this wide; at any other [RenderOptions.outputSizePx] it is
+ * `4 * outputSizePx / 512`. Fixed by ADR 0013, and deliberately independent of
+ * [RenderOptions.DEFAULT_OUTPUT_SIZE_PX]: changing which size Rentile defaults to must not restyle
+ * every tile.
+ */
+internal const val STYLE_REFERENCE_TILE_SIZE_PX: Int = 512
 
 /** Host-owned allowance for degraded output tiles during initial preparation. */
 public data class TileSubstitutionPolicy(
@@ -415,6 +441,14 @@ public data class LabelIconRef(
  * nevertheless in pixels — [padding], [haloWidth], [haloBlur] and [translateX] — because that is
  * the unit the style specification gives them. They are inputs to the consumer's screen-space
  * placement, not results of it.
+ *
+ * Those pixels are *style* pixels, at the ratio of one, and label acquisition takes no
+ * [RenderOptions] at all: the same candidates serve a tile drawn at any [RenderOptions.outputSizePx].
+ * A consumer compositing labels over a tile rendered above [STYLE_REFERENCE_TILE_SIZE_PX] must
+ * therefore apply `outputSizePx / 512` to this geometry itself, exactly as it already applies its
+ * own device pixel ratio. Nothing here reports an output size, deliberately: folding one in would
+ * put an output size into [LabelCandidateBatch.contentKey] and the label request key, which are
+ * correct today precisely because a candidate does not depend on it.
  */
 public data class LabelCandidate(
     public val layerStyleIndex: Int,

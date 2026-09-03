@@ -161,6 +161,17 @@
           The prepared batch is an <code>AutoCloseable</code> resource owner. Keep it open while
           rendering and close it with <code>use</code> when the batch is no longer needed.
         </p>
+        <p>
+          <code>outputSizePx</code> accepts 256, 512, 1024, and 2048, and it is a device pixel ratio
+          rather than a zoom shift. The style is evaluated at the tile's own zoom whatever the size,
+          and <code>outputSizePx / 512</code> scales every pixel-valued style property, so one
+          coordinate yields the same features, the same labels, and the same relative ink at every
+          size &mdash; sharper, never denser. Asking for 2048 lets a high-density consumer cover a
+          view with a sixteenth of the tiles at unchanged sharpness, at the cost of roughly six
+          times the per-tile draw and encode and a 16&nbsp;MiB surface. Label geometry is in style
+          pixels at ratio one, so apply the same ratio to it when compositing labels over a tile
+          rendered above 512.
+        </p>
       </section>
 
       <section class="doc-section" id="render">

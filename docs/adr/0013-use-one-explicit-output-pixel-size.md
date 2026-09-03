@@ -1,3 +1,5 @@
 # Use one explicit output pixel size
 
+> Extended by [ADR 0030](0030-scale-the-output-tile-by-its-pixel-ratio.md). The accepted set is now 256, 512, 1024 and 2048, and the `outputSizePx / 512` style-space scaling stated below is implemented rather than only intended — it had reached geometry but not ink. Everything else here still holds: one explicit size rather than a size-and-ratio pair, validation before acquisition, sprite pixel ratios as internal atlas metadata, and pass-through only on an exact source/output pixel-size match.
+
 Rentile v1 will expose `outputSizePx`, defaulting to 512, as the actual width and height of the square output PNG instead of exposing an ambiguous output-tile-size and caller pixel-ratio pair. V1 accepts exactly 256 and 512; every other value fails validation before acquisition or rendering. Style-space scaling derives from `outputSizePx / 512`; sprite-entry pixel ratios remain internal atlas metadata, and raster pass-through requires an exact source/output pixel-size match.

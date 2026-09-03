@@ -40,6 +40,7 @@ import com.rohittp.rentile.ResourceAcquisitionException
 import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.SafetyLimitException
+import com.rohittp.rentile.STYLE_REFERENCE_TILE_SIZE_PX
 import com.rohittp.rentile.StyleInput
 import com.rohittp.rentile.StylePreparationException
 import com.rohittp.rentile.TerrainDemEncoding
@@ -252,7 +253,7 @@ private class DefaultBasemapRasterizer(
         val compiled = requireOwnedStyle(style)
         validateTile(tile, compiled.policy)
         return buildString {
-            append("rentile-output-request-2\n")
+            append("rentile-output-request-3\n")
             append(compiled.digest)
             append('\n')
             append(tile.z)
@@ -1461,7 +1462,7 @@ private class DefaultBasemapRasterizer(
         }.toMap()
         val contentKeys = tiles.associateWith { tile ->
             buildString {
-                append("rentile-output-3\n")
+                append("rentile-output-4\n")
                 append(style.digest)
                 append('\n')
                 append(tile.z)
@@ -1597,7 +1598,7 @@ private class DefaultBasemapRasterizer(
             layers = activeLayers,
             rasterResources = rasterResources,
             vectorResources = vectorResources,
-            sizePx = batch.options.outputSizePx,
+            outputSizePx = batch.options.outputSizePx,
             tile = tile,
             diagnostics = renderDiagnostics,
         )
@@ -1625,7 +1626,7 @@ private class DefaultBasemapRasterizer(
             layers = activeLayers,
             rasterResources = resources.raster[tile].orEmpty(),
             vectorResources = resources.vector[tile].orEmpty(),
-            sizePx = size,
+            outputSizePx = size,
             tile = tile,
             diagnostics = renderDiagnostics,
         )
@@ -1638,11 +1639,11 @@ private class DefaultBasemapRasterizer(
         layers: List<CompiledDrawLayer>,
         rasterResources: List<RasterResource>,
         vectorResources: List<VectorResource>,
-        sizePx: Int,
+        outputSizePx: Int,
         tile: TileId,
         diagnostics: MutableList<RenderDiagnostic>,
     ): ByteArray = drawCompositedTile(
-        style, layers, rasterResources, vectorResources, sizePx, tile, diagnostics,
+        style, layers, rasterResources, vectorResources, outputSizePx, tile, diagnostics,
     ) { surface ->
         val encodeStarted = TimeSource.Monotonic.markNow()
         val image = surface.makeImageSnapshot()
@@ -1676,11 +1677,11 @@ private class DefaultBasemapRasterizer(
         layers: List<CompiledDrawLayer>,
         rasterResources: List<RasterResource>,
         vectorResources: List<VectorResource>,
-        sizePx: Int,
+        outputSizePx: Int,
         tile: TileId,
         diagnostics: MutableList<RenderDiagnostic>,
     ): ByteArray = drawCompositedTile(
-        style, layers, rasterResources, vectorResources, sizePx, tile, diagnostics,
+        style, layers, rasterResources, vectorResources, outputSizePx, tile, diagnostics,
     ) { surface ->
         val image = surface.makeImageSnapshot()
         try {
@@ -1715,21 +1716,85 @@ private class DefaultBasemapRasterizer(
         }
     }
 
+    /**
+     * Bounds the output surface before Skia is asked for it.
+     *
+     * The raster ceilings existed only for *source* imagery and the glyph atlas; nothing bounded
+     * the tile Rentile allocates for itself, which did not matter while the largest output was
+     * 1 MiB. At 2048 px it is 16 MiB, so the same two ceilings now cover both ends of the pipeline
+     * and an over-large request fails as a typed [SafetyLimitException] instead of an OOM. The
+     * defaults - 8192 px and 256 MiB - clear every supported size with room to spare; a host that
+     * has tightened them for a small device gets a diagnosable refusal.
+     */
+    private fun enforceOutputSurfaceLimits(outputSizePx: Int, tile: TileId) {
+        val maxDimension = configuration.resourceLimits.maxRasterDimensionPx
+        if (outputSizePx > maxDimension) {
+            throw SafetyLimitException(
+                message = "Output tile size exceeds the configured raster dimension limit",
+                limitName = "maxRasterDimensionPx",
+                limit = maxDimension.toLong(),
+                observed = outputSizePx.toLong(),
+                stage = PipelineStage.RASTERIZATION,
+                affectedTiles = listOf(tile),
+            )
+        }
+        val surfaceBytes = outputSizePx.toLong() * outputSizePx.toLong() * 4L
+        val decodedLimit = minOf(
+            configuration.resourceLimits.maxDecodedRasterBytes,
+            configuration.executionPolicy.maxResidentDecodedBytes,
+        )
+        if (surfaceBytes > decodedLimit) {
+            throw SafetyLimitException(
+                message = "Output surface exceeds the configured memory limit",
+                limitName = "maxResidentDecodedBytes",
+                limit = decodedLimit,
+                observed = surfaceBytes,
+                stage = PipelineStage.RASTERIZATION,
+                affectedTiles = listOf(tile),
+            )
+        }
+    }
+
     private fun <T> drawCompositedTile(
         style: CompiledPreparedStyle,
         layers: List<CompiledDrawLayer>,
         rasterResources: List<RasterResource>,
         vectorResources: List<VectorResource>,
-        sizePx: Int,
+        outputSizePx: Int,
         tile: TileId,
         diagnostics: MutableList<RenderDiagnostic>,
         finish: (Surface) -> T,
     ): T {
         val drawStarted = TimeSource.Monotonic.markNow()
-        val surface = Surface.makeRasterN32Premul(sizePx, sizePx)
+        enforceOutputSurfaceLimits(outputSizePx, tile)
+        val surface = try {
+            Surface.makeRasterN32Premul(outputSizePx, outputSizePx)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            // Skia reports a refused allocation as a bare require() failure, which would cross the
+            // public API untyped. At the reference size this is unthinkable; a 2048 px tile is
+            // 16 MiB of surface plus a snapshot, which a loaded device really can refuse.
+            throw RasterizationException(
+                message = "Could not allocate a ${outputSizePx}x$outputSizePx output surface",
+                affectedTiles = listOf(tile),
+                cause = error,
+            )
+        }
         val spriteContext = style.spriteAtlas?.let(::SpriteRenderContext)
         try {
             surface.canvas.clear(Color.TRANSPARENT)
+            // Everything below draws in style space: a fixed STYLE_REFERENCE_TILE_SIZE_PX-wide
+            // tile, whatever the caller asked for. `outputSizePx` is a device pixel ratio (ADR
+            // 0013), so it belongs in the transform and nowhere else. Putting it here rather than
+            // multiplying it through every evaluated width, offset, blur, pattern period and
+            // collision box is what makes "same cartography, more pixels" structural: geometry and
+            // ink cannot drift apart, because neither of them ever sees the output size.
+            val styleScale = outputSizePx.toDouble() / STYLE_REFERENCE_TILE_SIZE_PX
+            if (styleScale != 1.0) {
+                surface.canvas.scale(styleScale.toFloat(), styleScale.toFloat())
+            }
+            val logicalSizePx = STYLE_REFERENCE_TILE_SIZE_PX
             val placedIcons = if (spriteContext == null) {
                 emptyMap()
             } else {
@@ -1738,18 +1803,18 @@ private class DefaultBasemapRasterizer(
                     resources = vectorResources,
                     sprites = spriteContext,
                     atlas = style.spriteAtlas,
-                    sizePx = sizePx,
+                    logicalSizePx = logicalSizePx,
                     tile = tile,
                     diagnostics = diagnostics,
                 )
             }
             for (layer in layers) {
                 when (layer) {
-                    is BackgroundDrawLayer -> drawBackground(surface, layer, tile, spriteContext, sizePx)
+                    is BackgroundDrawLayer -> drawBackground(surface, layer, tile, spriteContext, logicalSizePx)
                     is RasterDrawLayer -> {
                         val resource = rasterResources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest }
                             ?: continue
-                        drawRaster(surface, layer, resource, sizePx, tile)
+                        drawRaster(surface, layer, resource, logicalSizePx, tile)
                     }
                     is HillshadeDrawLayer -> {
                         val centerSample = layer.source.sampleFor(tile) ?: continue
@@ -1759,17 +1824,17 @@ private class DefaultBasemapRasterizer(
                                 it.sample.sourceX == centerSample.sourceX &&
                                 it.sample.sourceY == centerSample.sourceY
                         } ?: continue
-                        drawHillshade(surface, layer, center, resources, sizePx, tile)
+                        drawHillshade(surface, layer, center, resources, logicalSizePx, tile)
                     }
                     is FillDrawLayer -> {
                         val resource = vectorResources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest }
                             ?: continue
-                        drawFill(surface, layer, resource, sizePx, tile, spriteContext)
+                        drawFill(surface, layer, resource, logicalSizePx, tile, spriteContext)
                     }
                     is LineDrawLayer -> {
                         val resource = vectorResources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest }
                             ?: continue
-                        drawLine(surface, layer, resource, sizePx, tile, spriteContext)
+                        drawLine(surface, layer, resource, logicalSizePx, tile, spriteContext)
                     }
                     is IconDrawLayer -> drawIcons(surface, placedIcons[layer.layerOrder].orEmpty())
                 }
@@ -1797,7 +1862,7 @@ private class DefaultBasemapRasterizer(
         layer: BackgroundDrawLayer,
         tile: TileId,
         sprites: SpriteRenderContext?,
-        sizePx: Int,
+        logicalSizePx: Int,
     ) {
         val background = layer.background
         val context = StyleEvaluationContext(zoom = tile.z.toDouble())
@@ -1824,7 +1889,7 @@ private class DefaultBasemapRasterizer(
                 sprite = sprite,
                 opacity = opacity,
                 tile = tile,
-                sizePx = sizePx,
+                logicalSizePx = logicalSizePx,
             )
             return
         }
@@ -1833,7 +1898,7 @@ private class DefaultBasemapRasterizer(
             this.color = Color.makeARGB(alpha, color.red, color.green, color.blue)
         }
         try {
-            surface.canvas.drawRect(Rect.makeWH(surface.width.toFloat(), surface.height.toFloat()), paint)
+            surface.canvas.drawRect(Rect.makeWH(logicalSizePx.toFloat(), logicalSizePx.toFloat()), paint)
         } finally {
             paint.close()
         }
@@ -1843,7 +1908,7 @@ private class DefaultBasemapRasterizer(
         surface: Surface,
         layer: RasterDrawLayer,
         resource: RasterResource,
-        sizePx: Int,
+        logicalSizePx: Int,
         tile: TileId,
     ) {
         val rasterPaint = evaluateRasterPaint(layer, tile)
@@ -1877,7 +1942,7 @@ private class DefaultBasemapRasterizer(
                 surface.canvas.drawImageRect(
                     image,
                     Rect.makeLTRB(sourceLeft, sourceTop, sourceRight, sourceBottom),
-                    Rect.makeWH(sizePx.toFloat(), sizePx.toFloat()),
+                    Rect.makeWH(logicalSizePx.toFloat(), logicalSizePx.toFloat()),
                     sampling,
                     paint,
                     true,
@@ -1896,7 +1961,7 @@ private class DefaultBasemapRasterizer(
         layer: HillshadeDrawLayer,
         center: RasterResource,
         resources: List<RasterResource>,
-        sizePx: Int,
+        logicalSizePx: Int,
         tile: TileId,
     ) {
         val context = StyleEvaluationContext(zoom = tile.z.toDouble())
@@ -1968,13 +2033,13 @@ private class DefaultBasemapRasterizer(
                 }
             }
 
-            val rgba = ByteArray(sizePx * sizePx * 4)
+            val rgba = ByteArray(logicalSizePx * logicalSizePx * 4)
             val lightAltitude = PI / 4.0
             val lightAzimuth = 335.0 * PI / 180.0
             val flatIllumination = sin(lightAltitude)
-            for (outputY in 0 until sizePx) {
+            for (outputY in 0 until logicalSizePx) {
                 val sourceY = (
-                    (center.sample.childY + (outputY + 0.5) / sizePx) * sourceHeight / center.sample.childScale - 0.5
+                    (center.sample.childY + (outputY + 0.5) / logicalSizePx) * sourceHeight / center.sample.childScale - 0.5
                     ).roundToInt()
                 val globalSourceY = center.sample.sourceY.toDouble() * sourceHeight + sourceY
                 val worldY = (globalSourceY + 0.5) / (sourceDimension * sourceHeight)
@@ -1983,9 +2048,9 @@ private class DefaultBasemapRasterizer(
                     0.01,
                     EARTH_CIRCUMFERENCE_METERS * cos(latitude) / (sourceDimension * sourceWidth),
                 )
-                for (outputX in 0 until sizePx) {
+                for (outputX in 0 until logicalSizePx) {
                     val sourceX = (
-                        (center.sample.childX + (outputX + 0.5) / sizePx) * sourceWidth / center.sample.childScale - 0.5
+                        (center.sample.childX + (outputX + 0.5) / logicalSizePx) * sourceWidth / center.sample.childScale - 0.5
                         ).roundToInt()
                     val left = heightAt(sourceX - 1, sourceY)
                     val right = heightAt(sourceX + 1, sourceY)
@@ -2009,20 +2074,20 @@ private class DefaultBasemapRasterizer(
                         shadeAlpha = (-delta / (1.0 + flatIllumination)).coerceIn(0.0, 1.0)
                     }
                     val color = compositeHillshade(accent, accentAlpha, shadeColor, shadeAlpha)
-                    val offset = (outputY * sizePx + outputX) * 4
+                    val offset = (outputY * logicalSizePx + outputX) * 4
                     rgba[offset] = color.red.toByte()
                     rgba[offset + 1] = color.green.toByte()
                     rgba[offset + 2] = color.blue.toByte()
                     rgba[offset + 3] = color.alpha.toByte()
                 }
             }
-            val imageInfo = ImageInfo(sizePx, sizePx, ColorType.RGBA_8888, ColorAlphaType.UNPREMUL)
-            val hillshade = Image.makeRaster(imageInfo, rgba, sizePx * 4)
+            val imageInfo = ImageInfo(logicalSizePx, logicalSizePx, ColorType.RGBA_8888, ColorAlphaType.UNPREMUL)
+            val hillshade = Image.makeRaster(imageInfo, rgba, logicalSizePx * 4)
             try {
                 surface.canvas.drawImageRect(
                     hillshade,
-                    Rect.makeWH(sizePx.toFloat(), sizePx.toFloat()),
-                    Rect.makeWH(sizePx.toFloat(), sizePx.toFloat()),
+                    Rect.makeWH(logicalSizePx.toFloat(), logicalSizePx.toFloat()),
+                    Rect.makeWH(logicalSizePx.toFloat(), logicalSizePx.toFloat()),
                     SamplingMode.DEFAULT,
                     null,
                     true,
@@ -2107,7 +2172,7 @@ private class DefaultBasemapRasterizer(
         surface: Surface,
         layer: FillDrawLayer,
         resource: VectorResource,
-        sizePx: Int,
+        logicalSizePx: Int,
         tile: TileId,
         sprites: SpriteRenderContext?,
     ) {
@@ -2138,13 +2203,13 @@ private class DefaultBasemapRasterizer(
                 try {
                     for (ring in geometry.rings) {
                         val first = ring.points.firstOrNull() ?: continue
-                        val firstPixel = resource.sample.sourceCoordinateToOutputPixels(first, sourceLayer.extent, sizePx)
+                        val firstPixel = resource.sample.sourceCoordinateToOutputPixels(first, sourceLayer.extent, logicalSizePx)
                         pathBuilder.moveTo(
                             (firstPixel.x + translation[0]).toFloat(),
                             (firstPixel.y + translation[1]).toFloat(),
                         )
                         for (point in ring.points.drop(1)) {
-                            val pixel = resource.sample.sourceCoordinateToOutputPixels(point, sourceLayer.extent, sizePx)
+                            val pixel = resource.sample.sourceCoordinateToOutputPixels(point, sourceLayer.extent, logicalSizePx)
                             pathBuilder.lineTo(
                                 (pixel.x + translation[0]).toFloat(),
                                 (pixel.y + translation[1]).toFloat(),
@@ -2158,7 +2223,7 @@ private class DefaultBasemapRasterizer(
                             surface.canvas.drawPath(path, fillPaint)
                         } else {
                             val sprite = sprites?.image(patternName) ?: continue
-                            drawRepeatedPattern(surface, path, sprite, opacity, tile, sizePx)
+                            drawRepeatedPattern(surface, path, sprite, opacity, tile, logicalSizePx)
                         }
                         if (outlinePaint != null) {
                             outlinePaint.color = paintColor(evaluatedColor(
@@ -2185,7 +2250,7 @@ private class DefaultBasemapRasterizer(
         surface: Surface,
         layer: LineDrawLayer,
         resource: VectorResource,
-        sizePx: Int,
+        logicalSizePx: Int,
         tile: TileId,
         sprites: SpriteRenderContext?,
     ) {
@@ -2247,8 +2312,8 @@ private class DefaultBasemapRasterizer(
                         FilterTileMode.REPEAT,
                         SamplingMode.DEFAULT,
                         Matrix33.makeTranslate(
-                            (canonicalX(tile) * sizePx).toFloat(),
-                            (tile.y.toLong() * sizePx).toFloat(),
+                            (canonicalX(tile) * logicalSizePx).toFloat(),
+                            (tile.y.toLong() * logicalSizePx).toFloat(),
                         ),
                     )
                 }
@@ -2269,15 +2334,18 @@ private class DefaultBasemapRasterizer(
                         }
                     }
                 }
+                // respectCTM: `line-blur` is a style pixel radius, so it scales with
+                // outputSizePx exactly like the stroke it blurs. At the reference size the CTM is
+                // the identity and the sigma is untouched.
                 val maskFilter = blur.takeIf { it > 0.0 }?.let {
-                    MaskFilter.makeBlur(FilterBlurMode.NORMAL, it.toFloat(), false)
+                    MaskFilter.makeBlur(FilterBlurMode.NORMAL, it.toFloat(), true)
                 }
                 paint.maskFilter = maskFilter
                 val geometry = feature.geometry as DecodedVectorGeometry.Lines
                 try {
                     for (line in geometry.lines) {
                         val pixels = line.map { point ->
-                            val pixel = resource.sample.sourceCoordinateToOutputPixels(point, sourceLayer.extent, sizePx)
+                            val pixel = resource.sample.sourceCoordinateToOutputPixels(point, sourceLayer.extent, logicalSizePx)
                             RenderPoint(pixel.x + translation[0], pixel.y + translation[1])
                         }
                         if (pixels.size < 2) continue
@@ -2301,8 +2369,8 @@ private class DefaultBasemapRasterizer(
                                 val dx = second.x - first.x
                                 val dy = second.y - first.y
                                 val length = hypot(dx, dy)
-                                val worldX = canonicalX(tile) * sizePx + first.x
-                                val worldY = tile.y.toDouble() * sizePx + first.y
+                                val worldX = canonicalX(tile) * logicalSizePx + first.x
+                                val worldY = tile.y.toDouble() * logicalSizePx + first.y
                                 val phase = if (length > 0.0 && period > 0f) {
                                     ((worldX * dx / length + worldY * dy / length) % period + period).toFloat() % period
                                 } else {
@@ -2321,6 +2389,7 @@ private class DefaultBasemapRasterizer(
                                     roundLimit = layer.roundLimit.toDouble(),
                                     blur = blur,
                                     dashStroke = dashStroke,
+                                    logicalSizePx = logicalSizePx,
                                 )
                             } finally {
                                 paint.pathEffect = null
@@ -2346,7 +2415,7 @@ private class DefaultBasemapRasterizer(
         resources: List<VectorResource>,
         sprites: SpriteRenderContext,
         atlas: CompiledSpriteAtlas,
-        sizePx: Int,
+        logicalSizePx: Int,
         tile: TileId,
         diagnostics: MutableList<RenderDiagnostic>,
     ): Map<Int, List<PlacedIcon>> {
@@ -2458,7 +2527,7 @@ private class DefaultBasemapRasterizer(
                         placement = placement,
                         resource = resource,
                         extent = sourceLayer.extent,
-                        sizePx = sizePx,
+                        logicalSizePx = logicalSizePx,
                         spacing = spacing,
                     )
                     val sortKey = when (val value = layer.sortKey?.evaluate(baseContext)) {
@@ -2497,7 +2566,7 @@ private class DefaultBasemapRasterizer(
                         val centerY = anchor.y +
                             localShiftX * rotationSine + localShiftY * rotationCosine +
                             anchoring.translateY
-                        if (centerX !in 0.0..<sizePx.toDouble() || centerY !in 0.0..<sizePx.toDouble()) return@forEachIndexed
+                        if (centerX !in 0.0..<logicalSizePx.toDouble() || centerY !in 0.0..<logicalSizePx.toDouble()) return@forEachIndexed
                         val collisionShape = OrientedCollisionBox(
                             centerX = centerX,
                             centerY = centerY,
@@ -2506,7 +2575,7 @@ private class DefaultBasemapRasterizer(
                             cosine = rotationCosine,
                             sine = rotationSine,
                         )
-                        if (avoidEdges && !collisionShape.isInside(sizePx.toDouble())) return@forEachIndexed
+                        if (avoidEdges && !collisionShape.isInside(logicalSizePx.toDouble())) return@forEachIndexed
                         val eitherHalfAllowsOverlap = overlap != IconOverlap.NEVER ||
                             textOverlap?.let { it != IconOverlap.NEVER } == true
                         val usesViewportY = when (zOrder) {
@@ -2621,11 +2690,11 @@ private class DefaultBasemapRasterizer(
         placement: SymbolPlacement,
         resource: VectorResource,
         extent: Int,
-        sizePx: Int,
+        logicalSizePx: Int,
         spacing: Double,
     ): List<IconPlacementAnchor> {
         fun pixel(point: com.rohittp.rentile.internal.mvt.VectorCoordinate): RenderPoint {
-            val output = resource.sample.sourceCoordinateToOutputPixels(point, extent, sizePx)
+            val output = resource.sample.sourceCoordinateToOutputPixels(point, extent, logicalSizePx)
             return RenderPoint(output.x, output.y)
         }
         return when (placement) {
@@ -2685,7 +2754,9 @@ private class DefaultBasemapRasterizer(
                         BlendMode.SRC_IN,
                     )
                     val blur = icon.haloBlur.takeIf { it > 0.0 }?.let {
-                        MaskFilter.makeBlur(FilterBlurMode.NORMAL, it.toFloat(), false)
+                        // respectCTM, for the same reason line-blur does: a style pixel
+                        // radius scales with the tile it is drawn into.
+                        MaskFilter.makeBlur(FilterBlurMode.NORMAL, it.toFloat(), true)
                     }
                     val haloPaint = Paint().apply {
                         alpha = (icon.opacity * 255.0).roundToInt().coerceIn(0, 255)
@@ -2800,7 +2871,7 @@ private class DefaultBasemapRasterizer(
         sprite: SpriteRenderImage,
         opacity: Double,
         tile: TileId,
-        sizePx: Int,
+        logicalSizePx: Int,
     ) {
         val logicalWidth = sprite.entry.width / sprite.entry.pixelRatio
         val logicalHeight = sprite.entry.height / sprite.entry.pixelRatio
@@ -2815,12 +2886,12 @@ private class DefaultBasemapRasterizer(
         val paint = Paint().apply { alpha = (opacity * 255.0).roundToInt().coerceIn(0, 255) }
         try {
             clipPath?.let { canvas.clipPath(it, ClipMode.INTERSECT, true) }
-            val globalX = canonicalX(tile) * sizePx.toDouble()
-            val globalY = tile.y.toDouble() * sizePx
+            val globalX = canonicalX(tile) * logicalSizePx.toDouble()
+            val globalY = tile.y.toDouble() * logicalSizePx
             var y = -positiveModulo(globalY, logicalHeight)
-            while (y < sizePx) {
+            while (y < logicalSizePx) {
                 var x = -positiveModulo(globalX, logicalWidth)
-                while (x < sizePx) {
+                while (x < logicalSizePx) {
                     canvas.drawImageRect(
                         sprite.image,
                         Rect.makeWH(sprite.image.width.toFloat(), sprite.image.height.toFloat()),
@@ -3274,6 +3345,7 @@ private fun drawLinePath(
     roundLimit: Double,
     blur: Double,
     dashStroke: DashStroke?,
+    logicalSizePx: Int,
 ) {
     if (paint.strokeJoin != PaintStrokeJoin.ROUND) {
         surface.canvas.drawPath(path, paint)
@@ -3296,11 +3368,14 @@ private fun drawLinePath(
     val originalBlendMode = paint.blendMode
     val originalPathEffect = paint.pathEffect
     val canvas = surface.canvas
+    // Style space, like every other bound in the draw path: the canvas may be scaled by
+    // `outputSizePx / STYLE_REFERENCE_TILE_SIZE_PX`, in which case the surface's own dimensions
+    // are not the coordinates anything here is expressed in.
     val layerSaveCount = canvas.saveLayer(
         0f,
         0f,
-        surface.width.toFloat(),
-        surface.height.toFloat(),
+        logicalSizePx.toFloat(),
+        logicalSizePx.toFloat(),
         null,
     )
     try {
