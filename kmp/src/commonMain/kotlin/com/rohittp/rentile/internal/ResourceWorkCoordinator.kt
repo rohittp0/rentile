@@ -10,23 +10,29 @@ import kotlinx.coroutines.sync.withPermit
 internal class ResourceWorkCoordinator(
     policy: ExecutionPolicy,
 ) {
-    private val exchangePermits = Semaphore(policy.maxConcurrentExchanges)
+    // Both gates are priority-aware, not just the per-origin one: with a plain global semaphore an
+    // acquisition that won its origin slot would still queue behind warming at the second gate.
+    private val exchangePermits = PriorityGate(policy.maxConcurrentExchanges)
     private val decodePermits = Semaphore(policy.maxConcurrentDecodes)
     private val maxConcurrentExchangesPerOrigin = policy.maxConcurrentExchangesPerOrigin
     private val originMutex = Mutex()
-    private val originPermits = mutableMapOf<String, Semaphore>()
+    private val originPermits = mutableMapOf<String, PriorityGate>()
 
-    suspend fun <T> exchange(url: String, block: suspend () -> T): T =
-        permitsFor(url).withPermit {
-            exchangePermits.withPermit { block() }
+    suspend fun <T> exchange(
+        url: String,
+        priority: ResourcePriority = ResourcePriority.ACQUISITION,
+        block: suspend () -> T,
+    ): T =
+        permitsFor(url).withPermit(priority) {
+            exchangePermits.withPermit(priority) { block() }
         }
 
     suspend fun <T> decode(block: suspend () -> T): T = decodePermits.withPermit { block() }
 
-    private suspend fun permitsFor(url: String): Semaphore {
+    private suspend fun permitsFor(url: String): PriorityGate {
         val origin = originOf(url)
         return originMutex.withLock {
-            originPermits.getOrPut(origin) { Semaphore(maxConcurrentExchangesPerOrigin) }
+            originPermits.getOrPut(origin) { PriorityGate(maxConcurrentExchangesPerOrigin) }
         }
     }
 

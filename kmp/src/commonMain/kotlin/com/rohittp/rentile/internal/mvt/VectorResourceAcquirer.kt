@@ -22,6 +22,9 @@ import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.SingleFlight
 import com.rohittp.rentile.internal.executeTileRequestWithRetry
 import com.rohittp.rentile.internal.recordSafely
+import com.rohittp.rentile.internal.isRawResourceStoredIntact
+import com.rohittp.rentile.internal.fetchRawResourceForWarm
+import com.rohittp.rentile.internal.storeWarmedRawResource
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import kotlinx.coroutines.CancellationException
@@ -111,6 +114,43 @@ internal class VectorResourceAcquirer(
             fetchDecodeAndStore(sample, url, sanitizedId, key)
         }
         return shared.copy(sample = sample, diagnostics = listOf(miss))
+    }
+
+    /**
+     * Fetches [sample]'s bytes into the raw cache without decoding them.
+     *
+     * The point of not decoding is CPU, not tidiness. A prefetch exists to fill idle network time
+     * while rasterization runs; decoding as it went would take the cores the rasterizer needs, which
+     * is how an earlier whole-set read-ahead built on `prepareBatch` turned into a 5-7x regression.
+     *
+     * Skipping the validation decode means bytes reach the cache unvalidated, which is safe because
+     * every cache read already re-validates and evicts what it cannot decode. An undecodable entry
+     * therefore costs one wasted store and heals on first read.
+     *
+     * Returns true when a fetch happened, false when the entry was already cached. Per-resource
+     * failures are the caller's to swallow: a prefetch must never fail the work it is trying to
+     * help, and the on-demand path will surface anything genuinely wrong.
+     */
+    suspend fun warm(sample: VectorTileSample, accessMode: ResourceAccessMode): Boolean {
+        // A GeoJSON-backed source has no per-tile resource to fetch; its data came with the style.
+        if (sample.source.geoJson != null) return false
+        val url = sample.tileUrl()
+        val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
+        val key = RawResourceKey(sanitizedId, ResourceClass.VECTOR_TILE)
+        if (accessMode != ResourceAccessMode.RELOAD &&
+            configuration.isRawResourceStoredIntact(key)
+        ) {
+            return false
+        }
+        val response = configuration.fetchRawResourceForWarm(
+            workCoordinator = workCoordinator,
+            url = url,
+            sanitizedId = sanitizedId,
+            resourceClass = ResourceClass.VECTOR_TILE,
+            outputTile = sample.outputTile,
+        )
+        configuration.storeWarmedRawResource(key, response, ResourceClass.VECTOR_TILE)
+        return true
     }
 
     private suspend fun fetchDecodeAndStore(

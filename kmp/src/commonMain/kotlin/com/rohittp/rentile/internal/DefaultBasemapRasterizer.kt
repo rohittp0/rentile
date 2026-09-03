@@ -24,6 +24,7 @@ import com.rohittp.rentile.PreparedBatchClosedException
 import com.rohittp.rentile.PreparedStyle
 import com.rohittp.rentile.RasterizationException
 import com.rohittp.rentile.RasterizerClosedException
+import com.rohittp.rentile.RawWarmSummary
 import com.rohittp.rentile.RenderBatch
 import com.rohittp.rentile.RenderDiagnostic
 import com.rohittp.rentile.RenderOptions
@@ -477,6 +478,37 @@ private class DefaultBasemapRasterizer(
     override fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor> =
         requireOwnedStyle(style).labelLayers.map { it.descriptor }
 
+    override suspend fun warmRawResources(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode,
+    ): RawWarmSummary = operation {
+        val compiledStyle = requireOwnedStyle(style)
+        val stableTiles = tiles.toList()
+        stableTiles.forEach { validateTile(it, compiledStyle.policy) }
+        // Deduplicated by resource identity, not by tile: adjacent output tiles routinely share one
+        // source sample, and warming it once per tile would multiply the requests this exists to use
+        // well.
+        val rasterSamples = rasterSamplesByTile(compiledStyle, stableTiles)
+            .values.flatten().distinctBy { it.identity }
+        val vectorSamples = vectorSamplesByTile(compiledStyle, stableTiles)
+            .values.flatten().distinctBy { it.identity }
+        val outcomes = supervisorScope {
+            val raster = rasterSamples.map { sample ->
+                async { warmOutcome { rasterAcquirer.warm(sample, resourceAccess) } }
+            }
+            val vector = vectorSamples.map { sample ->
+                async { warmOutcome { vectorAcquirer.warm(sample, resourceAccess) } }
+            }
+            (raster + vector).awaitAll()
+        }
+        RawWarmSummary(
+            fetched = outcomes.count { it == WarmOutcome.FETCHED },
+            alreadyCached = outcomes.count { it == WarmOutcome.ALREADY_CACHED },
+            failed = outcomes.count { it == WarmOutcome.FAILED },
+        )
+    }
+
     override suspend fun acquireLabelTiles(
         style: PreparedStyle,
         tiles: List<TileId>,
@@ -900,28 +932,61 @@ private class DefaultBasemapRasterizer(
         DemEncoding.MAPBOX, null -> TerrainDemEncoding.MAPBOX
     }
 
+    /**
+     * Which raster/hillshade source samples each output tile needs.
+     *
+     * Extracted so the raw-warming path in [warmRawResources] plans from the same expression the
+     * real acquisition does. Two copies would let a prefetch warm a different set than the render
+     * later asks for, which fails silently: every request still succeeds, just none of them warm
+     * anything the render wants.
+     */
+    private fun rasterSamplesByTile(
+        style: CompiledPreparedStyle,
+        tiles: List<TileId>,
+    ): Map<TileId, List<RasterSample>> = tiles.associateWith { tile ->
+        style.drawLayers
+            .filter { it is RasterDrawLayer || it is HillshadeDrawLayer }
+            .filter { it.isActiveAt(tile.z) }
+            .flatMap { layer ->
+                when (layer) {
+                    is RasterDrawLayer -> listOfNotNull(layer.source.sampleFor(tile))
+                    is HillshadeDrawLayer -> layer.source.sampleFor(tile)?.let { center ->
+                        (-1..1).flatMap { deltaY ->
+                            (-1..1).mapNotNull { deltaX -> center.neighbor(deltaX, deltaY) }
+                        }
+                    }.orEmpty()
+                    else -> emptyList()
+                }
+            }
+            .distinctBy { it.identity }
+    }
+
+    /** Which vector source samples each output tile needs; see [rasterSamplesByTile]. */
+    private fun vectorSamplesByTile(
+        style: CompiledPreparedStyle,
+        tiles: List<TileId>,
+    ): Map<TileId, List<VectorTileSample>> = tiles.associateWith { tile ->
+        style.drawLayers
+            .filter { it is FillDrawLayer || it is LineDrawLayer || it is IconDrawLayer }
+            .filter { it.isActiveAt(tile.z) }
+            .map { layer ->
+                when (layer) {
+                    is FillDrawLayer -> layer.source
+                    is LineDrawLayer -> layer.source
+                    is IconDrawLayer -> layer.source
+                    else -> error("unreachable")
+                }
+            }
+            .mapNotNull { it.sampleFor(tile) }
+            .distinctBy { it.source.idDigest }
+    }
+
     private suspend fun planRasterResources(
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
         accessMode: ResourceAccessMode,
     ): RasterAcquisitionPlan = supervisorScope {
-        val samplesByTile = tiles.associateWith { tile ->
-            style.drawLayers
-                .filter { it is RasterDrawLayer || it is HillshadeDrawLayer }
-                .filter { it.isActiveAt(tile.z) }
-                .flatMap { layer ->
-                    when (layer) {
-                        is RasterDrawLayer -> listOfNotNull(layer.source.sampleFor(tile))
-                        is HillshadeDrawLayer -> layer.source.sampleFor(tile)?.let { center ->
-                            (-1..1).flatMap { deltaY ->
-                                (-1..1).mapNotNull { deltaX -> center.neighbor(deltaX, deltaY) }
-                            }
-                        }.orEmpty()
-                        else -> emptyList()
-                    }
-                }
-                .distinctBy { it.identity }
-        }
+        val samplesByTile = rasterSamplesByTile(style, tiles)
         val representatives = samplesByTile.values.flatten()
             .associateBy { it.identity }
             .entries
@@ -939,21 +1004,7 @@ private class DefaultBasemapRasterizer(
         tiles: List<TileId>,
         accessMode: ResourceAccessMode,
     ): VectorAcquisitionPlan = supervisorScope {
-        val samplesByTile = tiles.associateWith { tile ->
-            style.drawLayers
-                .filter { it is FillDrawLayer || it is LineDrawLayer || it is IconDrawLayer }
-                .filter { it.isActiveAt(tile.z) }
-                .map { layer ->
-                    when (layer) {
-                        is FillDrawLayer -> layer.source
-                        is LineDrawLayer -> layer.source
-                        is IconDrawLayer -> layer.source
-                        else -> error("unreachable")
-                    }
-                }
-                .mapNotNull { it.sampleFor(tile) }
-                .distinctBy { it.source.idDigest }
-        }
+        val samplesByTile = vectorSamplesByTile(style, tiles)
         val representatives = samplesByTile.values.flatten()
             .associateBy { it.identity }
             .entries
@@ -1047,11 +1098,30 @@ private class DefaultBasemapRasterizer(
         }
     }
 
+    /**
+     * Whether an acquisition failure is one a *different* tile could satisfy.
+     *
+     * 400 is on this list, which is not obvious. It was excluded on the reasoning that a 400 means a
+     * malformed request, so retrying with another URL is pointless. In practice providers use it for
+     * coverage: MapTiler answers a tile outside a tileset's bounds with `400 Out of bounds` rather
+     * than 404, and the observed cost of excluding it was a whole 1m22s export aborted by one
+     * `tiles/ocean/4/0/15.pbf` — the southernmost row at z4 — after every other tile from the same
+     * source, key and session had succeeded.
+     *
+     * Including it is safe because a substitute is a different tile at a different URL. A genuine
+     * request-construction bug fails the substitutes too and still surfaces, as a
+     * [TileSubstitutionException] naming the strategies tried, at a bounded cost of two or three
+     * extra requests. A coverage rejection, in contrast, resolves: the ancestor is in bounds.
+     *
+     * A status this does not list stays fatal, and a non-substitutable resource class is never
+     * eligible whatever its status — a style, a TileJSON or a glyph range has no sibling tile to
+     * fall back to.
+     */
     private fun isSubstitutionEligible(error: Throwable): Boolean {
         val failure = error as? ResourceAcquisitionException ?: return false
         if (failure.resourceClass !in SUBSTITUTABLE_RESOURCE_CLASSES) return false
         val status = failure.statusCode ?: return true
-        return status == 404 || status == 408 || status == 429 || status >= 500
+        return status == 400 || status == 404 || status == 408 || status == 429 || status >= 500
     }
 
     private suspend fun resolveRasterResources(
@@ -1429,6 +1499,26 @@ private class DefaultBasemapRasterizer(
         throw error
     } catch (error: Throwable) {
         AcquisitionOutcome.Failure(error)
+    }
+
+    private enum class WarmOutcome { FETCHED, ALREADY_CACHED, FAILED }
+
+    /**
+     * Absorbs a per-resource warming failure.
+     *
+     * A prefetch must never fail the work it is helping, so anything about one resource is counted
+     * and dropped. Cancellation still propagates -- a cancelled export must not keep prefetching --
+     * and so does [RasterizerClosedException], because continuing against a closed rasterizer is a
+     * lifecycle bug rather than an unavailable tile.
+     */
+    private suspend fun warmOutcome(block: suspend () -> Boolean): WarmOutcome = try {
+        if (block()) WarmOutcome.FETCHED else WarmOutcome.ALREADY_CACHED
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (closed: RasterizerClosedException) {
+        throw closed
+    } catch (_: Throwable) {
+        WarmOutcome.FAILED
     }
 
     private fun throwAcquisitionFailures(outcomes: List<AcquisitionOutcome<*>>) {

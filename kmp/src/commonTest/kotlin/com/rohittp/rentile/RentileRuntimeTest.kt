@@ -2968,6 +2968,167 @@ class RentileRuntimeTest {
     }
 
     @Test
+    fun warmingLeavesExactlyWhatARenderThenAsksForInTheCache() = runTest {
+        // The property that makes the prefetch worth anything: it must plan the same source samples
+        // the render will. If the two expressions drifted, every warm request would still succeed and
+        // none of them would warm a resource the render wanted -- a failure that reports as success.
+        val sourcePng = renderSyntheticPng(256)
+        val requestedUrls = mutableListOf<String>()
+        val requestedUrlsMutex = Mutex()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                requestedUrlsMutex.withLock { requestedUrls += request.url }
+                TransportResponse(200, sourcePng)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle("secret"))
+            val tile = TileId(1, 0, 0)
+
+            val summary = rasterizer.warmRawResources(style, listOf(tile))
+            val afterWarm = requestedUrlsMutex.withLock { requestedUrls.toList() }
+
+            assertEquals(1, summary.fetched)
+            assertEquals(0, summary.failed)
+            assertEquals(1, afterWarm.size)
+
+            val batch = rasterizer.prepareBatch(style, listOf(tile), RenderOptions(256))
+            try {
+                // No further request: the render was served entirely from what warming stored.
+                assertEquals(afterWarm, requestedUrlsMutex.withLock { requestedUrls.toList() })
+                assertTrue(rasterizer.render(batch).tiles.single().pngBytes.startsWithPngSignature())
+            } finally {
+                batch.close()
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun warmingAnAlreadyCachedResourceDoesNotRefetchIt() = runTest {
+        val sourcePng = renderSyntheticPng(256)
+        var requests = 0
+        val requestsMutex = Mutex()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport {
+                requestsMutex.withLock { requests++ }
+                TransportResponse(200, sourcePng)
+            },
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle("secret"))
+            val tile = TileId(1, 0, 0)
+
+            val first = rasterizer.warmRawResources(style, listOf(tile))
+            val second = rasterizer.warmRawResources(style, listOf(tile))
+
+            assertEquals(1, first.fetched)
+            assertEquals(0, first.alreadyCached)
+            assertEquals(0, second.fetched)
+            assertEquals(1, second.alreadyCached)
+            assertEquals(1, requestsMutex.withLock { requests }, "the second warm must not refetch")
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aResourceThatCannotBeWarmedIsCountedRatherThanThrown() = runTest {
+        // A prefetch must never fail the work it is meant to help. The later prepareBatch is what
+        // decides whether an unavailable resource is fatal, substitutable, or already cached.
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { TransportResponse(500, ByteArray(0)) },
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle("secret"))
+
+            val summary = rasterizer.warmRawResources(style, listOf(TileId(1, 0, 0)))
+
+            assertEquals(0, summary.fetched)
+            assertEquals(1, summary.failed)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aProviderReportingOutOfCoverageAsBadRequestIsSubstitutedRatherThanFatal() = runTest {
+        // MapTiler answers a tile outside a tileset's bounds with `400 Out of bounds`, not 404. With
+        // 400 held ineligible, one such tile -- tiles/ocean/4/0/15.pbf, the southernmost row at z4 --
+        // aborted a whole 1m22s export after every other tile from the same source, key and session
+        // had succeeded. A substitute is a different tile at a different URL, so coverage resolves.
+        val vectorTile = overzoomVectorTile()
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { request ->
+                if (request.url.contains("/1/0/0.pbf")) {
+                    TransportResponse(400, "Out of bounds".encodeToByteArray())
+                } else {
+                    TransportResponse(200, vectorTile)
+                }
+            },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"land","type":"fill","source":"v","source-layer":"land","paint":{"fill-color":"#00ff00"}}]}""",
+                ),
+            )
+            val tile = TileId(1, 0, 0)
+            val batch = rasterizer.prepareBatch(
+                style = style,
+                tiles = listOf(tile),
+                options = RenderOptions(256),
+                substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+            )
+            try {
+                val substitution = batch.substitutions.getValue(tile).single()
+                val rendered = rasterizer.render(batch).tiles.single()
+
+                assertEquals(ResourceClass.VECTOR_TILE, substitution.resourceClass)
+                assertTrue(rendered.pngBytes.startsWithPngSignature())
+            } finally {
+                batch.close()
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aStatusOutsideTheEligibleSetStaysFatalRatherThanBeingSubstituted() = runTest {
+        // The other half of the contract. 403 says the credential is wrong, not that this tile is
+        // missing; substituting would spend two more requests and then report a substitution failure
+        // for what is really an auth problem, so it must surface as itself.
+        val rasterizer = testRasterizer(
+            transport = ResourceTransport { TransportResponse(403, ByteArray(0)) },
+        )
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"]}},"layers":[{"id":"land","type":"fill","source":"v","source-layer":"land","paint":{"fill-color":"#00ff00"}}]}""",
+                ),
+            )
+            val failure = assertFailsWith<ResourceAcquisitionException> {
+                rasterizer.prepareBatch(
+                    style = style,
+                    tiles = listOf(TileId(1, 0, 0)),
+                    options = RenderOptions(256),
+                    substitutionPolicy = TileSubstitutionPolicy(maximumSubstitutedTiles = 1),
+                )
+            }
+            assertEquals(403, failure.statusCode)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun vectorChildSubstitutionMergesAllFourResourcesIntoOneRenderableTile() = runTest {
         val vectorTile = overzoomVectorTile()
         val rasterizer = testRasterizer(

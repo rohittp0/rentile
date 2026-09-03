@@ -112,6 +112,18 @@ public data class TileSubstitutionPolicy(
     }
 }
 
+/**
+ * What one [BasemapRasterizer.warmRawResources] call did.
+ *
+ * [fetched] and [alreadyCached] count *source resources*, not output tiles: one output tile usually
+ * needs several, and several output tiles often share one.
+ */
+public data class RawWarmSummary(
+    public val fetched: Int,
+    public val alreadyCached: Int,
+    public val failed: Int,
+)
+
 /** How one unavailable source resource was replaced for an output tile. */
 public enum class TileSubstitutionStrategy {
     IMMEDIATE_CHILDREN,
@@ -860,6 +872,44 @@ public interface BasemapRasterizer : AutoCloseable {
     public fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor>
 
     /** All-or-error validated MVT acquisition. Tile substitution is deliberately not applied. */
+    /**
+     * Fetches every raw source resource [tiles] will need into the raw cache, decoding and
+     * rasterizing nothing.
+     *
+     * This exists because acquisition and rasterization otherwise run in lockstep and leave each
+     * other idle. Measured on a cold 1817-frame export: raising raster workers from 2 to 4 cut
+     * rasterization wall time by 57 s and grew acquisition by 61 s, for no net change — the signature
+     * of a serial pipeline. Warming the cache ahead of the rasterization cursor is how that idle
+     * network time gets used.
+     *
+     * Two properties make this cheap where a `prepareBatch`-based read-ahead was not:
+     *
+     * - **It does not decode.** A prefetch that decoded would take the cores the rasterizer needs.
+     *   An earlier whole-set read-ahead built on `prepareBatch` did exactly that and measured a 5-7x
+     *   regression.
+     * - **It costs no heap.** Bytes land in the caller's [RawResourceStore], which is disk-backed in
+     *   every production host, not in a decoded in-memory form.
+     *
+     * Tile substitution is deliberately not applied: substituting is a *rendering* decision about a
+     * resource that turned out to be unavailable, and warming makes no rendering decisions. A tile
+     * this cannot fetch is simply not warmed, and the later `prepareBatch` substitutes as it always
+     * would.
+     *
+     * **Per-resource failures are absorbed, not thrown.** A prefetch must never fail the work it is
+     * meant to help; [RawWarmSummary.failed] reports how many were lost. It still throws for callers'
+     * programming errors — an unowned style, a tile outside the compatibility profile — and for
+     * cancellation.
+     *
+     * Ordering is the caller's responsibility, and it matters: issue tiles in the order they will be
+     * rendered. A read-ahead that fetched a whole session in plan order while the cursor sat near the
+     * start spent the contended connection budget on tiles it would not reach for minutes.
+     */
+    public suspend fun warmRawResources(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): RawWarmSummary
+
     public suspend fun acquireLabelTiles(
         style: PreparedStyle,
         tiles: List<TileId>,

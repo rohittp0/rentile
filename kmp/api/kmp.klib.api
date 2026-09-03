@@ -315,6 +315,7 @@ abstract interface com.rohittp.rentile/BasemapRasterizer : kotlin/AutoCloseable 
     abstract suspend fun render(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ..., com.rohittp.rentile/TileSubstitutionPolicy = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode;com.rohittp.rentile.TileSubstitutionPolicy){}[0]
     abstract suspend fun renderRaw(com.rohittp.rentile/PreparedBatch, kotlin.collections/List<com.rohittp.rentile/TileId> = ...): com.rohittp.rentile/RawRenderBatch // com.rohittp.rentile/BasemapRasterizer.renderRaw|renderRaw(com.rohittp.rentile.PreparedBatch;kotlin.collections.List<com.rohittp.rentile.TileId>){}[0]
     abstract suspend fun retryExact(com.rohittp.rentile/PreparedBatch): com.rohittp.rentile/ExactRecoveryResult // com.rohittp.rentile/BasemapRasterizer.retryExact|retryExact(com.rohittp.rentile.PreparedBatch){}[0]
+    abstract suspend fun warmRawResources(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/RawWarmSummary // com.rohittp.rentile/BasemapRasterizer.warmRawResources|warmRawResources(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ResourceAccessMode){}[0]
 }
 
 abstract interface com.rohittp.rentile/LabelCandidatePlan : kotlin/AutoCloseable { // com.rohittp.rentile/LabelCandidatePlan|null[0]
@@ -1265,6 +1266,25 @@ final class com.rohittp.rentile/RawResourceMetadata { // com.rohittp.rentile/Raw
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RawResourceMetadata.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/RawResourceMetadata.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/RawResourceMetadata.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/RawWarmSummary { // com.rohittp.rentile/RawWarmSummary|null[0]
+    constructor <init>(kotlin/Int, kotlin/Int, kotlin/Int) // com.rohittp.rentile/RawWarmSummary.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.Int){}[0]
+
+    final val alreadyCached // com.rohittp.rentile/RawWarmSummary.alreadyCached|{}alreadyCached[0]
+        final fun <get-alreadyCached>(): kotlin/Int // com.rohittp.rentile/RawWarmSummary.alreadyCached.<get-alreadyCached>|<get-alreadyCached>(){}[0]
+    final val failed // com.rohittp.rentile/RawWarmSummary.failed|{}failed[0]
+        final fun <get-failed>(): kotlin/Int // com.rohittp.rentile/RawWarmSummary.failed.<get-failed>|<get-failed>(){}[0]
+    final val fetched // com.rohittp.rentile/RawWarmSummary.fetched|{}fetched[0]
+        final fun <get-fetched>(): kotlin/Int // com.rohittp.rentile/RawWarmSummary.fetched.<get-fetched>|<get-fetched>(){}[0]
+
+    final fun component1(): kotlin/Int // com.rohittp.rentile/RawWarmSummary.component1|component1(){}[0]
+    final fun component2(): kotlin/Int // com.rohittp.rentile/RawWarmSummary.component2|component2(){}[0]
+    final fun component3(): kotlin/Int // com.rohittp.rentile/RawWarmSummary.component3|component3(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ...): com.rohittp.rentile/RawWarmSummary // com.rohittp.rentile/RawWarmSummary.copy|copy(kotlin.Int;kotlin.Int;kotlin.Int){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RawWarmSummary.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/RawWarmSummary.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/RawWarmSummary.toString|toString(){}[0]
 }
 
 final class com.rohittp.rentile/RenderBatch { // com.rohittp.rentile/RenderBatch|null[0]

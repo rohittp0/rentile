@@ -19,6 +19,9 @@ import com.rohittp.rentile.StoredRawResource
 import com.rohittp.rentile.TransportRequest
 import com.rohittp.rentile.internal.recordSafely
 import com.rohittp.rentile.internal.ResourceWorkCoordinator
+import com.rohittp.rentile.internal.isRawResourceStoredIntact
+import com.rohittp.rentile.internal.fetchRawResourceForWarm
+import com.rohittp.rentile.internal.storeWarmedRawResource
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.SingleFlight
 import com.rohittp.rentile.internal.executeTileRequestWithRetry
@@ -110,6 +113,41 @@ internal class RasterResourceAcquirer(
             fetchValidateAndStore(sample, url, sanitizedId, key, retainPixels)
         }
         return shared.copy(sample = sample, diagnostics = listOf(miss))
+    }
+
+    /**
+     * Fetches [sample]'s bytes into the raw cache without decoding them.
+     *
+     * The point of not decoding is CPU, not tidiness. A prefetch exists to fill idle network time
+     * while rasterization runs; decoding as it went would take the cores the rasterizer needs, which
+     * is how an earlier whole-set read-ahead built on `prepareBatch` turned into a 5-7x regression.
+     *
+     * Skipping the validation decode means bytes reach the cache unvalidated, which is safe because
+     * every cache read already re-validates and evicts what it cannot decode. An undecodable entry
+     * therefore costs one wasted store and heals on first read.
+     *
+     * Returns true when a fetch happened, false when the entry was already cached. Per-resource
+     * failures are the caller's to swallow: a prefetch must never fail the work it is trying to
+     * help, and the on-demand path will surface anything genuinely wrong.
+     */
+    suspend fun warm(sample: RasterSample, accessMode: ResourceAccessMode): Boolean {
+        val url = sample.tileUrl()
+        val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
+        val key = RawResourceKey(sanitizedId, sample.source.resourceClass)
+        if (accessMode != ResourceAccessMode.RELOAD &&
+            configuration.isRawResourceStoredIntact(key)
+        ) {
+            return false
+        }
+        val response = configuration.fetchRawResourceForWarm(
+            workCoordinator = workCoordinator,
+            url = url,
+            sanitizedId = sanitizedId,
+            resourceClass = sample.source.resourceClass,
+            outputTile = sample.outputTile,
+        )
+        configuration.storeWarmedRawResource(key, response, sample.source.resourceClass)
+        return true
     }
 
     private suspend fun fetchValidateAndStore(
