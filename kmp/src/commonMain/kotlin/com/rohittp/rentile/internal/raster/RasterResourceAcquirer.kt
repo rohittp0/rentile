@@ -20,8 +20,7 @@ import com.rohittp.rentile.TransportRequest
 import com.rohittp.rentile.internal.recordSafely
 import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.isRawResourceStoredIntact
-import com.rohittp.rentile.internal.fetchRawResourceForWarm
-import com.rohittp.rentile.internal.storeWarmedRawResource
+import com.rohittp.rentile.internal.warmRawResource
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.SingleFlight
 import com.rohittp.rentile.internal.executeTileRequestWithRetry
@@ -36,12 +35,33 @@ import org.jetbrains.skia.Data
 import org.jetbrains.skia.Image
 import org.jetbrains.skia.ImageInfo
 
+/**
+ * What one flight for a raster resource produced: its bytes always, its validating decode only
+ * when the participant that ran the fetch performed one.
+ *
+ * A prefetch deliberately does not decode -- that is the CPU it exists to save -- so an acquisition
+ * that joins one validates the bytes itself. A terrain acquisition joining an ordinary one decodes
+ * again for the same reason: only the retaining decode keeps pixels. Retention is therefore a
+ * property of the participant rather than of the flight key. Keying flights by it, as this used to,
+ * let a terrain read and an ordinary read of one URL both go out; retaining on every fetch
+ * regardless of who asked would instead make each hillshade preparation decode and discard a
+ * megabyte per source tile.
+ */
+internal class RasterFlight(
+    val bytes: ByteArray,
+    val contentDigest: String,
+    val decoded: DecodedRaster?,
+)
+
+/** Canonical decode result shared by the validating and the pixel-retaining paths. */
+internal data class DecodedRaster(val width: Int, val height: Int, val rgba: ByteArray?)
+
 internal class RasterResourceAcquirer(
     private val configuration: RentileConfiguration,
     scope: CoroutineScope,
     private val workCoordinator: ResourceWorkCoordinator,
 ) {
-    private val singleFlight = SingleFlight<RasterFlightKey, RasterResource>(scope)
+    private val singleFlight = SingleFlight<RawResourceKey, RasterFlight>(scope)
 
     /**
      * Acquires one raster resource, optionally keeping the pixels its validation decode produces.
@@ -103,7 +123,7 @@ internal class RasterResourceAcquirer(
         val miss = cacheDiagnostic(DiagnosticCode.RESOURCE_CACHE_MISS, sanitizedId, sample)
         configuration.diagnosticSink.recordSafely(miss)
         val shared = singleFlight.run(
-            key = RasterFlightKey(key, retainPixels),
+            key = key,
             onJoin = {
                 configuration.metricsSink.recordSafely(
                     RentileMetric(MetricName.SINGLE_FLIGHT_JOIN, resourceClass = sample.source.resourceClass),
@@ -112,7 +132,17 @@ internal class RasterResourceAcquirer(
         ) {
             fetchValidateAndStore(sample, url, sanitizedId, key, retainPixels)
         }
-        return shared.copy(sample = sample, diagnostics = listOf(miss))
+        val decoded = shared.decoded?.takeIf { !retainPixels || it.rgba != null }
+            ?: validateRasterOrThrow(shared.bytes, sanitizedId, sample, retainPixels)
+        return RasterResource(
+            sample = sample,
+            bytes = shared.bytes,
+            contentDigest = shared.contentDigest,
+            width = decoded.width,
+            height = decoded.height,
+            diagnostics = listOf(miss),
+            rgba = if (retainPixels) decoded.rgba else null,
+        )
     }
 
     /**
@@ -126,9 +156,10 @@ internal class RasterResourceAcquirer(
      * every cache read already re-validates and evicts what it cannot decode. An undecodable entry
      * therefore costs one wasted store and heals on first read.
      *
-     * Returns true when a fetch happened, false when the entry was already cached. Per-resource
-     * failures are the caller's to swallow: a prefetch must never fail the work it is trying to
-     * help, and the on-demand path will surface anything genuinely wrong.
+     * Returns true when a fetch happened, false when there was nothing to do because the entry was
+     * already cached or already being acquired by another participant on the same flight.
+     * Per-resource failures are the caller's to swallow: a prefetch must never fail the work it is
+     * trying to help, and the on-demand path will surface anything genuinely wrong.
      */
     suspend fun warm(sample: RasterSample, accessMode: ResourceAccessMode): Boolean {
         val url = sample.tileUrl()
@@ -139,15 +170,15 @@ internal class RasterResourceAcquirer(
         ) {
             return false
         }
-        val response = configuration.fetchRawResourceForWarm(
+        return configuration.warmRawResource(
             workCoordinator = workCoordinator,
+            singleFlight = singleFlight,
+            key = key,
             url = url,
             sanitizedId = sanitizedId,
             resourceClass = sample.source.resourceClass,
             outputTile = sample.outputTile,
-        )
-        configuration.storeWarmedRawResource(key, response, sample.source.resourceClass)
-        return true
+        ) { bytes, contentDigest -> RasterFlight(bytes, contentDigest, decoded = null) }
     }
 
     private suspend fun fetchValidateAndStore(
@@ -156,7 +187,7 @@ internal class RasterResourceAcquirer(
         sanitizedId: String,
         key: RawResourceKey,
         retainPixels: Boolean,
-    ): RasterResource {
+    ): RasterFlight {
         val response = executeTileRequestWithRetry {
             workCoordinator.exchange(url) {
                 configuration.metricsSink.recordSafely(
@@ -226,15 +257,7 @@ internal class RasterResourceAcquirer(
                 resourceClass = sample.source.resourceClass,
             ),
         )
-        return RasterResource(
-            sample,
-            bytes,
-            digest,
-            decoded.width,
-            decoded.height,
-            emptyList(),
-            rgba = decoded.rgba,
-        )
+        return RasterFlight(bytes = bytes, contentDigest = digest, decoded = decoded)
     }
 
     private suspend fun readStore(key: RawResourceKey): StoredRawResource? = try {
@@ -427,16 +450,6 @@ internal class RasterResourceAcquirer(
             affectedTiles = listOf(sample.outputTile),
             cause = cause,
         )
-
-    private data class DecodedRaster(val width: Int, val height: Int, val rgba: ByteArray?)
-
-    /**
-     * In-process dedupe identity, which includes retention because a flight has one result shared
-     * by every joiner. A caller that needs pixels cannot be served by a flight created by one that
-     * did not, and the alternative - retaining on every DEM fetch regardless of who asked - would
-     * make each hillshade preparation decode and discard a megabyte per source tile.
-     */
-    private data class RasterFlightKey(val resource: RawResourceKey, val retainPixels: Boolean)
 
     private fun cacheDiagnostic(code: DiagnosticCode, sanitizedId: String, sample: RasterSample): RenderDiagnostic =
         RenderDiagnostic(

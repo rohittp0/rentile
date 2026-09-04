@@ -143,6 +143,10 @@ public data class TileSubstitutionPolicy(
  *
  * [fetched] and [alreadyCached] count *source resources*, not output tiles: one output tile usually
  * needs several, and several output tiles often share one.
+ *
+ * [alreadyCached] counts every resource this call did not have to fetch, which includes one an
+ * acquisition was already fetching when warming reached it: warming and acquisition share one
+ * flight per resource, so the second arrival never issues a request of its own.
  */
 public data class RawWarmSummary(
     public val fetched: Int,
@@ -923,6 +927,10 @@ public interface BasemapRasterizer : AutoCloseable {
      *   regression.
      * - **It costs no heap.** Bytes land in the caller's [RawResourceStore], which is disk-backed in
      *   every production host, not in a decoded in-memory form.
+     * - **It never duplicates an acquisition.** Warming and on-demand acquisition share one flight
+     *   per resource, so a prefetch running against the tiles a render is reaching — which is
+     *   exactly what cursor-ordered warming does — issues one request between them, whichever
+     *   arrived first.
      *
      * Tile substitution is deliberately not applied: substituting is a *rendering* decision about a
      * resource that turned out to be unavailable, and warming makes no rendering decisions. A tile

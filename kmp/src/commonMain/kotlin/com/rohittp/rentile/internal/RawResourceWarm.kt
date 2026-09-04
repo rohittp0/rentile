@@ -36,36 +36,86 @@ internal suspend fun RentileConfiguration.isRawResourceStoredIntact(key: RawReso
     return stored.bytes.sha256Hex() == stored.contentDigest
 }
 
-internal suspend fun RentileConfiguration.fetchRawResourceForWarm(
+/**
+ * Warms one raw resource on the single flight the on-demand acquisition of the same URL uses.
+ *
+ * One flight for both is the point. A cursor-ordered prefetch running alongside playback reaches,
+ * by design, the tiles the renderer is about to ask for, so the two collide constantly; separate
+ * flights meant both requests went out and the duplicate was charged to the very connection budget
+ * the prefetch exists to spend well.
+ *
+ * **The exchange permit is taken before the flight rather than inside it, and that ordering is
+ * load-bearing.** It means a flight another coroutine can see is always one that already holds its
+ * permits, so an acquisition that joins a prefetch waits for one in-flight exchange -- the bound
+ * [PriorityGate] already documents -- and never for a WARM queue position behind every queued
+ * acquisition. It is also why the prefetch does not join a flight it did not create: it would be
+ * waiting, permit in hand, for work that needs a permit.
+ *
+ * The price of that ordering is that [fetchRawResourceForWarm]'s retry now runs under the permit,
+ * so a throttled prefetch holds its slot across the `Retry-After` wait as well as both attempts --
+ * bounded by [MAX_TILE_RETRY_DELAY_MILLIS]. Releasing the permit between attempts would put a
+ * flight that joiners are already attached to back in the WARM queue, which is the wait this
+ * ordering exists to prevent.
+ *
+ * Returns true when this call fetched, false when there was nothing for it to do because the
+ * resource was already cached or already being acquired by someone else.
+ */
+internal suspend fun <V : Any> RentileConfiguration.warmRawResource(
     workCoordinator: ResourceWorkCoordinator,
+    singleFlight: SingleFlight<RawResourceKey, V>,
+    key: RawResourceKey,
+    url: String,
+    sanitizedId: String,
+    resourceClass: ResourceClass,
+    outputTile: TileId,
+    flightValue: (bytes: ByteArray, contentDigest: String) -> V,
+): Boolean = workCoordinator.exchange(url, ResourcePriority.WARM) {
+    val fetched = singleFlight.tryRun(key) {
+        val response = fetchRawResourceForWarm(
+            url = url,
+            sanitizedId = sanitizedId,
+            resourceClass = resourceClass,
+            outputTile = outputTile,
+        )
+        val bytes = response.body
+        val contentDigest = bytes.sha256Hex()
+        storeWarmedRawResource(key, bytes, contentDigest, response, resourceClass)
+        flightValue(bytes, contentDigest)
+    }
+    fetched != null
+}
+
+/**
+ * Performs the warm exchange itself. The caller holds the exchange permit; see [warmRawResource].
+ *
+ * WARM: this only ever runs on a connection slot no acquisition wanted, so a prefetch can cover a
+ * whole session without taking a slot from the work it is meant to help.
+ */
+internal suspend fun RentileConfiguration.fetchRawResourceForWarm(
     url: String,
     sanitizedId: String,
     resourceClass: ResourceClass,
     outputTile: TileId,
 ): TransportResponse {
     val response = executeTileRequestWithRetry {
-        // WARM: this only ever runs on a connection slot no acquisition wanted, so a prefetch can
-        // cover a whole session without taking a slot from the work it is meant to help.
-        workCoordinator.exchange(url, ResourcePriority.WARM) {
-            metricsSink.recordSafely(RentileMetric(MetricName.RESOURCE_REQUEST, resourceClass = resourceClass))
-            try {
-                transport.execute(
-                    TransportRequest(
-                        url = url,
-                        resourceClass = resourceClass,
-                        maxResponseBytes = resourceLimits.maxTileBytes,
-                    ),
-                )
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                throw ResourceAcquisitionException(
-                    message = "Raw resource transport failed while warming",
+        metricsSink.recordSafely(RentileMetric(MetricName.RESOURCE_REQUEST, resourceClass = resourceClass))
+        try {
+            transport.execute(
+                TransportRequest(
+                    url = url,
                     resourceClass = resourceClass,
-                    sanitizedResourceId = sanitizedId,
-                    affectedTiles = listOf(outputTile),
-                )
-            }
+                    maxResponseBytes = resourceLimits.maxTileBytes,
+                ),
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            throw ResourceAcquisitionException(
+                message = "Raw resource transport failed while warming",
+                resourceClass = resourceClass,
+                sanitizedResourceId = sanitizedId,
+                affectedTiles = listOf(outputTile),
+            )
         }
     }
     if (response.statusCode !in 200..299) {
@@ -93,16 +143,17 @@ internal suspend fun RentileConfiguration.fetchRawResourceForWarm(
 
 internal suspend fun RentileConfiguration.storeWarmedRawResource(
     key: RawResourceKey,
+    bytes: ByteArray,
+    contentDigest: String,
     response: TransportResponse,
     resourceClass: ResourceClass,
 ) {
-    val bytes = response.body
     try {
         rawResourceStore.write(
             key,
             StoredRawResource(
                 bytes = bytes,
-                contentDigest = bytes.sha256Hex(),
+                contentDigest = contentDigest,
                 metadata = RawResourceMetadata(
                     contentType = response.metadata.contentType,
                     etag = response.metadata.etag,

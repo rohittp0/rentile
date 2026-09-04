@@ -23,8 +23,7 @@ import com.rohittp.rentile.internal.SingleFlight
 import com.rohittp.rentile.internal.executeTileRequestWithRetry
 import com.rohittp.rentile.internal.recordSafely
 import com.rohittp.rentile.internal.isRawResourceStoredIntact
-import com.rohittp.rentile.internal.fetchRawResourceForWarm
-import com.rohittp.rentile.internal.storeWarmedRawResource
+import com.rohittp.rentile.internal.warmRawResource
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import kotlinx.coroutines.CancellationException
@@ -45,13 +44,26 @@ internal data class VectorResource(
     val substitution: ResourceSubstitution? = null,
 )
 
+/**
+ * What one flight for a vector resource produced: its bytes always, its decode only when the
+ * participant that ran the fetch wanted one.
+ *
+ * A prefetch deliberately does not decode -- that is the CPU it exists to save -- so an acquisition
+ * that joins one gets bytes and decodes them itself.
+ */
+internal class VectorFlight(
+    val bytes: ByteArray,
+    val contentDigest: String,
+    val tile: DecodedVectorTile?,
+)
+
 internal class VectorResourceAcquirer(
     private val configuration: RentileConfiguration,
     scope: CoroutineScope,
     private val workCoordinator: ResourceWorkCoordinator,
 ) {
     private val decoder = MvtDecoder(configuration.resourceLimits)
-    private val singleFlight = SingleFlight<RawResourceKey, VectorResource>(scope)
+    private val singleFlight = SingleFlight<RawResourceKey, VectorFlight>(scope)
 
     suspend fun acquire(sample: VectorTileSample, accessMode: ResourceAccessMode): VectorResource {
         sample.source.geoJson?.let { geoJson ->
@@ -113,7 +125,13 @@ internal class VectorResourceAcquirer(
         ) {
             fetchDecodeAndStore(sample, url, sanitizedId, key)
         }
-        return shared.copy(sample = sample, diagnostics = listOf(miss))
+        return VectorResource(
+            sample = sample,
+            tile = shared.tile ?: decodeOrThrow(shared.bytes, sanitizedId, sample),
+            contentDigest = shared.contentDigest,
+            diagnostics = listOf(miss),
+            encodedBytes = shared.bytes,
+        )
     }
 
     /**
@@ -127,9 +145,10 @@ internal class VectorResourceAcquirer(
      * every cache read already re-validates and evicts what it cannot decode. An undecodable entry
      * therefore costs one wasted store and heals on first read.
      *
-     * Returns true when a fetch happened, false when the entry was already cached. Per-resource
-     * failures are the caller's to swallow: a prefetch must never fail the work it is trying to
-     * help, and the on-demand path will surface anything genuinely wrong.
+     * Returns true when a fetch happened, false when there was nothing to do because the entry was
+     * already cached or already being acquired by another participant on the same flight.
+     * Per-resource failures are the caller's to swallow: a prefetch must never fail the work it is
+     * trying to help, and the on-demand path will surface anything genuinely wrong.
      */
     suspend fun warm(sample: VectorTileSample, accessMode: ResourceAccessMode): Boolean {
         // A GeoJSON-backed source has no per-tile resource to fetch; its data came with the style.
@@ -142,15 +161,15 @@ internal class VectorResourceAcquirer(
         ) {
             return false
         }
-        val response = configuration.fetchRawResourceForWarm(
+        return configuration.warmRawResource(
             workCoordinator = workCoordinator,
+            singleFlight = singleFlight,
+            key = key,
             url = url,
             sanitizedId = sanitizedId,
             resourceClass = ResourceClass.VECTOR_TILE,
             outputTile = sample.outputTile,
-        )
-        configuration.storeWarmedRawResource(key, response, ResourceClass.VECTOR_TILE)
-        return true
+        ) { bytes, contentDigest -> VectorFlight(bytes, contentDigest, tile = null) }
     }
 
     private suspend fun fetchDecodeAndStore(
@@ -158,7 +177,7 @@ internal class VectorResourceAcquirer(
         url: String,
         sanitizedId: String,
         key: RawResourceKey,
-    ): VectorResource {
+    ): VectorFlight {
         val response = executeTileRequestWithRetry {
             workCoordinator.exchange(url) {
             configuration.metricsSink.recordSafely(
@@ -229,13 +248,7 @@ internal class VectorResourceAcquirer(
                 resourceClass = ResourceClass.VECTOR_TILE,
             ),
         )
-        return VectorResource(
-            sample = sample,
-            tile = decoded,
-            contentDigest = digest,
-            diagnostics = emptyList(),
-            encodedBytes = bytes,
-        )
+        return VectorFlight(bytes = bytes, contentDigest = digest, tile = decoded)
     }
 
     private suspend fun decodeOrNull(
