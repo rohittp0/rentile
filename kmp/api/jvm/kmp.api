@@ -744,9 +744,14 @@ public final class com/rohittp/rentile/RawResourceMetadata {
 }
 
 public abstract interface class com/rohittp/rentile/RawResourceStore {
+	public fun metadata (Lcom/rohittp/rentile/RawResourceKey;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun read (Lcom/rohittp/rentile/RawResourceKey;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun remove (Lcom/rohittp/rentile/RawResourceKey;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun write (Lcom/rohittp/rentile/RawResourceKey;Lcom/rohittp/rentile/StoredRawResource;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class com/rohittp/rentile/RawResourceStore$DefaultImpls {
+	public static fun metadata (Lcom/rohittp/rentile/RawResourceStore;Lcom/rohittp/rentile/RawResourceKey;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class com/rohittp/rentile/RawWarmSummary {

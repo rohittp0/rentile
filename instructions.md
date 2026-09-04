@@ -176,6 +176,9 @@ Android can use the existing Ktor OkHttp engine. Runtime iOS remote-style suppor
 
 Implement `RawResourceStore` over the existing Okio filesystem primitives with these rules:
 
+- Override `metadata(key)` as a header-only lookup. It answers "is this already cached?", which
+  warming asks for every resource of every warmed tile; the inherited default falls back to `read`
+  and therefore pays for the whole payload plus its integrity hash on a warm session.
 - Hash `RawResourceKey.stableId` before using it as a path component.
 - Use a dedicated namespace such as `<cacheDir>/rentile/raw`.
 - Persist bytes, `contentDigest`, and `RawResourceMetadata` together.

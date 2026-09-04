@@ -116,6 +116,19 @@ public interface RawResourceStore {
     public suspend fun read(key: RawResourceKey): StoredRawResource?
     public suspend fun write(key: RawResourceKey, resource: StoredRawResource)
     public suspend fun remove(key: RawResourceKey)
+
+    /**
+     * The stored entry's [RawResourceMetadata] without its payload, or null when nothing is stored.
+     *
+     * Warming asks only whether a resource is already cached, and asking that through [read] costs
+     * the entire payload -- off disk, into memory, and then hashed to check its integrity -- for
+     * every resource of every warmed tile. Implement this as a header or index read that never
+     * touches the bytes; that is the whole point of it existing.
+     *
+     * The default answers correctly through [read], so a store written before this member existed
+     * keeps compiling and keeps working. It also keeps paying, which is the reason to override.
+     */
+    public suspend fun metadata(key: RawResourceKey): RawResourceMetadata? = read(key)?.metadata
 }
 
 /** Provider session supplied by the host without defining billing semantics. */

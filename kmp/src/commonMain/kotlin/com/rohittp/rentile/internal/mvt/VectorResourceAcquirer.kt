@@ -22,7 +22,7 @@ import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.SingleFlight
 import com.rohittp.rentile.internal.executeTileRequestWithRetry
 import com.rohittp.rentile.internal.recordSafely
-import com.rohittp.rentile.internal.isRawResourceStoredIntact
+import com.rohittp.rentile.internal.isRawResourceStored
 import com.rohittp.rentile.internal.warmRawResource
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
@@ -157,7 +157,7 @@ internal class VectorResourceAcquirer(
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
         val key = RawResourceKey(sanitizedId, ResourceClass.VECTOR_TILE)
         if (accessMode != ResourceAccessMode.RELOAD &&
-            configuration.isRawResourceStoredIntact(key)
+            configuration.isRawResourceStored(key)
         ) {
             return false
         }

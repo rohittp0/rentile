@@ -19,7 +19,7 @@ import com.rohittp.rentile.StoredRawResource
 import com.rohittp.rentile.TransportRequest
 import com.rohittp.rentile.internal.recordSafely
 import com.rohittp.rentile.internal.ResourceWorkCoordinator
-import com.rohittp.rentile.internal.isRawResourceStoredIntact
+import com.rohittp.rentile.internal.isRawResourceStored
 import com.rohittp.rentile.internal.warmRawResource
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.SingleFlight
@@ -166,7 +166,7 @@ internal class RasterResourceAcquirer(
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
         val key = RawResourceKey(sanitizedId, sample.source.resourceClass)
         if (accessMode != ResourceAccessMode.RELOAD &&
-            configuration.isRawResourceStoredIntact(key)
+            configuration.isRawResourceStored(key)
         ) {
             return false
         }

@@ -17,23 +17,24 @@ import com.rohittp.rentile.TransportResponse
 import kotlinx.coroutines.CancellationException
 
 /**
- * Fetch-and-store without decode, shared by the raster and vector acquirers.
+ * Whether the store already holds [key], answered from its header alone.
  *
- * Written once rather than per acquirer because the two differ only in resource class: everything
- * that matters here -- the retry, the origin permit, the byte ceiling, the digest, the metadata --
- * must behave identically to the decoding path, and two copies would drift.
+ * Deliberately neither hashed nor decoded. The probe used to read the whole payload back and
+ * re-hash it, which on a disk-backed store meant warming an already-cached session read and hashed
+ * that session -- precisely the work the prefetch existed to have already done. Integrity is the
+ * read path's job either way: it re-hashes what it hands out and evicts what does not match, so a
+ * torn entry is repaired on first use rather than at warm time. The only thing given up is
+ * repairing it slightly earlier.
  */
-internal suspend fun RentileConfiguration.isRawResourceStoredIntact(key: RawResourceKey): Boolean {
-    val stored = try {
-        rawResourceStore.read(key)
+internal suspend fun RentileConfiguration.isRawResourceStored(key: RawResourceKey): Boolean {
+    val metadata = try {
+        rawResourceStore.metadata(key)
     } catch (error: CancellationException) {
         throw error
     } catch (_: Throwable) {
         throw ResourceStoreException("Raw resource cache read failed")
-    } ?: return false
-    // Digest-checked but not decoded. A torn or truncated entry is worth refetching now; an entry
-    // that is intact but undecodable is left for the read path, which evicts it on first use.
-    return stored.bytes.sha256Hex() == stored.contentDigest
+    }
+    return metadata != null
 }
 
 /**
@@ -87,6 +88,11 @@ internal suspend fun <V : Any> RentileConfiguration.warmRawResource(
 
 /**
  * Performs the warm exchange itself. The caller holds the exchange permit; see [warmRawResource].
+ *
+ * Fetch-and-store without decode, written once rather than per acquirer because the raster and
+ * vector paths differ only in resource class: everything that matters here -- the retry, the byte
+ * ceiling, the digest, the metadata -- must behave identically to the decoding path, and two copies
+ * would drift.
  *
  * WARM: this only ever runs on a connection slot no acquisition wanted, so a prefetch can cover a
  * whole session without taking a slot from the work it is meant to help.

@@ -356,6 +356,7 @@ abstract interface com.rohittp.rentile/RawResourceStore { // com.rohittp.rentile
     abstract suspend fun read(com.rohittp.rentile/RawResourceKey): com.rohittp.rentile/StoredRawResource? // com.rohittp.rentile/RawResourceStore.read|read(com.rohittp.rentile.RawResourceKey){}[0]
     abstract suspend fun remove(com.rohittp.rentile/RawResourceKey) // com.rohittp.rentile/RawResourceStore.remove|remove(com.rohittp.rentile.RawResourceKey){}[0]
     abstract suspend fun write(com.rohittp.rentile/RawResourceKey, com.rohittp.rentile/StoredRawResource) // com.rohittp.rentile/RawResourceStore.write|write(com.rohittp.rentile.RawResourceKey;com.rohittp.rentile.StoredRawResource){}[0]
+    open suspend fun metadata(com.rohittp.rentile/RawResourceKey): com.rohittp.rentile/RawResourceMetadata? // com.rohittp.rentile/RawResourceStore.metadata|metadata(com.rohittp.rentile.RawResourceKey){}[0]
 }
 
 sealed interface com.rohittp.rentile/StyleInput { // com.rohittp.rentile/StyleInput|null[0]
