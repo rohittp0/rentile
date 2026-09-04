@@ -110,17 +110,29 @@ class RentileRuntimeTest {
         // coroutines, so this lambda runs twice at once and an unguarded ArrayList loses an append.
         val requested = mutableListOf<Pair<ResourceClass, String>>()
         val requestedMutex = Mutex()
+        val conditional = mutableListOf<String?>()
+        val conditionalMutex = Mutex()
         val rasterizer = Rentile.create(
             RentileConfiguration(
                 transport = ResourceTransport { request ->
                     requestedMutex.withLock { requested += request.resourceClass to request.url }
-                    when (request.resourceClass) {
-                        ResourceClass.SPRITE_JSON -> TransportResponse(
-                            200,
-                            """{"pattern":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":2,"sdf":false}}""".encodeToByteArray(),
-                        )
-                        ResourceClass.SPRITE_IMAGE -> TransportResponse(200, spritePng)
-                        else -> error("Unexpected resource class ${request.resourceClass}")
+                    conditionalMutex.withLock { conditional += request.metadata.ifNoneMatch }
+                    if (request.metadata.ifNoneMatch != null) {
+                        TransportResponse(304, ByteArray(0))
+                    } else {
+                        when (request.resourceClass) {
+                            ResourceClass.SPRITE_JSON -> TransportResponse(
+                                200,
+                                """{"pattern":{"x":0,"y":0,"width":8,"height":8,"pixelRatio":2,"sdf":false}}""".encodeToByteArray(),
+                                TransportResponseMetadata(etag = "\"sprite-1\""),
+                            )
+                            ResourceClass.SPRITE_IMAGE -> TransportResponse(
+                                200,
+                                spritePng,
+                                TransportResponseMetadata(etag = "\"sprite-1\""),
+                            )
+                            else -> error("Unexpected resource class ${request.resourceClass}")
+                        }
                     }
                 },
                 rawResourceStore = InMemoryRawResourceStore(),
@@ -143,7 +155,14 @@ class RentileRuntimeTest {
                 ),
                 requestedMutex.withLock { requested.toSet() },
             )
-            assertEquals(2, requestedMutex.withLock { requested.size })
+            // Four exchanges, not two: the second preparation revalidates rather than refetching.
+            // Nothing is served out of the store without the origin confirming it, and nothing is
+            // downloaded twice -- both second requests are conditional and both were answered 304.
+            assertEquals(4, requestedMutex.withLock { requested.size })
+            assertEquals(
+                listOf(null, null, "\"sprite-1\"", "\"sprite-1\""),
+                conditionalMutex.withLock { conditional.toList() },
+            )
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
@@ -2383,17 +2402,24 @@ class RentileRuntimeTest {
         val mvt = overzoomVectorTile()
         val store = InMemoryRawResourceStore()
         val requested = mutableListOf<Pair<ResourceClass, String>>()
+        val conditional = mutableListOf<String?>()
         val rasterizer = Rentile.create(
             RentileConfiguration(
                 transport = ResourceTransport { request ->
                     requested += request.resourceClass to request.url
-                    when (request.resourceClass) {
-                        ResourceClass.TILE_JSON -> TransportResponse(
-                            200,
-                            """{"tilejson":"3.0.0","tiles":["../tiles/{z}/{x}/{y}.pbf?token=inside"],"minzoom":0,"maxzoom":15,"scheme":"xyz"}""".encodeToByteArray(),
-                        )
-                        ResourceClass.VECTOR_TILE -> TransportResponse(200, mvt)
-                        else -> error("Unexpected resource class ${request.resourceClass}")
+                    conditional += request.metadata.ifNoneMatch
+                    if (request.metadata.ifNoneMatch != null) {
+                        TransportResponse(304, ByteArray(0))
+                    } else {
+                        when (request.resourceClass) {
+                            ResourceClass.TILE_JSON -> TransportResponse(
+                                200,
+                                """{"tilejson":"3.0.0","tiles":["../tiles/{z}/{x}/{y}.pbf?token=inside"],"minzoom":0,"maxzoom":15,"scheme":"xyz"}""".encodeToByteArray(),
+                                TransportResponseMetadata(etag = "\"tilejson-1\""),
+                            )
+                            ResourceClass.VECTOR_TILE -> TransportResponse(200, mvt)
+                            else -> error("Unexpected resource class ${request.resourceClass}")
+                        }
                     }
                 },
                 rawResourceStore = store,
@@ -2412,13 +2438,19 @@ class RentileRuntimeTest {
             val output = rasterizer.render(firstStyle, listOf(tile), RenderOptions(512)).tiles.single()
 
             assertTrue(output.pngBytes.startsWithPngSignature())
+            // The second preparation revalidates the resolved TileJSON instead of trusting it
+            // forever: one conditional exchange, answered 304, and the stored document reused. A
+            // source whose templates or zoom range changed upstream is noticed; its bytes are not
+            // downloaded twice.
             assertEquals(
                 listOf(
+                    ResourceClass.TILE_JSON to "https://style.example.test/styles/basic/metadata/tiles.json?key=inside",
                     ResourceClass.TILE_JSON to "https://style.example.test/styles/basic/metadata/tiles.json?key=inside",
                     ResourceClass.VECTOR_TILE to "https://style.example.test/styles/basic/tiles/15/9647/12320.pbf?token=inside",
                 ),
                 requested,
             )
+            assertEquals(listOf(null, "\"tilejson-1\"", null), conditional)
             assertEquals(2, store.size())
         } finally {
             rasterizer.close()

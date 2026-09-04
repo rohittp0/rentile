@@ -1,14 +1,14 @@
 package com.rohittp.rentile
 
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 import kotlin.test.assertNull
 
+private const val NOW_MILLIS = 1_000_000L
 private const val STYLE_URL = "https://styles.example.test/basic.json?key=secret"
 private const val FIRST_STYLE =
     """{"version":8,"layers":[{"id":"base","type":"background","paint":{"background-color":"#102030"}}]}"""
@@ -42,8 +42,8 @@ class StyleRevalidationTest {
         assertEquals(coldDigest, warmDigest, "the 304 must yield the cached style unchanged")
         val requests = transport.requests()
         assertEquals(2, requests.size)
-        assertNull(requests[0].ifNoneMatch, "nothing was cached yet")
-        assertEquals("\"v1\"", requests[1].ifNoneMatch)
+        assertNull(requests[0].metadata.ifNoneMatch, "nothing was cached yet")
+        assertEquals("\"v1\"", requests[1].metadata.ifNoneMatch)
     }
 
     @Test
@@ -64,7 +64,7 @@ class StyleRevalidationTest {
         assertEquals(3, transport.requests().size)
         assertNotEquals(firstDigest, replacedDigest)
         // The replacement, not the original, is what the third start revalidates against.
-        assertEquals("\"v2\"", transport.requests()[2].ifNoneMatch)
+        assertEquals("\"v2\"", transport.requests()[2].metadata.ifNoneMatch)
         assertEquals(replacedDigest, revalidatedDigest)
     }
 
@@ -88,8 +88,8 @@ class StyleRevalidationTest {
         val warmDigest = withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)).digest }
 
         assertEquals(coldDigest, warmDigest)
-        assertEquals(lastModified, transport.requests()[1].ifModifiedSince)
-        assertNull(transport.requests()[1].ifNoneMatch)
+        assertEquals(lastModified, transport.requests()[1].metadata.ifModifiedSince)
+        assertNull(transport.requests()[1].metadata.ifNoneMatch)
     }
 
     @Test
@@ -101,9 +101,9 @@ class StyleRevalidationTest {
         withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)) }
 
         assertEquals(2, transport.requests().size)
-        transport.requests().forEach { metadata ->
-            assertNull(metadata.ifNoneMatch)
-            assertNull(metadata.ifModifiedSince)
+        transport.requests().forEach { recorded ->
+            assertNull(recorded.metadata.ifNoneMatch)
+            assertNull(recorded.metadata.ifModifiedSince)
         }
     }
 
@@ -131,6 +131,65 @@ class StyleRevalidationTest {
     }
 
     @Test
+    fun aStyleIsRevalidatedEvenWhileItIsStillFresh() = runTest {
+        // ADR 0007 would let a fresh entry be used directly, and the sprite and TileJSON documents
+        // do exactly that. A style may not: it is the root of the closure, so serving one from a
+        // max-age would pin every cached resource beneath it to a document nobody re-confirmed, and
+        // a style switch is a user action that must not wait out an expiry.
+        val store = InMemoryRawResourceStore()
+        val transport = RecordingTransport { request ->
+            if (request.metadata.ifNoneMatch == "\"v1\"") {
+                TransportResponse(304, ByteArray(0))
+            } else {
+                TransportResponse(
+                    200,
+                    FIRST_STYLE.encodeToByteArray(),
+                    TransportResponseMetadata(etag = "\"v1\"", expiresAtEpochMillis = NOW_MILLIS + 3_600_000L),
+                )
+            }
+        }
+
+        withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)) }
+        withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)) }
+
+        assertEquals(2, transport.requests().size, "a fresh style is still put to the origin")
+        assertEquals("\"v1\"", transport.requests()[1].metadata.ifNoneMatch)
+    }
+
+    @Test
+    fun aNotModifiedStyleRewritesItsStoredEntry() = runTest {
+        // A consumer's raw cache is trimmed by file age, so a style read on every start and never
+        // written would become its oldest file and be evicted first.
+        val store = WriteRecordingRawResourceStore()
+        val transport = RecordingTransport { request ->
+            if (request.metadata.ifNoneMatch == "\"v1\"") {
+                TransportResponse(304, ByteArray(0))
+            } else {
+                TransportResponse(200, FIRST_STYLE.encodeToByteArray(), TransportResponseMetadata(etag = "\"v1\""))
+            }
+        }
+
+        withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)) }
+        store.clearWrites()
+        withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)) }
+
+        assertEquals(listOf(ResourceClass.STYLE), store.writes(), "the 304 must refresh the entry's recency")
+        assertTrue(store.everyWriteKeptItsBytes)
+    }
+
+    @Test
+    fun aValidatorLessStyleIsNotStoredAtAll() = runTest {
+        // Nothing could ever revalidate it, so keeping it would only cost a payload read and a
+        // SHA-256 on every later start.
+        val store = InMemoryRawResourceStore()
+        val transport = RecordingTransport { TransportResponse(200, FIRST_STYLE.encodeToByteArray()) }
+
+        withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)) }
+
+        assertEquals(0, store.size())
+    }
+
+    @Test
     fun anInlineStyleNeverTouchesTheStore() = runTest {
         val transport = RecordingTransport { error("An inline style must not reach the transport") }
         val store = InMemoryRawResourceStore()
@@ -147,7 +206,13 @@ class StyleRevalidationTest {
         store: RawResourceStore,
         block: suspend (BasemapRasterizer) -> T,
     ): T {
-        val rasterizer = Rentile.create(RentileConfiguration(transport = transport, rawResourceStore = store))
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = transport,
+                rawResourceStore = store,
+                clock = RentileClock { NOW_MILLIS },
+            ),
+        )
         try {
             return block(rasterizer)
         } finally {
@@ -155,19 +220,4 @@ class StyleRevalidationTest {
             rasterizer.awaitClosed()
         }
     }
-}
-
-/** Records the request metadata each exchange carried, in order. */
-private class RecordingTransport(
-    private val respond: suspend (TransportRequest) -> TransportResponse,
-) : ResourceTransport {
-    private val mutex = Mutex()
-    private val recorded = mutableListOf<TransportRequestMetadata>()
-
-    override suspend fun execute(request: TransportRequest): TransportResponse {
-        mutex.withLock { recorded += request.metadata }
-        return respond(request)
-    }
-
-    fun requests(): List<TransportRequestMetadata> = recorded.toList()
 }

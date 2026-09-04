@@ -1,26 +1,19 @@
 package com.rohittp.rentile.internal.metadata
 
 import com.rohittp.rentile.MetricName
-import com.rohittp.rentile.PipelineStage
 import com.rohittp.rentile.RawResourceKey
-import com.rohittp.rentile.RawResourceMetadata
 import com.rohittp.rentile.RentileConfiguration
 import com.rohittp.rentile.RentileMetric
-import com.rohittp.rentile.ResourceAcquisitionException
 import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.ResourceDecodeException
-import com.rohittp.rentile.ResourceStoreException
-import com.rohittp.rentile.SafetyLimitException
-import com.rohittp.rentile.StoredRawResource
-import com.rohittp.rentile.TransportRequest
 import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.SingleFlight
+import com.rohittp.rentile.internal.acquireRevalidatedRawResource
 import com.rohittp.rentile.internal.recordSafely
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import com.rohittp.rentile.internal.style.TileScheme
 import com.rohittp.rentile.internal.style.SourceBounds
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -49,25 +42,19 @@ internal class TileJsonResourceAcquirer(
     private val json = Json { isLenient = false }
     private val singleFlight = SingleFlight<RawResourceKey, ResolvedTileJson>(scope)
 
+    /**
+     * Acquires and resolves one TileJSON document, revalidating a stored entry rather than trusting
+     * it forever.
+     *
+     * A cached TileJSON used to win outright and for good: a source whose tile templates, zoom
+     * range or bounds changed upstream was never noticed by a consumer that had fetched the old
+     * document once. The shared helper applies ADR 0007 instead -- fresh is used, stale is
+     * revalidated, `304` reuses the stored bytes -- and an entry that no longer parses is still
+     * evicted and refetched rather than failing the preparation.
+     */
     suspend fun acquire(url: String): ResolvedTileJson {
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
         val key = RawResourceKey(sanitizedId, ResourceClass.TILE_JSON)
-        val cached = readStore(key)
-        if (cached != null) {
-            val bytes = cached.bytes
-            if (bytes.sha256Hex() == cached.contentDigest) {
-                parseOrNull(bytes, url, sanitizedId)?.let { parsed ->
-                    configuration.metricsSink.recordSafely(
-                        RentileMetric(MetricName.RAW_CACHE_HIT, resourceClass = ResourceClass.TILE_JSON),
-                    )
-                    return parsed.copy(contentDigest = cached.contentDigest)
-                }
-            }
-            removeStore(key)
-        }
-        configuration.metricsSink.recordSafely(
-            RentileMetric(MetricName.RAW_CACHE_MISS, resourceClass = ResourceClass.TILE_JSON),
-        )
         return singleFlight.run(
             key = key,
             onJoin = {
@@ -76,81 +63,19 @@ internal class TileJsonResourceAcquirer(
                 )
             },
         ) {
-            fetchParseAndStore(url, sanitizedId, key)
-        }
-    }
-
-    private suspend fun fetchParseAndStore(
-        url: String,
-        sanitizedId: String,
-        key: RawResourceKey,
-    ): ResolvedTileJson {
-        val response = workCoordinator.exchange(url) {
-            configuration.metricsSink.recordSafely(
-                RentileMetric(MetricName.RESOURCE_REQUEST, resourceClass = ResourceClass.TILE_JSON),
-            )
-            try {
-                configuration.transport.execute(
-                    TransportRequest(
-                        url = url,
-                        resourceClass = ResourceClass.TILE_JSON,
-                        maxResponseBytes = configuration.resourceLimits.maxMetadataBytes,
-                    ),
-                )
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                throw ResourceAcquisitionException(
-                    message = "TileJSON transport failed",
-                    resourceClass = ResourceClass.TILE_JSON,
-                    sanitizedResourceId = sanitizedId,
-                )
-            }
-        }
-        if (response.statusCode !in 200..299) {
-            throw ResourceAcquisitionException(
-                message = "TileJSON transport returned a non-success status",
-                resourceClass = ResourceClass.TILE_JSON,
-                sanitizedResourceId = sanitizedId,
-                statusCode = response.statusCode,
-                retryAfterMillis = response.metadata.retryAfterMillis,
-            )
-        }
-        val bytes = response.body
-        val limit = configuration.resourceLimits.maxMetadataBytes
-        if (bytes.size.toLong() > limit) {
-            throw SafetyLimitException(
-                message = "TileJSON exceeds the configured metadata byte limit",
+            val bytes = configuration.acquireRevalidatedRawResource(
+                workCoordinator = workCoordinator,
+                key = key,
+                url = url,
+                sanitizedId = sanitizedId,
+                maxBytes = configuration.resourceLimits.maxMetadataBytes,
+                transportLabel = "TileJSON",
+                cacheLabel = "TileJSON",
                 limitName = "maxMetadataBytes",
-                limit = limit,
-                observed = bytes.size.toLong(),
-                stage = PipelineStage.RESOURCE_ACQUISITION,
+                isStoredEntryUsable = { stored -> parseOrNull(stored, url, sanitizedId) != null },
             )
+            parseOrThrow(bytes, url, sanitizedId).copy(contentDigest = bytes.sha256Hex())
         }
-        val parsed = parseOrThrow(bytes, url, sanitizedId)
-        val digest = bytes.sha256Hex()
-        writeStore(
-            key,
-            StoredRawResource(
-                bytes = bytes,
-                contentDigest = digest,
-                metadata = RawResourceMetadata(
-                    contentType = response.metadata.contentType,
-                    etag = response.metadata.etag,
-                    lastModified = response.metadata.lastModified,
-                    freshUntilEpochMillis = response.metadata.expiresAtEpochMillis,
-                    storedAtEpochMillis = configuration.clock.nowEpochMillis(),
-                ),
-            ),
-        )
-        configuration.metricsSink.recordSafely(
-            RentileMetric(
-                MetricName.RESOURCE_WIRE_BYTES,
-                value = response.metadata.wireByteCount ?: bytes.size.toLong(),
-                resourceClass = ResourceClass.TILE_JSON,
-            ),
-        )
-        return parsed.copy(contentDigest = digest)
     }
 
     private fun parseOrNull(bytes: ByteArray, baseUrl: String, sanitizedId: String): ResolvedTileJson? = try {
@@ -260,33 +185,6 @@ internal class TileJsonResourceAcquirer(
         sanitizedResourceId = sanitizedId,
     )
 
-    private suspend fun readStore(key: RawResourceKey): StoredRawResource? = try {
-        configuration.rawResourceStore.read(key)
-    } catch (error: CancellationException) {
-        throw error
-    } catch (_: Throwable) {
-        throw ResourceStoreException("Raw TileJSON cache read failed")
-    }
-
-    private suspend fun writeStore(key: RawResourceKey, resource: StoredRawResource) {
-        try {
-            configuration.rawResourceStore.write(key, resource)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Throwable) {
-            throw ResourceStoreException("Raw TileJSON cache write failed")
-        }
-    }
-
-    private suspend fun removeStore(key: RawResourceKey) {
-        try {
-            configuration.rawResourceStore.remove(key)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Throwable) {
-            throw ResourceStoreException("Corrupt TileJSON cache removal failed")
-        }
-    }
 }
 
 internal fun resolveHttpReference(baseUrl: String, reference: String): String? {

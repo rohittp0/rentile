@@ -25,7 +25,6 @@ import com.rohittp.rentile.PreparedStyle
 import com.rohittp.rentile.RasterizationException
 import com.rohittp.rentile.RasterizerClosedException
 import com.rohittp.rentile.RawResourceKey
-import com.rohittp.rentile.RawResourceMetadata
 import com.rohittp.rentile.RawWarmSummary
 import com.rohittp.rentile.RenderBatch
 import com.rohittp.rentile.RenderDiagnostic
@@ -44,7 +43,6 @@ import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.SafetyLimitException
 import com.rohittp.rentile.STYLE_REFERENCE_TILE_SIZE_PX
 import com.rohittp.rentile.StyleInput
-import com.rohittp.rentile.StoredRawResource
 import com.rohittp.rentile.StylePreparationException
 import com.rohittp.rentile.TerrainDemEncoding
 import com.rohittp.rentile.TerrainSourceDescriptor
@@ -54,8 +52,6 @@ import com.rohittp.rentile.TileSubstitutionException
 import com.rohittp.rentile.TileSubstitutionLimitException
 import com.rohittp.rentile.TileSubstitutionPolicy
 import com.rohittp.rentile.TileSubstitutionStrategy
-import com.rohittp.rentile.TransportRequest
-import com.rohittp.rentile.TransportRequestMetadata
 import com.rohittp.rentile.ValidatedDemTile
 import com.rohittp.rentile.ValidatedMvtTile
 import com.rohittp.rentile.internal.metadata.TileJsonResourceAcquirer
@@ -179,7 +175,6 @@ internal fun createBasemapRasterizer(configuration: RentileConfiguration): Basem
 
 private const val EARTH_CIRCUMFERENCE_METERS = 40_075_016.68557849
 private const val MAX_ANCESTOR_DISTANCE = 2
-private const val NOT_MODIFIED_STATUS = 304
 
 /**
  * Bump this whenever a change to label evaluation, text layout or glyph-atlas packing would
@@ -864,117 +859,34 @@ private class DefaultBasemapRasterizer(
     /**
      * Acquires a remote style through the raw store, revalidating whatever is already there.
      *
-     * The style used to go straight to the transport, past the store and past the exchange gate,
-     * so every process start downloaded the whole document again before a single tile could be
-     * planned -- while the sprite JSON, the sprite image and the TileJSON it names had been going
-     * through the store all along. A warm start is now a conditional request, and a `304` reuses
-     * the cached bytes, which keeps [PreparedStyle.digest] and every resource identity beneath it
-     * byte-identical across restarts.
+     * The style used to go straight to the transport, past the store and past the exchange gate, so
+     * every process start downloaded the whole document again before a single tile could be
+     * planned. It now takes the same revalidating path as the sprite and TileJSON documents it
+     * names, with one difference it passes explicitly: a style is never served on freshness alone.
+     * ADR 0007 would allow that, but the style is the root of the whole closure, so a `max-age` hit
+     * would pin an entire cached resource tree to a document nobody re-confirmed, and a style
+     * switch is a user action that must not wait out an expiry.
      *
-     * **A style is revalidated every time, never served on freshness alone.** ADR 0007 lets normal
-     * acquisition use a fresh entry directly; a style deliberately does not take that. It is the
-     * root of the whole closure, so serving one from a `max-age` without asking the origin would
-     * pin an entire cached resource tree to a document nobody re-confirmed, and a style switch is
-     * a deliberate user action that must not wait for an expiry.
+     * A `304` reuses the stored bytes, which keeps [PreparedStyle.digest] and every resource
+     * identity beneath it byte-identical across restarts. Failed revalidation fails the operation:
+     * a style receives neither the stale reuse nor the substitution a tile gets, because a stale
+     * program is not a coarser version of the right one.
      *
-     * Failed revalidation fails the operation, exactly as ADR 0007 requires: a style never receives
-     * the stale reuse or the substitution a tile gets, because there is nothing to substitute -- a
-     * stale program is not a coarser version of the right one.
+     * The byte ceiling stays [acquireStyle]'s to enforce, at [PipelineStage.STYLE_PREPARATION],
+     * which is why no `limitName` is passed here.
      */
     private suspend fun acquireRemoteStyle(url: String): ByteArray {
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
-        val key = RawResourceKey(sanitizedId, ResourceClass.STYLE)
-        val cached = readCachedStyle(key)
-        val response = resourceWorkCoordinator.exchange(url) {
-            configuration.metricsSink.recordSafely(
-                RentileMetric(MetricName.RESOURCE_REQUEST, resourceClass = ResourceClass.STYLE),
-            )
-            try {
-                configuration.transport.execute(
-                    TransportRequest(
-                        url = url,
-                        resourceClass = ResourceClass.STYLE,
-                        maxResponseBytes = configuration.resourceLimits.maxStyleBytes,
-                        metadata = TransportRequestMetadata(
-                            ifNoneMatch = cached?.metadata?.etag,
-                            ifModifiedSince = cached?.metadata?.lastModified,
-                        ),
-                    ),
-                )
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                throw ResourceAcquisitionException(
-                    message = "Style transport failed",
-                    resourceClass = ResourceClass.STYLE,
-                    sanitizedResourceId = sanitizedId,
-                )
-            }
-        }
-        if (response.statusCode == NOT_MODIFIED_STATUS && cached != null) {
-            configuration.metricsSink.recordSafely(
-                RentileMetric(MetricName.RAW_CACHE_HIT, resourceClass = ResourceClass.STYLE),
-            )
-            return cached.bytes
-        }
-        if (response.statusCode !in 200..299) {
-            throw ResourceAcquisitionException(
-                message = "Style transport returned a non-success status",
-                resourceClass = ResourceClass.STYLE,
-                sanitizedResourceId = sanitizedId,
-                statusCode = response.statusCode,
-                retryAfterMillis = response.metadata.retryAfterMillis,
-            )
-        }
-        val body = response.body
-        configuration.metricsSink.recordSafely(
-            RentileMetric(MetricName.RAW_CACHE_MISS, resourceClass = ResourceClass.STYLE),
+        return configuration.acquireRevalidatedRawResource(
+            workCoordinator = resourceWorkCoordinator,
+            key = RawResourceKey(sanitizedId, ResourceClass.STYLE),
+            url = url,
+            sanitizedId = sanitizedId,
+            maxBytes = configuration.resourceLimits.maxStyleBytes,
+            transportLabel = "Style",
+            cacheLabel = "style",
+            alwaysRevalidate = true,
         )
-        configuration.metricsSink.recordSafely(
-            RentileMetric(
-                name = MetricName.RESOURCE_WIRE_BYTES,
-                value = response.metadata.wireByteCount ?: body.size.toLong(),
-                resourceClass = ResourceClass.STYLE,
-            ),
-        )
-        // Stored only once the bytes are within the limit acquireStyle enforces, so an oversized
-        // document is not left behind for the next start to revalidate.
-        if (body.size.toLong() <= configuration.resourceLimits.maxStyleBytes) {
-            configuration.rawResourceStore.writeStore(
-                key,
-                StoredRawResource(
-                    bytes = body,
-                    contentDigest = body.sha256Hex(),
-                    metadata = RawResourceMetadata(
-                        contentType = response.metadata.contentType,
-                        etag = response.metadata.etag,
-                        lastModified = response.metadata.lastModified,
-                        freshUntilEpochMillis = response.metadata.expiresAtEpochMillis,
-                        storedAtEpochMillis = configuration.clock.nowEpochMillis(),
-                    ),
-                ),
-                "Raw style cache write failed",
-            )
-        }
-        return body
-    }
-
-    /**
-     * The cached style entry, or null when there is nothing usable to revalidate against.
-     *
-     * A torn entry is evicted here rather than carried: its validators would make the next start
-     * ask the origin to confirm bytes this process could not read back.
-     */
-    private suspend fun readCachedStyle(key: RawResourceKey): StoredRawResource? {
-        val stored = configuration.rawResourceStore.readStore(key, "Raw style cache read failed") ?: return null
-        val bytes = stored.bytes
-        if (bytes.size.toLong() <= configuration.resourceLimits.maxStyleBytes &&
-            bytes.sha256Hex() == stored.contentDigest
-        ) {
-            return stored
-        }
-        configuration.rawResourceStore.removeStore(key, "Corrupt style cache removal failed")
-        return null
     }
 
     private fun requireOwnedStyle(style: PreparedStyle): CompiledPreparedStyle {

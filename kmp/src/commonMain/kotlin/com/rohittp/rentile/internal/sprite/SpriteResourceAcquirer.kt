@@ -1,27 +1,16 @@
 package com.rohittp.rentile.internal.sprite
 
-import com.rohittp.rentile.MetricName
 import com.rohittp.rentile.PipelineStage
 import com.rohittp.rentile.RawResourceKey
-import com.rohittp.rentile.RawResourceMetadata
 import com.rohittp.rentile.RentileConfiguration
-import com.rohittp.rentile.RentileMetric
-import com.rohittp.rentile.ResourceAcquisitionException
 import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.SafetyLimitException
-import com.rohittp.rentile.StoredRawResource
-import com.rohittp.rentile.TransportRequest
-import com.rohittp.rentile.TransportRequestMetadata
 import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.SingleFlight
-import com.rohittp.rentile.internal.readStore
-import com.rohittp.rentile.internal.recordSafely
-import com.rohittp.rentile.internal.removeStore
+import com.rohittp.rentile.internal.acquireRevalidatedRawResource
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
-import com.rohittp.rentile.internal.writeStore
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -83,6 +72,13 @@ internal class SpriteResourceAcquirer(
         }
     }
 
+    /**
+     * Acquires one sprite document, revalidating a stored entry rather than trusting it forever.
+     *
+     * A cached sprite used to be reused unconditionally and for good, so a corrected icon sheet
+     * never reached a consumer that had already fetched the old one. The shared helper applies
+     * ADR 0007 instead: fresh is used, stale is revalidated, and a `304` reuses the stored bytes.
+     */
     private suspend fun acquireRaw(
         url: String,
         resourceClass: ResourceClass,
@@ -90,80 +86,17 @@ internal class SpriteResourceAcquirer(
         accept: String,
     ): ByteArray {
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
-        val key = RawResourceKey(sanitizedId, resourceClass)
-        val cached = configuration.rawResourceStore.readStore(key, "Raw sprite cache read failed")
-        if (cached != null) {
-            if (cached.bytes.size.toLong() <= limit && cached.bytes.sha256Hex() == cached.contentDigest) {
-                configuration.metricsSink.recordSafely(RentileMetric(MetricName.RAW_CACHE_HIT, resourceClass = resourceClass))
-                return cached.bytes
-            }
-            configuration.rawResourceStore.removeStore(key, "Corrupt sprite cache removal failed")
-        }
-        configuration.metricsSink.recordSafely(RentileMetric(MetricName.RAW_CACHE_MISS, resourceClass = resourceClass))
-        val response = workCoordinator.exchange(url) {
-            configuration.metricsSink.recordSafely(RentileMetric(MetricName.RESOURCE_REQUEST, resourceClass = resourceClass))
-            try {
-                configuration.transport.execute(
-                    TransportRequest(
-                        url = url,
-                        resourceClass = resourceClass,
-                        maxResponseBytes = limit,
-                        metadata = TransportRequestMetadata(accept = accept),
-                    ),
-                )
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                throw ResourceAcquisitionException(
-                    message = "Sprite transport failed",
-                    resourceClass = resourceClass,
-                    sanitizedResourceId = sanitizedId,
-                )
-            }
-        }
-        if (response.statusCode !in 200..299) {
-            throw ResourceAcquisitionException(
-                message = "Sprite transport returned a non-success status",
-                resourceClass = resourceClass,
-                sanitizedResourceId = sanitizedId,
-                statusCode = response.statusCode,
-                retryAfterMillis = response.metadata.retryAfterMillis,
-            )
-        }
-        val bytes = response.body
-        if (bytes.size.toLong() > limit) {
-            throw SafetyLimitException(
-                message = "Sprite resource exceeds its configured byte limit",
-                limitName = if (resourceClass == ResourceClass.SPRITE_JSON) "maxMetadataBytes" else "maxSpriteImageBytes",
-                limit = limit,
-                observed = bytes.size.toLong(),
-                stage = PipelineStage.RESOURCE_ACQUISITION,
-            )
-        }
-        val digest = bytes.sha256Hex()
-        configuration.rawResourceStore.writeStore(
-            key,
-            StoredRawResource(
-                bytes = bytes,
-                contentDigest = digest,
-                metadata = RawResourceMetadata(
-                    contentType = response.metadata.contentType,
-                    etag = response.metadata.etag,
-                    lastModified = response.metadata.lastModified,
-                    freshUntilEpochMillis = response.metadata.expiresAtEpochMillis,
-                    storedAtEpochMillis = configuration.clock.nowEpochMillis(),
-                ),
-            ),
-            "Raw sprite cache write failed",
+        return configuration.acquireRevalidatedRawResource(
+            workCoordinator = workCoordinator,
+            key = RawResourceKey(sanitizedId, resourceClass),
+            url = url,
+            sanitizedId = sanitizedId,
+            maxBytes = limit,
+            transportLabel = "Sprite",
+            cacheLabel = "sprite",
+            accept = accept,
+            limitName = if (resourceClass == ResourceClass.SPRITE_JSON) "maxMetadataBytes" else "maxSpriteImageBytes",
         )
-        configuration.metricsSink.recordSafely(
-            RentileMetric(
-                MetricName.RESOURCE_WIRE_BYTES,
-                value = response.metadata.wireByteCount ?: bytes.size.toLong(),
-                resourceClass = resourceClass,
-            ),
-        )
-        return bytes
     }
 
     private fun compile(jsonBytes: ByteArray, pngBytes: ByteArray, sanitizedId: String): CompiledSpriteAtlas {
