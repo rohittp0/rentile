@@ -132,6 +132,7 @@ class WarmSingleFlightTest {
         val requestsMutex = Mutex()
         val acquisitionInFlight = CompletableDeferred<Unit>()
         val releaseAcquisition = CompletableDeferred<Unit>()
+        val alreadyInFlight = CompletableDeferred<ResourceClass?>()
         val rasterizer = Rentile.create(
             RentileConfiguration(
                 transport = ResourceTransport { request ->
@@ -141,6 +142,11 @@ class WarmSingleFlightTest {
                     TransportResponse(200, sourcePng)
                 },
                 rawResourceStore = InMemoryRawResourceStore(),
+                metricsSink = MetricsSink { metric ->
+                    if (metric.name == MetricName.WARM_ALREADY_IN_FLIGHT) {
+                        alreadyInFlight.complete(metric.resourceClass)
+                    }
+                },
             ),
         )
         try {
@@ -152,7 +158,13 @@ class WarmSingleFlightTest {
             // The prefetch must return without waiting: it holds an exchange permit while it runs,
             // so waiting here for work that needs a permit of its own could park the whole gate.
             val summary = rasterizer.warmRawResources(style, listOf(tile))
+            assertEquals(0, summary.fetched)
+            assertEquals(1, summary.alreadyCached, "nothing to fetch, so nothing was fetched")
             assertEquals(0, summary.failed)
+            // alreadyCached alone cannot say whether the resource was on disk or in someone else's
+            // flight, which is the difference between a prefetch that arrived early and one that
+            // arrived too late to help.
+            assertEquals(ResourceClass.RASTER_TILE, alreadyInFlight.await())
 
             releaseAcquisition.complete(Unit)
             val prepared = batch.await()
@@ -198,6 +210,153 @@ class WarmSingleFlightTest {
         }
     }
 
+    @Test
+    fun aPrefetchWaitingOutARetryAfterHoldsNoExchangePermit() = runTest {
+        // One permit for the whole gate, so anything the prefetch holds is everything there is. The
+        // discriminator is request order: an acquisition started during the wait must reach the
+        // transport before the prefetch's second attempt does.
+        val sourcePng = renderSyntheticPng(256)
+        val requests = mutableListOf<String>()
+        val requestsMutex = Mutex()
+        val throttled = CompletableDeferred<Unit>()
+        val warmUrl = "https://tiles.example.test/1/0/0.png"
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { request ->
+                    val attempt = requestsMutex.withLock {
+                        requests += request.url
+                        requests.count { it == request.url }
+                    }
+                    if (request.url == warmUrl && attempt == 1) {
+                        throttled.complete(Unit)
+                        TransportResponse(429, ByteArray(0), TransportResponseMetadata(retryAfterMillis = 500))
+                    } else {
+                        TransportResponse(200, sourcePng)
+                    }
+                },
+                rawResourceStore = InMemoryRawResourceStore(),
+                executionPolicy = ExecutionPolicy(
+                    maxConcurrentExchanges = 1,
+                    maxConcurrentExchangesPerOrigin = 1,
+                ),
+            ),
+        )
+        try {
+            val style = rasterizer.prepare(rasterStyle())
+
+            val warm = async { rasterizer.warmRawResources(style, listOf(TileId(1, 0, 0))) }
+            throttled.await()
+            val batch = rasterizer.prepareBatch(style, listOf(TileId(1, 1, 0)), RenderOptions(256))
+            batch.close()
+
+            assertEquals(1, warm.await().fetched, "the prefetch still retries, just not under a permit")
+            assertEquals(
+                listOf(warmUrl, "https://tiles.example.test/1/1/0.png", warmUrl),
+                requestsMutex.withLock { requests.toList() },
+                "the acquisition must take the permit while the prefetch waits out Retry-After",
+            )
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun aTerrainReadJoinsAnOrdinaryReadOfTheSameTileAndStillGetsItsPixels() = runTest {
+        // Retention used to be part of the flight key, so these two went out as two requests for one
+        // URL. It is a property of the participant instead: the joiner decodes for itself.
+        val demPng = renderSyntheticPng(256)
+        val requests = mutableListOf<String>()
+        val requestsMutex = Mutex()
+        val ordinaryInFlight = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val terrainJoined = CompletableDeferred<Unit>()
+        val rasterizer = demRasterizer(demPng, requests, requestsMutex, ordinaryInFlight, release, terrainJoined)
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(TERRAIN_AND_HILLSHADE_STYLE))
+            val tile = TileId(2, 1, 1)
+
+            val batch = async { rasterizer.prepareBatch(style, listOf(tile), RenderOptions(256)) }
+            ordinaryInFlight.await()
+            val terrain = async { rasterizer.acquireTerrainTiles(style, listOf(tile)) }
+            terrainJoined.await()
+            release.complete(Unit)
+
+            val texels = terrain.await().single().texels
+            assertTrue(texels.rgba.isNotEmpty(), "the joiner must decode the pixels the flight did not keep")
+            assertEquals(texels.width * texels.height * 4, texels.rgba.size)
+            batch.await().close()
+            assertEquals(
+                1,
+                requestsMutex.withLock { requests.count { it == SHARED_DEM_URL } },
+                "one exchange for the tile both reads wanted",
+            )
+        } finally {
+            release.complete(Unit)
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun anOrdinaryReadJoinsATerrainReadOfTheSameTile() = runTest {
+        val demPng = renderSyntheticPng(256)
+        val requests = mutableListOf<String>()
+        val requestsMutex = Mutex()
+        val terrainInFlight = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val ordinaryJoined = CompletableDeferred<Unit>()
+        val rasterizer = demRasterizer(demPng, requests, requestsMutex, terrainInFlight, release, ordinaryJoined)
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson(TERRAIN_AND_HILLSHADE_STYLE))
+            val tile = TileId(2, 1, 1)
+
+            val terrain = async { rasterizer.acquireTerrainTiles(style, listOf(tile)) }
+            terrainInFlight.await()
+            val batch = async { rasterizer.prepareBatch(style, listOf(tile), RenderOptions(256)) }
+            ordinaryJoined.await()
+            release.complete(Unit)
+
+            assertTrue(terrain.await().single().texels.rgba.isNotEmpty())
+            batch.await().close()
+            assertEquals(
+                1,
+                requestsMutex.withLock { requests.count { it == SHARED_DEM_URL } },
+                "one exchange for the tile both reads wanted",
+            )
+        } finally {
+            release.complete(Unit)
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    private fun demRasterizer(
+        demPng: ByteArray,
+        requests: MutableList<String>,
+        requestsMutex: Mutex,
+        inFlight: CompletableDeferred<Unit>,
+        release: CompletableDeferred<Unit>,
+        joined: CompletableDeferred<Unit>,
+    ): BasemapRasterizer = Rentile.create(
+        RentileConfiguration(
+            transport = ResourceTransport { request ->
+                requestsMutex.withLock { requests += request.url }
+                if (request.url == SHARED_DEM_URL) {
+                    inFlight.complete(Unit)
+                    release.await()
+                }
+                TransportResponse(200, demPng)
+            },
+            rawResourceStore = InMemoryRawResourceStore(),
+            metricsSink = MetricsSink { metric ->
+                if (metric.name == MetricName.SINGLE_FLIGHT_JOIN && metric.resourceClass == ResourceClass.DEM_TILE) {
+                    joined.complete(Unit)
+                }
+            },
+        ),
+    )
+
     private fun rasterStyle(): StyleInput.InlineJson = StyleInput.InlineJson(
         """{"version":8,"sources":{"tiles":{"type":"raster","tiles":["https://tiles.example.test/{z}/{x}/{y}.png"],"tileSize":256}},"layers":[{"id":"raster","type":"raster","source":"tiles"}]}""",
     )
@@ -233,4 +392,12 @@ class WarmSingleFlightTest {
     private fun lineTo(count: Int): Int = (count shl 3) or 2
 
     private fun zigZag(value: Int): Int = (value shl 1) xor (value shr 31)
+
+    private companion object {
+        const val SHARED_DEM_URL = "https://tiles.example.test/2/1/1.png"
+
+        /** One DEM source read two ways: as terrain, which keeps pixels, and as an ordinary layer. */
+        const val TERRAIN_AND_HILLSHADE_STYLE: String =
+            """{"version":8,"sources":{"dem":{"type":"raster-dem","tiles":["https://tiles.example.test/{z}/{x}/{y}.png"],"tileSize":256,"maxzoom":2,"encoding":"terrarium"}},"terrain":{"source":"dem"},"layers":[{"id":"hills","type":"hillshade","source":"dem"}]}"""
+    }
 }

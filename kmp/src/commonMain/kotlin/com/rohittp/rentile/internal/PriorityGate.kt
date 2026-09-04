@@ -25,6 +25,12 @@ internal enum class ResourcePriority { ACQUISITION, WARM }
  * Prefetching is not preempted once its request is in flight: acquisition may wait for one in-flight
  * exchange to finish, which is bounded by a single request's latency rather than being starvation.
  * Cancelling an in-flight fetch would throw away bytes already paid for.
+ *
+ * That bound is a permit-holding rule, and every holder must keep it: **a permit covers one
+ * exchange and nothing else -- never a `Retry-After` wait, a backoff, or any other sleep.** A holder
+ * that waits under its permit converts "one request's latency" into "one request's latency plus
+ * however long it chose to sleep", and a burst of such holders parks the whole gate; prefetching
+ * ([warmRawResource]) therefore leaves the gate before it waits and comes back for a fresh permit.
  */
 internal class PriorityGate(private val permits: Int) {
     private val mutex = Mutex()

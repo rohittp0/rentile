@@ -219,6 +219,16 @@ public enum class MetricName {
     RAW_CACHE_HIT,
     RAW_CACHE_MISS,
     SINGLE_FLIGHT_JOIN,
+
+    /**
+     * A prefetch found the resource already being fetched and did nothing.
+     *
+     * `RawWarmSummary.alreadyCached` counts this alongside a resource that was genuinely on disk,
+     * because neither cost a request. Only this metric separates the two, which matters when the
+     * question is whether a prefetch is arriving too late to help rather than early enough to have
+     * already done its work.
+     */
+    WARM_ALREADY_IN_FLIGHT,
     TILE_RESOURCE_SUBSTITUTED,
     TILE_EXACT_RECOVERED,
     TILE_RENDERED,

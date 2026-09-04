@@ -105,6 +105,7 @@ final enum class com.rohittp.rentile/MetricName : kotlin/Enum<com.rohittp.rentil
     enum entry TILE_PNG_ENCODE_NANOS // com.rohittp.rentile/MetricName.TILE_PNG_ENCODE_NANOS|null[0]
     enum entry TILE_RENDERED // com.rohittp.rentile/MetricName.TILE_RENDERED|null[0]
     enum entry TILE_RESOURCE_SUBSTITUTED // com.rohittp.rentile/MetricName.TILE_RESOURCE_SUBSTITUTED|null[0]
+    enum entry WARM_ALREADY_IN_FLIGHT // com.rohittp.rentile/MetricName.WARM_ALREADY_IN_FLIGHT|null[0]
 
     final val entries // com.rohittp.rentile/MetricName.entries|#static{}entries[0]
         final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/MetricName> // com.rohittp.rentile/MetricName.entries.<get-entries>|<get-entries>#static(){}[0]

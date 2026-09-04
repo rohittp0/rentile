@@ -595,6 +595,7 @@ public final class com/rohittp/rentile/MetricName : java/lang/Enum {
 	public static final field TILE_PNG_ENCODE_NANOS Lcom/rohittp/rentile/MetricName;
 	public static final field TILE_RENDERED Lcom/rohittp/rentile/MetricName;
 	public static final field TILE_RESOURCE_SUBSTITUTED Lcom/rohittp/rentile/MetricName;
+	public static final field WARM_ALREADY_IN_FLIGHT Lcom/rohittp/rentile/MetricName;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lcom/rohittp/rentile/MetricName;
 	public static fun values ()[Lcom/rohittp/rentile/MetricName;
