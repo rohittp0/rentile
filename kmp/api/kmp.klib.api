@@ -93,6 +93,10 @@ final enum class com.rohittp.rentile/LabelPlacement : kotlin/Enum<com.rohittp.re
 }
 
 final enum class com.rohittp.rentile/MetricName : kotlin/Enum<com.rohittp.rentile/MetricName> { // com.rohittp.rentile/MetricName|null[0]
+    enum entry BACKGROUND_REVALIDATION_FAILED // com.rohittp.rentile/MetricName.BACKGROUND_REVALIDATION_FAILED|null[0]
+    enum entry BACKGROUND_REVALIDATION_NOT_MODIFIED // com.rohittp.rentile/MetricName.BACKGROUND_REVALIDATION_NOT_MODIFIED|null[0]
+    enum entry BACKGROUND_REVALIDATION_REPLACED // com.rohittp.rentile/MetricName.BACKGROUND_REVALIDATION_REPLACED|null[0]
+    enum entry BACKGROUND_REVALIDATION_STARTED // com.rohittp.rentile/MetricName.BACKGROUND_REVALIDATION_STARTED|null[0]
     enum entry PNG_ENCODED_BYTES // com.rohittp.rentile/MetricName.PNG_ENCODED_BYTES|null[0]
     enum entry RAW_CACHE_HIT // com.rohittp.rentile/MetricName.RAW_CACHE_HIT|null[0]
     enum entry RAW_CACHE_MISS // com.rohittp.rentile/MetricName.RAW_CACHE_MISS|null[0]

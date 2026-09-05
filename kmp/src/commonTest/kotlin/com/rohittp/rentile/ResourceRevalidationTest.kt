@@ -1,6 +1,7 @@
 package com.rohittp.rentile
 
 import com.rohittp.rentile.internal.renderSyntheticPng
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
@@ -20,26 +21,48 @@ private const val TILE_JSON =
 private const val CHANGED_TILE_JSON =
     """{"tilejson":"3.0.0","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"minzoom":0,"maxzoom":14,"scheme":"xyz"}"""
 
-private const val NOW_MILLIS = 1_000_000L
+private const val CLOSURE_NOW_MILLIS = 1_000_000L
 private val CLOSURE_CLASSES = listOf(ResourceClass.SPRITE_JSON, ResourceClass.SPRITE_IMAGE, ResourceClass.TILE_JSON)
 
 /**
- * The documents a style names are revalidated, not trusted forever.
+ * The documents a style names are served from the store and refreshed behind the caller.
  *
- * The sprite JSON, the sprite image and every source's TileJSON went through the raw store from the
- * start, but once written they were reused unconditionally and for good: a corrected icon sheet or
- * a source whose tile templates, zoom range or bounds moved upstream never reached a consumer that
- * had fetched the old document once. They now take the same path the style takes, with ADR 0007's
- * freshness shortcut the style deliberately declines.
+ * They were once reused unconditionally and for good, so a corrected icon sheet or a source whose
+ * tile templates moved upstream never reached a consumer that had fetched the old document; then
+ * they were revalidated in front of the caller, which was correct and put three more conditional
+ * round trips on the path to the first tile — production sends no `Cache-Control` on any of them,
+ * so none of those requests could ever be skipped and all of them answered `304`.
  */
 class ResourceRevalidationTest {
     @Test
-    fun aWarmStartRevalidatesEveryClosureDocumentAndReusesItOnNotModified() = runTest {
+    fun aCachedClosureDocumentIsServedBeforeItsRefreshIsAnswered() = runTest {
         val store = InMemoryRawResourceStore()
-        val transport = validatorBearingTransport()
+        val refreshesRequested = CompletableDeferred<Unit>()
+        val releaseRefreshes = CompletableDeferred<Unit>()
+        val requestedRefreshes = mutableListOf<ResourceClass>()
+        val requestedMutex = Mutex()
+        val transport = RecordingTransport { request ->
+            if (request.metadata.ifNoneMatch == null) {
+                ok(request.resourceClass, changed = false, etag = "\"${request.resourceClass}-1\"")
+            } else {
+                val complete = requestedMutex.withLock {
+                    requestedRefreshes += request.resourceClass
+                    requestedRefreshes.size == CLOSURE_CLASSES.size
+                }
+                if (complete) refreshesRequested.complete(Unit)
+                releaseRefreshes.await()
+                TransportResponse(304, ByteArray(0))
+            }
+        }
 
         prepareClosure(transport, store)
-        prepareClosure(transport, store)
+        // Preparation returns while all three refreshes are still blocked in the transport. If any
+        // of them were in front of the caller, this would never come back.
+        withClosureRasterizer(transport, store) { rasterizer ->
+            rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
+            refreshesRequested.await()
+            releaseRefreshes.complete(Unit)
+        }
 
         for (resourceClass in CLOSURE_CLASSES) {
             val requests = transport.requests(resourceClass)
@@ -50,8 +73,27 @@ class ResourceRevalidationTest {
     }
 
     @Test
-    fun aChangedClosureDocumentIsReplacedAndTheNextStartRevalidatesTheReplacement() = runTest {
-        val store = InMemoryRawResourceStore()
+    fun aBackgroundNotModifiedRewritesEveryStoredEntry() = runTest {
+        // A consumer's raw cache is trimmed by file age, so a document read on every start and never
+        // written becomes its oldest file and is evicted first.
+        val store = WriteRecordingRawResourceStore()
+        val transport = validatorBearingTransport()
+
+        prepareClosure(transport, store)
+        assertEquals(CLOSURE_CLASSES.toSet(), store.writes().toSet())
+        store.clearWrites()
+        withClosureRasterizer(transport, store) { rasterizer ->
+            rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
+            while (store.writes().size < CLOSURE_CLASSES.size) store.awaitWrite()
+        }
+
+        assertEquals(CLOSURE_CLASSES.toSet(), store.writes().toSet(), "each 304 refreshes its entry's recency")
+        assertTrue(store.everyWriteKeptItsBytes, "the rewrite must not change what is stored")
+    }
+
+    @Test
+    fun aBackgroundReplacementIsWhatTheNextPreparationSees() = runTest {
+        val store = WriteRecordingRawResourceStore()
         val transport = RecordingTransport { request ->
             when (request.metadata.ifNoneMatch) {
                 null -> ok(request.resourceClass, changed = false, etag = "\"${request.resourceClass}-1\"")
@@ -62,45 +104,95 @@ class ResourceRevalidationTest {
         }
 
         prepareClosure(transport, store)
-        prepareClosure(transport, store)
+        store.clearWrites()
+        withClosureRasterizer(transport, store) { rasterizer ->
+            rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
+            while (store.writes().size < CLOSURE_CLASSES.size) store.awaitWrite()
+        }
         prepareClosure(transport, store)
 
         for (resourceClass in CLOSURE_CLASSES) {
             val requests = transport.requests(resourceClass)
             assertEquals(3, requests.size, "$resourceClass")
-            assertEquals("\"$resourceClass-2\"", requests[2].metadata.ifNoneMatch, "$resourceClass revalidated the replacement")
+            assertEquals(
+                "\"$resourceClass-2\"",
+                requests[2].metadata.ifNoneMatch,
+                "$resourceClass: the replacement is what the next preparation read and refreshed",
+            )
         }
     }
 
     @Test
-    fun aClosureDocumentWithNoValidatorsIsRefetchedRatherThanStored() = runTest {
-        // Nothing could ever revalidate it, so storing it would only cost a payload read and a
-        // SHA-256 on every later start.
+    fun aFailedBackgroundRefreshNeverReachesTheCaller() = runTest {
+        for (failing in CLOSURE_CLASSES) {
+            val store = InMemoryRawResourceStore()
+            val failed = CompletableDeferred<Unit>()
+            val transport = RecordingTransport { request ->
+                when {
+                    request.metadata.ifNoneMatch == null ->
+                        ok(request.resourceClass, changed = false, etag = "\"${request.resourceClass}-1\"")
+                    request.resourceClass == failing -> TransportResponse(503, ByteArray(0))
+                    else -> TransportResponse(304, ByteArray(0))
+                }
+            }
+            val metrics = MetricsSink { metric ->
+                if (metric.name == MetricName.BACKGROUND_REVALIDATION_FAILED && metric.resourceClass == failing) {
+                    failed.complete(Unit)
+                }
+            }
+
+            prepareClosure(transport, store)
+            withClosureRasterizer(transport, store, metrics) { rasterizer ->
+                // No exception: the caller already has the stored document, and a refresh that
+                // cannot complete is not a preparation failure.
+                rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
+                failed.await()
+            }
+        }
+    }
+
+    @Test
+    fun oneProcessRefreshesEachDocumentOnce() = runTest {
         val store = InMemoryRawResourceStore()
-        val transport = RecordingTransport { request -> ok(request.resourceClass, changed = false, etag = null) }
+        val refreshed = CompletableDeferred<Unit>()
+        val seen = mutableListOf<ResourceClass>()
+        val seenMutex = Mutex()
+        val transport = RecordingTransport { request ->
+            if (request.metadata.ifNoneMatch == null) {
+                ok(request.resourceClass, changed = false, etag = "\"${request.resourceClass}-1\"")
+            } else {
+                val complete = seenMutex.withLock {
+                    seen += request.resourceClass
+                    seen.size == CLOSURE_CLASSES.size
+                }
+                if (complete) refreshed.complete(Unit)
+                TransportResponse(304, ByteArray(0))
+            }
+        }
 
         prepareClosure(transport, store)
-        prepareClosure(transport, store)
+        withClosureRasterizer(transport, store) { rasterizer ->
+            rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
+            rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
+            refreshed.await()
+        }
 
         for (resourceClass in CLOSURE_CLASSES) {
-            val requests = transport.requests(resourceClass)
-            assertEquals(2, requests.size, "$resourceClass")
-            requests.forEach { assertNull(it.metadata.ifNoneMatch, "$resourceClass") }
+            assertEquals(2, transport.requests(resourceClass).size, "$resourceClass: one fetch, one refresh")
         }
-        assertEquals(0, store.size(), "an unusable entry is not written")
     }
 
     @Test
     fun aFreshClosureDocumentIsUsedWithoutAskingTheOrigin() = runTest {
-        // ADR 0007's shortcut, which these three may take and the style may not: they are not the
-        // root of the closure.
+        // ADR 0007's shortcut: an explicit max-age that has not passed means there is nothing to
+        // refresh, so not even a background request goes out.
         val store = InMemoryRawResourceStore()
         val transport = RecordingTransport { request ->
             ok(
                 request.resourceClass,
                 changed = false,
                 etag = "\"${request.resourceClass}-1\"",
-                expiresAtEpochMillis = NOW_MILLIS + 3_600_000L,
+                expiresAtEpochMillis = CLOSURE_NOW_MILLIS + 3_600_000L,
             )
         }
 
@@ -113,48 +205,55 @@ class ResourceRevalidationTest {
     }
 
     @Test
-    fun aFailedRevalidationFailsRatherThanServingTheStoredDocument() = runTest {
+    fun aClosureDocumentWithNoValidatorsIsStoredAndRefreshedUnconditionally() = runTest {
+        // Nothing can revalidate it, but it is still worth keeping: it is served at once and
+        // replaced behind the caller, which is what production's header-less documents need.
+        val store = InMemoryRawResourceStore()
+        val refreshed = CompletableDeferred<Unit>()
+        val seen = mutableListOf<ResourceClass>()
+        val seenMutex = Mutex()
+        val transport = RecordingTransport { request ->
+            val refreshes = seenMutex.withLock {
+                seen += request.resourceClass
+                seen.size
+            }
+            if (refreshes == CLOSURE_CLASSES.size * 2) refreshed.complete(Unit)
+            ok(request.resourceClass, changed = false, etag = null)
+        }
+
+        prepareClosure(transport, store)
+        assertEquals(CLOSURE_CLASSES.size, store.size(), "an entry with no validators is still stored")
+        withClosureRasterizer(transport, store) { rasterizer ->
+            rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
+            refreshed.await()
+        }
+
+        for (resourceClass in CLOSURE_CLASSES) {
+            val requests = transport.requests(resourceClass)
+            assertEquals(2, requests.size, "$resourceClass")
+            requests.forEach { assertNull(it.metadata.ifNoneMatch, "$resourceClass had nothing to send") }
+        }
+    }
+
+    @Test
+    fun anUncachedDocumentIsFetchedInTheForegroundAndItsFailureIsRaised() = runTest {
         for (failing in CLOSURE_CLASSES) {
             val store = InMemoryRawResourceStore()
             val transport = RecordingTransport { request ->
-                when {
-                    request.metadata.ifNoneMatch == null ->
-                        ok(request.resourceClass, changed = false, etag = "\"${request.resourceClass}-1\"")
-                    request.resourceClass == failing -> TransportResponse(503, ByteArray(0))
-                    else -> TransportResponse(304, ByteArray(0))
+                if (request.resourceClass == failing) {
+                    TransportResponse(503, ByteArray(0))
+                } else {
+                    ok(request.resourceClass, changed = false, etag = "\"${request.resourceClass}-1\"")
                 }
             }
 
-            prepareClosure(transport, store)
-            val failure = assertFailsWith<ResourceAcquisitionException>("$failing must not be served stale") {
+            val failure = assertFailsWith<ResourceAcquisitionException>("$failing") {
                 prepareClosure(transport, store)
             }
 
             assertEquals(503, failure.statusCode, "$failing")
             assertEquals(failing, failure.resourceClass, "$failing")
         }
-    }
-
-    @Test
-    fun reusingAStoredDocumentRewritesItSoAnAgeTrimmedCacheDoesNotEvictIt() = runTest {
-        // A consumer's raw cache is trimmed by file age. An entry read on every start and never
-        // written becomes the oldest file in it, so the documents most worth keeping would be the
-        // first to go.
-        val store = WriteRecordingRawResourceStore()
-        val transport = validatorBearingTransport()
-
-        prepareClosure(transport, store)
-        val afterFirstStart = store.writes()
-        store.clearWrites()
-        prepareClosure(transport, store)
-
-        assertEquals(CLOSURE_CLASSES.toSet(), afterFirstStart.toSet())
-        assertEquals(
-            CLOSURE_CLASSES.toSet(),
-            store.writes().toSet(),
-            "a 304 must refresh the stored entry's recency",
-        )
-        assertTrue(store.everyWriteKeptItsBytes, "the rewrite must not change what is stored")
     }
 
     private fun validatorBearingTransport(): RecordingTransport = RecordingTransport { request ->
@@ -185,15 +284,25 @@ class ResourceRevalidationTest {
     }
 
     private suspend fun prepareClosure(transport: ResourceTransport, store: RawResourceStore) {
+        withClosureRasterizer(transport, store) { it.prepare(StyleInput.InlineJson(CLOSURE_STYLE)) }
+    }
+
+    private suspend fun <T> withClosureRasterizer(
+        transport: ResourceTransport,
+        store: RawResourceStore,
+        metricsSink: MetricsSink = MetricsSink.None,
+        block: suspend (BasemapRasterizer) -> T,
+    ): T {
         val rasterizer = Rentile.create(
             RentileConfiguration(
                 transport = transport,
                 rawResourceStore = store,
-                clock = RentileClock { NOW_MILLIS },
+                metricsSink = metricsSink,
+                clock = RentileClock { CLOSURE_NOW_MILLIS },
             ),
         )
         try {
-            rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
+            return block(rasterizer)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()

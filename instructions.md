@@ -179,6 +179,12 @@ Implement `RawResourceStore` over the existing Okio filesystem primitives with t
 - Override `metadata(key)` as a header-only lookup. It answers "is this already cached?", which
   warming asks for every resource of every warmed tile; the inherited default falls back to `read`
   and therefore pays for the whole payload plus its integrity hash on a warm session.
+- Expect the style, sprite and TileJSON entries to be **read on the preparation path and written
+  again just afterwards**. A stored closure document is served immediately and revalidated in the
+  background: `304` rewrites the entry, `200` replaces it, and a failed refresh leaves it alone and
+  raises nothing. A changed upstream document therefore reaches the app at the *next* preparation.
+  Keep `write` cheap and atomic, and do not treat the extra write as a redundant one — it is what
+  keeps an age-trimmed cache from evicting the documents the app needs first.
 - Hash `RawResourceKey.stableId` before using it as a path component.
 - Use a dedicated namespace such as `<cacheDir>/rentile/raw`.
 - Persist bytes, `contentDigest`, and `RawResourceMetadata` together.

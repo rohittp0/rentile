@@ -1,5 +1,6 @@
 package com.rohittp.rentile
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -42,20 +43,33 @@ internal class WriteRecordingRawResourceStore : RawResourceStore {
     private val mutex = Mutex()
     private val entries = mutableMapOf<RawResourceKey, StoredRawResource>()
     private val written = mutableListOf<ResourceClass>()
+    private var nextWrite = CompletableDeferred<Unit>()
     var everyWriteKeptItsBytes: Boolean = true
         private set
 
     override suspend fun read(key: RawResourceKey): StoredRawResource? = mutex.withLock { entries[key] }
 
     override suspend fun write(key: RawResourceKey, resource: StoredRawResource) {
-        mutex.withLock {
+        val signal = mutex.withLock {
             val previous = entries[key]
             if (previous != null && !previous.bytes.contentEquals(resource.bytes)) {
                 everyWriteKeptItsBytes = false
             }
             entries[key] = resource
             written += key.resourceClass
+            nextWrite
         }
+        signal.complete(Unit)
+    }
+
+    /**
+     * Suspends until a write lands, which is how a test waits for a background refresh.
+     *
+     * A background revalidation runs in the rasterizer's own scope, so nothing the test holds can
+     * be joined; what it can observe is the store the refresh writes through.
+     */
+    suspend fun awaitWrite() {
+        mutex.withLock { nextWrite }.await()
     }
 
     override suspend fun remove(key: RawResourceKey) {
@@ -65,6 +79,9 @@ internal class WriteRecordingRawResourceStore : RawResourceStore {
     suspend fun writes(): List<ResourceClass> = mutex.withLock { written.toList() }
 
     suspend fun clearWrites() {
-        mutex.withLock { written.clear() }
+        mutex.withLock {
+            written.clear()
+            nextWrite = CompletableDeferred()
+        }
     }
 }

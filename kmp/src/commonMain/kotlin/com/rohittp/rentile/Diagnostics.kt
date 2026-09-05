@@ -239,6 +239,29 @@ public enum class MetricName {
 
     /** Nanoseconds spent PNG-encoding one output tile, excluding drawing. */
     TILE_PNG_ENCODE_NANOS,
+
+    /**
+     * A cached style-closure document was served and its refresh started behind the caller.
+     *
+     * These four are appended rather than grouped with the other cache metrics on purpose: an enum
+     * entry inserted in the middle shifts every later ordinal, which a consumer that persisted one
+     * would not notice until the numbers meant something else.
+     */
+    BACKGROUND_REVALIDATION_STARTED,
+
+    /** A background revalidation was answered `304`; the stored entry stands. */
+    BACKGROUND_REVALIDATION_NOT_MODIFIED,
+
+    /** A background revalidation returned new bytes; the stored entry was replaced. */
+    BACKGROUND_REVALIDATION_REPLACED,
+
+    /**
+     * A background revalidation did not complete, and nothing was raised.
+     *
+     * The caller was already served from the store, so this is the only signal that a refresh went
+     * wrong: a preparation is never failed by one.
+     */
+    BACKGROUND_REVALIDATION_FAILED,
 }
 
 public data class RentileMetric(

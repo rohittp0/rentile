@@ -112,11 +112,16 @@ class RentileRuntimeTest {
         val requestedMutex = Mutex()
         val conditional = mutableListOf<String?>()
         val conditionalMutex = Mutex()
+        val refreshed = CompletableDeferred<Unit>()
         val rasterizer = Rentile.create(
             RentileConfiguration(
                 transport = ResourceTransport { request ->
                     requestedMutex.withLock { requested += request.resourceClass to request.url }
-                    conditionalMutex.withLock { conditional += request.metadata.ifNoneMatch }
+                    val refreshes = conditionalMutex.withLock {
+                        conditional += request.metadata.ifNoneMatch
+                        conditional.count { it != null }
+                    }
+                    if (refreshes == 2) refreshed.complete(Unit)
                     if (request.metadata.ifNoneMatch != null) {
                         TransportResponse(304, ByteArray(0))
                     } else {
@@ -144,6 +149,8 @@ class RentileRuntimeTest {
             )
             val firstStyle = rasterizer.prepare(input)
             val secondStyle = rasterizer.prepare(input)
+            // The second preparation was served from the store; its refreshes go out behind it.
+            refreshed.await()
             val output = rasterizer.render(firstStyle, listOf(TileId(0, 0, 0)), RenderOptions(256)).tiles.single()
 
             assertEquals(firstStyle.digest, secondStyle.digest)
@@ -155,9 +162,9 @@ class RentileRuntimeTest {
                 ),
                 requestedMutex.withLock { requested.toSet() },
             )
-            // Four exchanges, not two: the second preparation revalidates rather than refetching.
-            // Nothing is served out of the store without the origin confirming it, and nothing is
-            // downloaded twice -- both second requests are conditional and both were answered 304.
+            // Four exchanges, not two: the second preparation is served from the store and its two
+            // documents are refreshed behind it. Both refreshes are conditional and both were
+            // answered 304, so nothing was downloaded twice.
             assertEquals(4, requestedMutex.withLock { requested.size })
             assertEquals(
                 listOf(null, null, "\"sprite-1\"", "\"sprite-1\""),
@@ -2403,12 +2410,14 @@ class RentileRuntimeTest {
         val store = InMemoryRawResourceStore()
         val requested = mutableListOf<Pair<ResourceClass, String>>()
         val conditional = mutableListOf<String?>()
+        val refreshed = CompletableDeferred<Unit>()
         val rasterizer = Rentile.create(
             RentileConfiguration(
                 transport = ResourceTransport { request ->
                     requested += request.resourceClass to request.url
                     conditional += request.metadata.ifNoneMatch
                     if (request.metadata.ifNoneMatch != null) {
+                        refreshed.complete(Unit)
                         TransportResponse(304, ByteArray(0))
                     } else {
                         when (request.resourceClass) {
@@ -2432,16 +2441,18 @@ class RentileRuntimeTest {
             )
             val firstStyle = rasterizer.prepare(input)
             val secondStyle = rasterizer.prepare(input)
+            // The second preparation was served from the store; its refresh goes out behind it.
+            refreshed.await()
             assertEquals(firstStyle.digest, secondStyle.digest)
 
             val tile = TileId(22, 1_234_919, 1_576_977)
             val output = rasterizer.render(firstStyle, listOf(tile), RenderOptions(512)).tiles.single()
 
             assertTrue(output.pngBytes.startsWithPngSignature())
-            // The second preparation revalidates the resolved TileJSON instead of trusting it
-            // forever: one conditional exchange, answered 304, and the stored document reused. A
-            // source whose templates or zoom range changed upstream is noticed; its bytes are not
-            // downloaded twice.
+            // The second preparation is served the stored TileJSON and refreshes it afterwards:
+            // one conditional exchange, answered 304, behind a caller that never waited for it. A
+            // source whose templates or zoom range changed upstream is noticed at the preparation
+            // after that; its bytes are never downloaded twice.
             assertEquals(
                 listOf(
                     ResourceClass.TILE_JSON to "https://style.example.test/styles/basic/metadata/tiles.json?key=inside",

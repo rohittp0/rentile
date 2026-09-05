@@ -8,7 +8,7 @@ import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.SingleFlight
-import com.rohittp.rentile.internal.acquireRevalidatedRawResource
+import com.rohittp.rentile.internal.RevalidatingResourceAcquirer
 import com.rohittp.rentile.internal.recordSafely
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
@@ -38,6 +38,7 @@ internal class TileJsonResourceAcquirer(
     private val configuration: RentileConfiguration,
     scope: CoroutineScope,
     private val workCoordinator: ResourceWorkCoordinator,
+    private val resourceAcquirer: RevalidatingResourceAcquirer,
 ) {
     private val json = Json { isLenient = false }
     private val singleFlight = SingleFlight<RawResourceKey, ResolvedTileJson>(scope)
@@ -63,8 +64,7 @@ internal class TileJsonResourceAcquirer(
                 )
             },
         ) {
-            val bytes = configuration.acquireRevalidatedRawResource(
-                workCoordinator = workCoordinator,
+            val bytes = resourceAcquirer.acquire(
                 key = key,
                 url = url,
                 sanitizedId = sanitizedId,

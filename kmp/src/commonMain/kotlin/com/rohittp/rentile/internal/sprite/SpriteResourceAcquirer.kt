@@ -6,9 +6,8 @@ import com.rohittp.rentile.RentileConfiguration
 import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.SafetyLimitException
-import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.SingleFlight
-import com.rohittp.rentile.internal.acquireRevalidatedRawResource
+import com.rohittp.rentile.internal.RevalidatingResourceAcquirer
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import kotlinx.coroutines.CoroutineScope
@@ -42,7 +41,7 @@ internal data class CompiledSpriteAtlas(
 internal class SpriteResourceAcquirer(
     private val configuration: RentileConfiguration,
     scope: CoroutineScope,
-    private val workCoordinator: ResourceWorkCoordinator,
+    private val resourceAcquirer: RevalidatingResourceAcquirer,
 ) {
     private val json = Json { isLenient = false }
     private val singleFlight = SingleFlight<String, CompiledSpriteAtlas>(scope)
@@ -86,8 +85,7 @@ internal class SpriteResourceAcquirer(
         accept: String,
     ): ByteArray {
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
-        return configuration.acquireRevalidatedRawResource(
-            workCoordinator = workCoordinator,
+        return resourceAcquirer.acquire(
             key = RawResourceKey(sanitizedId, resourceClass),
             url = url,
             sanitizedId = sanitizedId,

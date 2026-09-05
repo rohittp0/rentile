@@ -205,8 +205,13 @@ private class DefaultBasemapRasterizer(
     private val closed = CompletableDeferred<Unit>()
     private val secretContexts = AtomicReference<List<SecretContext>>(emptyList())
     private val resourceWorkCoordinator = ResourceWorkCoordinator(configuration.executionPolicy)
-    private val tileJsonAcquirer = TileJsonResourceAcquirer(configuration, scope, resourceWorkCoordinator)
-    private val spriteAcquirer = SpriteResourceAcquirer(configuration, scope, resourceWorkCoordinator)
+
+    // One instance for the whole rasterizer: its "revalidated this run" memo is what bounds
+    // background refreshes to one per key per process, so a per-acquirer copy would allow four.
+    private val revalidatingResourceAcquirer =
+        RevalidatingResourceAcquirer(configuration, scope, resourceWorkCoordinator)
+    private val tileJsonAcquirer = TileJsonResourceAcquirer(configuration, scope, resourceWorkCoordinator, revalidatingResourceAcquirer)
+    private val spriteAcquirer = SpriteResourceAcquirer(configuration, scope, revalidatingResourceAcquirer)
     private val geoJsonAcquirer = GeoJsonResourceAcquirer(configuration, scope, resourceWorkCoordinator)
     private val compiler = StyleCompiler(
         owner,
@@ -877,15 +882,13 @@ private class DefaultBasemapRasterizer(
      */
     private suspend fun acquireRemoteStyle(url: String): ByteArray {
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
-        return configuration.acquireRevalidatedRawResource(
-            workCoordinator = resourceWorkCoordinator,
+        return revalidatingResourceAcquirer.acquire(
             key = RawResourceKey(sanitizedId, ResourceClass.STYLE),
             url = url,
             sanitizedId = sanitizedId,
             maxBytes = configuration.resourceLimits.maxStyleBytes,
             transportLabel = "Style",
             cacheLabel = "style",
-            alwaysRevalidate = true,
         )
     }
 
