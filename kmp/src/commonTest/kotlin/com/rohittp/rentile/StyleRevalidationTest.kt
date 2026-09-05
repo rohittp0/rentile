@@ -85,17 +85,21 @@ class StyleRevalidationTest {
         }
 
         assertEquals(listOf(ResourceClass.STYLE), store.writes(), "the 304 must refresh the entry's recency")
-        assertTrue(store.everyWriteKeptItsBytes)
+        assertTrue(store.everyWriteKeptItsBytes())
     }
 
     @Test
     fun aBackgroundReplacementIsWhatTheNextPreparationSees() = runTest {
         val store = WriteRecordingRawResourceStore()
+        val replacementRefreshed = CompletableDeferred<Unit>()
         val transport = RecordingTransport { request ->
             when (request.metadata.ifNoneMatch) {
                 null -> TransportResponse(200, FIRST_STYLE.encodeToByteArray(), TransportResponseMetadata(etag = "\"v1\""))
                 "\"v1\"" -> TransportResponse(200, SECOND_STYLE.encodeToByteArray(), TransportResponseMetadata(etag = "\"v2\""))
-                else -> TransportResponse(304, ByteArray(0))
+                else -> {
+                    replacementRefreshed.complete(Unit)
+                    TransportResponse(304, ByteArray(0))
+                }
             }
         }
 
@@ -106,7 +110,13 @@ class StyleRevalidationTest {
             store.awaitWrites(1)
             digest
         }
-        val afterReplacementDigest = withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)).digest }
+        val afterReplacementDigest = withRasterizer(transport, store) { rasterizer ->
+            val digest = rasterizer.prepare(StyleInput.Remote(STYLE_URL)).digest
+            // Waited for, not assumed: this refresh is the third request, and closing the rasterizer
+            // before it went out would leave the list one short.
+            replacementRefreshed.await()
+            digest
+        }
 
         assertEquals(firstDigest, servedStaleDigest, "the caller is served what was stored, not what arrives")
         assertNotEquals(firstDigest, afterReplacementDigest, "the replacement lands at the next preparation")

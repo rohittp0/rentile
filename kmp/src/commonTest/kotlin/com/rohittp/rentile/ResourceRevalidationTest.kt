@@ -10,6 +10,8 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -91,18 +93,28 @@ class ResourceRevalidationTest {
         }
 
         assertEquals(CLOSURE_CLASSES.toSet(), store.writes().toSet(), "each 304 refreshes its entry's recency")
-        assertTrue(store.everyWriteKeptItsBytes, "the rewrite must not change what is stored")
+        assertTrue(store.everyWriteKeptItsBytes(), "the rewrite must not change what is stored")
     }
 
     @Test
     fun aBackgroundReplacementIsWhatTheNextPreparationSees() = runTest {
         val store = WriteRecordingRawResourceStore()
+        val replacementsRefreshed = CompletableDeferred<Unit>()
+        val refreshedReplacements = mutableListOf<ResourceClass>()
+        val refreshedMutex = Mutex()
         val transport = RecordingTransport { request ->
             when (request.metadata.ifNoneMatch) {
                 null -> ok(request.resourceClass, changed = false, etag = "\"${request.resourceClass}-1\"")
                 "\"${request.resourceClass}-1\"" ->
                     ok(request.resourceClass, changed = true, etag = "\"${request.resourceClass}-2\"")
-                else -> TransportResponse(304, ByteArray(0))
+                else -> {
+                    val complete = refreshedMutex.withLock {
+                        refreshedReplacements += request.resourceClass
+                        refreshedReplacements.size == CLOSURE_CLASSES.size
+                    }
+                    if (complete) replacementsRefreshed.complete(Unit)
+                    TransportResponse(304, ByteArray(0))
+                }
             }
         }
 
@@ -112,7 +124,12 @@ class ResourceRevalidationTest {
             rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
             store.awaitWrites(CLOSURE_CLASSES.size)
         }
-        prepareClosure(transport, store)
+        withClosureRasterizer(transport, store) { rasterizer ->
+            rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
+            // Waited for, not assumed: these refreshes are the third request of each kind, and
+            // closing the rasterizer before they went out would leave each list one short.
+            replacementsRefreshed.await()
+        }
 
         for (resourceClass in CLOSURE_CLASSES) {
             val requests = transport.requests(resourceClass)
@@ -333,15 +350,18 @@ class ResourceRevalidationTest {
                 rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
                 rejected.await()
             }
-            // The store still holds the real document: the preparation after the rejection reads it
-            // and revalidates it, rather than refetching a hole.
-            prepareClosure(transport, store)
 
-            assertEquals(
-                "\"$poisoned-1\"",
-                transport.requests(poisoned).last().metadata.ifNoneMatch,
-                "$poisoned",
+            // Asserted against the store rather than against a later preparation's request, which
+            // would have meant reading a list a background refresh was still appending to.
+            val stored = store.read(
+                RawResourceKey(closureUrl(poisoned).withRedactedAuthenticationQuery().sha256Hex(), poisoned),
             )
+            assertNotNull(stored, "$poisoned")
+            assertFalse(
+                stored.bytes.decodeToString().startsWith("<html"),
+                "$poisoned: the store still holds the document, not the portal page",
+            )
+            assertEquals("\"$poisoned-1\"", stored.metadata.etag, "$poisoned")
         }
     }
 
