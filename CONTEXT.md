@@ -38,6 +38,14 @@ _Avoid_: Raw style, mutable renderer session
 An immutable rendering input that freezes the resource closure and output content keys for a caller-defined set of output tiles before any drawing occurs.
 _Avoid_: Render result, mutable request queue
 
+**Render Priority**:
+Which of two render queues one render operation joins: `URGENT` for a tile the caller is about to
+present or whose absence pauses presentation, `NORMAL` for read-ahead. A freed metatile worker goes
+to an `URGENT` request whenever one is waiting. It is a scheduling decision only — it never reaches
+the draw path, never enters an Output Tile's request or content key, and is relative rather than a
+guarantee, so a caller that marks everything `URGENT` has one FIFO queue again.
+_Avoid_: Work class, weight, deadline, quality of service
+
 **Resource Closure**:
 The complete set of immutable raw-resource identities required to render a specific batch of output tiles.
 _Avoid_: Request queue, mutable cache contents

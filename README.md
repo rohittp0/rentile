@@ -118,7 +118,7 @@ Publishing a new release requires no documentation commit or version-sync automa
 
 ## Failure contract
 
-Rentile raises typed `RentileException` subclasses with stable error codes, pipeline stages, redacted diagnostics, and affected tile identities. It does not retry, fall back, or return a partial output batch. `CancellationException` is propagated unchanged so callers retain control of cancellation and priority. Raw-resource cache entries completed for other tiles are not rolled back when a later tile fails.
+Rentile raises typed `RentileException` subclasses with stable error codes, pipeline stages, redacted diagnostics, and affected tile identities. It does not retry, fall back, or return a partial output batch. `CancellationException` is propagated unchanged so callers retain control of cancellation. Callers also mark each render `URGENT` or `NORMAL` through `RenderPriority`, which decides only which waiting request the next freed metatile worker serves. Raw-resource cache entries completed for other tiles are not rolled back when a later tile fails.
 
 Messages and causes from injected transport/store adapters are not forwarded because they may contain signed URLs or secret-bearing paths. Record adapter-specific failures in redacted form inside the adapter, and use Rentile's typed status, retry delay, resource class, stage, and affected tiles for recovery decisions.
 

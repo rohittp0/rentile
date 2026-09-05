@@ -221,7 +221,16 @@ val rasterizer = Rentile.create(
 )
 ```
 
-The execution policy controls bounded internal fetch/decode throughput. Travel Animator remains responsible for request priority, which tiles are submitted, and cancellation of its coroutine jobs.
+The execution policy controls bounded internal fetch/decode throughput. Travel Animator remains responsible for which tiles are submitted and for cancellation of its coroutine jobs.
+
+Render priority is the one scheduling input Rentile takes from the caller. `render`, `renderRaw` and
+the style-based `render` all accept a `RenderPriority`, defaulting to `NORMAL`; pass
+`RenderPriority.URGENT` for a tile the app is about to present or whose absence would pause
+playback, and leave read-ahead at `NORMAL`. A freed metatile worker goes to an `URGENT` request
+whenever one is waiting, so a session prefetching a whole route no longer queues the tiles a resume
+needs behind it. It changes nothing about the output: priority never enters a content key, and two
+tiles rendered at different priorities are byte-identical. See
+[ADR 0032](docs/adr/0032-rendering-has-a-priority-and-it-is-the-callers.md).
 
 Prepare the style once, then render caller-selected XYZ tiles:
 
@@ -305,7 +314,8 @@ try {
 }
 ```
 
-Rentile does not retry, prioritize, fall back, or return a partial output batch. A failed operation can still leave successfully completed raw-resource cache entries from other tiles intact. If the caller needs independent per-tile failure handling, schedule separate cancellable render operations and persist each successful PNG before starting dependent work.
+Rentile does not retry, fall back, or return a partial output batch, and it ranks nothing beyond the
+two render queues `RenderPriority` selects. A failed operation can still leave successfully completed raw-resource cache entries from other tiles intact. If the caller needs independent per-tile failure handling, schedule separate cancellable render operations and persist each successful PNG before starting dependent work.
 
 Do not log transport/store exception causes, full URLs, query strings, or response bodies. Use the typed `RentileException` fields.
 
