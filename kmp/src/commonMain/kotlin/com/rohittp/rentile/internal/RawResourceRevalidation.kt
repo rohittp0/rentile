@@ -8,6 +8,7 @@ import com.rohittp.rentile.RentileConfiguration
 import com.rohittp.rentile.RentileMetric
 import com.rohittp.rentile.ResourceAcquisitionException
 import com.rohittp.rentile.ResourceClass
+import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.SafetyLimitException
 import com.rohittp.rentile.StoredRawResource
 import com.rohittp.rentile.TransportRequest
@@ -42,8 +43,9 @@ internal const val NOT_MODIFIED_STATUS: Int = 304
  * The rules that follow from that:
  *
  * - A **fresh** entry (an explicit `max-age` or `Expires` that has not passed) needs no refresh at
- *   all, exactly as ADR 0007 says. Serving it rewrites the entry, because a consumer's raw cache is
- *   trimmed by file age and an entry read on every start and never written becomes its oldest file.
+ *   all, exactly as ADR 0007 says, and is not rewritten either: its recency was set when it was
+ *   written, and a store write on the preparation path could fail a preparation that needed no
+ *   network. The run that finds it stale rewrites it from the `304`.
  * - A **stale** entry is served and one background revalidation is scheduled: conditional when the
  *   entry has validators, unconditional when it has none. `304` rewrites the entry, `200` replaces
  *   it, and any failure keeps what is stored. **A background refresh never fails a preparation**;
@@ -54,7 +56,11 @@ internal const val NOT_MODIFIED_STATUS: Int = 304
  *   this gives up is one preparation's worth of latency, and what it buys is a style switch that
  *   does not wait for the origin.
  * - **No stored entry** is the only case that reaches the transport in front of the caller, and it
- *   keeps the typed failure it always had.
+ *   keeps the typed failure it always had, and counts as this run's refresh for that key.
+ *
+ * Every kind passes a cheap shape check for its own documents. Nothing that fails it is stored, in
+ * the foreground or from a refresh, and a stored entry that fails it is evicted on read, so a
+ * document that got in before the check heals itself rather than being served forever.
  */
 internal class RevalidatingResourceAcquirer(
     private val configuration: RentileConfiguration,
@@ -91,23 +97,33 @@ internal class RevalidatingResourceAcquirer(
             configuration.metricsSink.recordSafely(
                 RentileMetric(MetricName.RAW_CACHE_HIT, resourceClass = key.resourceClass),
             )
-            if (isFresh(cached.metadata)) {
-                rewriteStoredEntry(request, cached, cached.metadata)
-            } else {
-                scheduleRevalidation(request, cached)
-            }
+            // A fresh entry is simply used. It is deliberately not rewritten here: that would be a
+            // full-payload store write on the preparation path, so a preparation that needs no
+            // network at all could still fail on a store error. Its recency was refreshed when it
+            // was written, and the run that finds it stale rewrites it from the 304.
+            if (!isFresh(cached.metadata)) scheduleRevalidation(request, cached)
             return cached.bytes
         }
-        return fetchAndStore(request)
+        val fetched = fetchAndStore(request)
+        // A cold fetch counts as this run's refresh for that key: without this the next preparation
+        // would open a conditional request against bytes written seconds earlier and be told, at the
+        // cost of a round trip, that they had not changed.
+        revalidatedMutex.withLock { revalidated.add(key) }
+        return fetched
     }
 
     /**
-     * Starts at most one background revalidation per key per process.
+     * Starts at most one background revalidation per key **per rasterizer instance**.
      *
-     * The memo is what bounds the work: a key revalidated once this run is not revalidated again,
-     * which also makes a second, concurrent read of the same stale key a no-op — the claim and the
-     * launch happen under one lock, so two readers cannot both start one. A separate in-flight
-     * single flight would have nothing left to deduplicate.
+     * Not per process: a host that closes its rasterizer and creates another — which is what a
+     * consumer does per render session — gets a fresh round of refreshes with it. Within one
+     * instance the memo is what bounds the work, and it also makes concurrent readers of one stale
+     * key start exactly one refresh between them, because the claim and the launch happen under a
+     * single lock. A separate in-flight single flight would have nothing left to deduplicate.
+     *
+     * A refresh that *fails* has still spent the slot, deliberately: retrying a document the origin
+     * would not serve, for a preparation that has already been answered from the store, is work
+     * nobody is waiting for. The next rasterizer tries again.
      *
      * It runs in the rasterizer's scope rather than the caller's, because the caller has already
      * been served and is free to finish, and it must not outlive the rasterizer: closing cancels it
@@ -210,6 +226,17 @@ internal class RevalidatingResourceAcquirer(
         }
         // Copied out once: TransportResponse.body hands back a fresh array on every read.
         val bytes = response.body
+        // Shape-checked before it can be stored. A captive portal answers 200 with HTML and no
+        // validators, which would otherwise be written, served on every later preparation, fail in
+        // whatever parses it every time, and -- being the newest file -- be the last thing an
+        // age-trimmed cache evicted.
+        if (!request.isStoredEntryUsable(bytes)) {
+            throw ResourceDecodeException(
+                message = "${request.transportLabel} response is not a ${request.transportLabel} document",
+                resourceClass = resourceClass,
+                sanitizedResourceId = request.sanitizedId,
+            )
+        }
         if (request.limitName != null && bytes.size.toLong() > request.maxBytes) {
             throw SafetyLimitException(
                 message = "${request.transportLabel} resource exceeds its configured byte limit",

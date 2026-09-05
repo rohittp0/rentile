@@ -216,6 +216,13 @@ public enum class MetricName {
     RESOURCE_REQUEST,
     RESOURCE_WIRE_BYTES,
     RESOURCE_DECODED_BYTES,
+    /**
+     * A stored raw resource was served.
+     *
+     * For the style-closure documents this now includes a *stale* entry: it is served immediately
+     * and refreshed behind the caller, so a hit no longer means the origin agreed it was current.
+     * Pair it with the background-revalidation metrics to tell the two apart.
+     */
     RAW_CACHE_HIT,
     RAW_CACHE_MISS,
     SINGLE_FLIGHT_JOIN,
@@ -256,10 +263,13 @@ public enum class MetricName {
     BACKGROUND_REVALIDATION_REPLACED,
 
     /**
-     * A background revalidation did not complete, and nothing was raised.
+     * A background revalidation did not produce a usable replacement, and nothing was raised.
      *
-     * The caller was already served from the store, so this is the only signal that a refresh went
-     * wrong: a preparation is never failed by one.
+     * It covers every way that can happen: the exchange failed, the origin answered something other
+     * than `200` or `304`, or a `200` arrived and was rejected as oversize or as the wrong kind of
+     * document. The caller was already served from the store, so this is the only signal any of it
+     * went wrong — a preparation is never failed by a refresh. The key's one attempt for this
+     * rasterizer is spent either way; the next rasterizer tries again.
      */
     BACKGROUND_REVALIDATION_FAILED,
 }

@@ -1,6 +1,8 @@
 package com.rohittp.rentile
 
 import com.rohittp.rentile.internal.renderSyntheticPng
+import com.rohittp.rentile.internal.sha256Hex
+import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -21,6 +23,7 @@ private const val TILE_JSON =
 private const val CHANGED_TILE_JSON =
     """{"tilejson":"3.0.0","tiles":["https://tiles.example.test/{z}/{x}/{y}.pbf"],"minzoom":0,"maxzoom":14,"scheme":"xyz"}"""
 
+private const val CAPTIVE_PORTAL_HTML = "<html><body>Sign in to continue</body></html>"
 private const val CLOSURE_NOW_MILLIS = 1_000_000L
 private val CLOSURE_CLASSES = listOf(ResourceClass.SPRITE_JSON, ResourceClass.SPRITE_IMAGE, ResourceClass.TILE_JSON)
 
@@ -84,7 +87,7 @@ class ResourceRevalidationTest {
         store.clearWrites()
         withClosureRasterizer(transport, store) { rasterizer ->
             rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
-            while (store.writes().size < CLOSURE_CLASSES.size) store.awaitWrite()
+            store.awaitWrites(CLOSURE_CLASSES.size)
         }
 
         assertEquals(CLOSURE_CLASSES.toSet(), store.writes().toSet(), "each 304 refreshes its entry's recency")
@@ -107,7 +110,7 @@ class ResourceRevalidationTest {
         store.clearWrites()
         withClosureRasterizer(transport, store) { rasterizer ->
             rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
-            while (store.writes().size < CLOSURE_CLASSES.size) store.awaitWrite()
+            store.awaitWrites(CLOSURE_CLASSES.size)
         }
         prepareClosure(transport, store)
 
@@ -256,12 +259,105 @@ class ResourceRevalidationTest {
         }
     }
 
+    @Test
+    fun aCaptivePortalPageIsNeitherStoredNorServedAsAClosureDocument() = runTest {
+        // A sign-in page answers 200 with HTML and no validators. Stored, it would be served to
+        // every later preparation, fail wherever it is parsed, and -- being the newest file -- be
+        // the last thing an age-trimmed cache evicted.
+        for (poisoned in CLOSURE_CLASSES) {
+            val store = InMemoryRawResourceStore()
+            val transport = RecordingTransport { request ->
+                if (request.resourceClass == poisoned) {
+                    TransportResponse(200, CAPTIVE_PORTAL_HTML.encodeToByteArray())
+                } else {
+                    ok(request.resourceClass, changed = false, etag = "\"${request.resourceClass}-1\"")
+                }
+            }
+
+            assertFailsWith<ResourceDecodeException>("$poisoned") { prepareClosure(transport, store) }
+
+            assertTrue(
+                store.size() < CLOSURE_CLASSES.size,
+                "$poisoned: nothing that is not a $poisoned document is stored",
+            )
+        }
+    }
+
+    @Test
+    fun anAlreadyPoisonedEntryIsEvictedOnReadAndRefetched() = runTest {
+        // The guard cannot un-store what an earlier version wrote, so a poisoned entry heals on the
+        // read that finds it: dropped, then fetched in the foreground with no validators to send.
+        for (poisoned in CLOSURE_CLASSES) {
+            val store = InMemoryRawResourceStore()
+            val junk = CAPTIVE_PORTAL_HTML.encodeToByteArray()
+            store.write(
+                RawResourceKey(closureUrl(poisoned).withRedactedAuthenticationQuery().sha256Hex(), poisoned),
+                StoredRawResource(
+                    bytes = junk,
+                    contentDigest = junk.sha256Hex(),
+                    metadata = RawResourceMetadata(etag = "\"portal\"", storedAtEpochMillis = CLOSURE_NOW_MILLIS),
+                ),
+            )
+            val transport = validatorBearingTransport()
+
+            prepareClosure(transport, store)
+
+            val requests = transport.requests(poisoned)
+            assertEquals(1, requests.size, "$poisoned")
+            assertNull(requests[0].metadata.ifNoneMatch, "$poisoned: the poisoned entry's validators went with it")
+        }
+    }
+
+    @Test
+    fun aBackgroundReplacementThatIsNotTheRightDocumentIsRejected() = runTest {
+        for (poisoned in CLOSURE_CLASSES) {
+            val store = InMemoryRawResourceStore()
+            val rejected = CompletableDeferred<Unit>()
+            val transport = RecordingTransport { request ->
+                when {
+                    request.metadata.ifNoneMatch == null ->
+                        ok(request.resourceClass, changed = false, etag = "\"${request.resourceClass}-1\"")
+                    request.resourceClass == poisoned ->
+                        TransportResponse(200, CAPTIVE_PORTAL_HTML.encodeToByteArray())
+                    else -> TransportResponse(304, ByteArray(0))
+                }
+            }
+            val metrics = MetricsSink { metric ->
+                if (metric.name == MetricName.BACKGROUND_REVALIDATION_FAILED && metric.resourceClass == poisoned) {
+                    rejected.complete(Unit)
+                }
+            }
+
+            prepareClosure(transport, store)
+            withClosureRasterizer(transport, store, metrics) { rasterizer ->
+                rasterizer.prepare(StyleInput.InlineJson(CLOSURE_STYLE))
+                rejected.await()
+            }
+            // The store still holds the real document: the preparation after the rejection reads it
+            // and revalidates it, rather than refetching a hole.
+            prepareClosure(transport, store)
+
+            assertEquals(
+                "\"$poisoned-1\"",
+                transport.requests(poisoned).last().metadata.ifNoneMatch,
+                "$poisoned",
+            )
+        }
+    }
+
     private fun validatorBearingTransport(): RecordingTransport = RecordingTransport { request ->
         if (request.metadata.ifNoneMatch != null) {
             TransportResponse(304, ByteArray(0))
         } else {
             ok(request.resourceClass, changed = false, etag = "\"${request.resourceClass}-1\"")
         }
+    }
+
+    private fun closureUrl(resourceClass: ResourceClass): String = when (resourceClass) {
+        ResourceClass.SPRITE_JSON -> "https://sprite.example.test/atlas.json"
+        ResourceClass.SPRITE_IMAGE -> "https://sprite.example.test/atlas.png"
+        ResourceClass.TILE_JSON -> "https://meta.example.test/tiles.json"
+        else -> error("Unexpected resource class $resourceClass")
     }
 
     private fun ok(

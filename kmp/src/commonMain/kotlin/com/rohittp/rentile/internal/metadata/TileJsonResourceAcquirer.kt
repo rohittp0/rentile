@@ -6,7 +6,6 @@ import com.rohittp.rentile.RentileConfiguration
 import com.rohittp.rentile.RentileMetric
 import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.ResourceDecodeException
-import com.rohittp.rentile.internal.ResourceWorkCoordinator
 import com.rohittp.rentile.internal.SingleFlight
 import com.rohittp.rentile.internal.RevalidatingResourceAcquirer
 import com.rohittp.rentile.internal.recordSafely
@@ -37,21 +36,24 @@ internal data class ResolvedTileJson(
 internal class TileJsonResourceAcquirer(
     private val configuration: RentileConfiguration,
     scope: CoroutineScope,
-    private val workCoordinator: ResourceWorkCoordinator,
     private val resourceAcquirer: RevalidatingResourceAcquirer,
 ) {
     private val json = Json { isLenient = false }
     private val singleFlight = SingleFlight<RawResourceKey, ResolvedTileJson>(scope)
 
     /**
-     * Acquires and resolves one TileJSON document, revalidating a stored entry rather than trusting
-     * it forever.
+     * Acquires and resolves one TileJSON document: from the store when it is there, from the origin
+     * when it is not.
      *
-     * A cached TileJSON used to win outright and for good: a source whose tile templates, zoom
-     * range or bounds changed upstream was never noticed by a consumer that had fetched the old
-     * document once. The shared helper applies ADR 0007 instead -- fresh is used, stale is
-     * revalidated, `304` reuses the stored bytes -- and an entry that no longer parses is still
-     * evicted and refetched rather than failing the preparation.
+     * A cached TileJSON once won outright and for good, so a source whose tile templates, zoom range
+     * or bounds changed upstream was never noticed by a consumer that had fetched the old document;
+     * then it was revalidated in front of the caller, on a document that answers 304 every time. It
+     * is now served from the store immediately and refreshed behind the caller, so a changed source
+     * takes effect at the next preparation.
+     *
+     * The stored bytes are checked by parsing them, so an entry that no longer resolves is evicted
+     * and refetched rather than failing a preparation -- and a body that is not TileJSON at all is
+     * never stored.
      */
     suspend fun acquire(url: String): ResolvedTileJson {
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()

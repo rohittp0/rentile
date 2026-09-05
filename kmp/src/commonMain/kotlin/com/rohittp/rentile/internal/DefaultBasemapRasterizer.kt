@@ -210,7 +210,7 @@ private class DefaultBasemapRasterizer(
     // background refreshes to one per key per process, so a per-acquirer copy would allow four.
     private val revalidatingResourceAcquirer =
         RevalidatingResourceAcquirer(configuration, scope, resourceWorkCoordinator)
-    private val tileJsonAcquirer = TileJsonResourceAcquirer(configuration, scope, resourceWorkCoordinator, revalidatingResourceAcquirer)
+    private val tileJsonAcquirer = TileJsonResourceAcquirer(configuration, scope, revalidatingResourceAcquirer)
     private val spriteAcquirer = SpriteResourceAcquirer(configuration, scope, revalidatingResourceAcquirer)
     private val geoJsonAcquirer = GeoJsonResourceAcquirer(configuration, scope, resourceWorkCoordinator)
     private val compiler = StyleCompiler(
@@ -862,23 +862,21 @@ private class DefaultBasemapRasterizer(
     }
 
     /**
-     * Acquires a remote style through the raw store, revalidating whatever is already there.
+     * Acquires a remote style: from the store when it is there, from the origin only when it is not.
      *
-     * The style used to go straight to the transport, past the store and past the exchange gate, so
-     * every process start downloaded the whole document again before a single tile could be
-     * planned. It now takes the same revalidating path as the sprite and TileJSON documents it
-     * names, with one difference it passes explicitly: a style is never served on freshness alone.
-     * ADR 0007 would allow that, but the style is the root of the whole closure, so a `max-age` hit
-     * would pin an entire cached resource tree to a document nobody re-confirmed, and a style
-     * switch is a user action that must not wait out an expiry.
+     * The style once went straight to the transport, past the store entirely, so every process
+     * start downloaded the whole document again before a single tile could be planned. It takes the
+     * same path as the sprite and TileJSON documents it names now, on the same terms: a stored style
+     * is returned immediately and refreshed behind the caller, so a warm preparation makes no
+     * blocking request at all and a changed upstream style is picked up at the next preparation.
+     * That lag is the one a consumer already has, since it memoises its compiled style per process.
      *
-     * A `304` reuses the stored bytes, which keeps [PreparedStyle.digest] and every resource
-     * identity beneath it byte-identical across restarts. Failed revalidation fails the operation:
-     * a style receives neither the stale reuse nor the substitution a tile gets, because a stale
-     * program is not a coarser version of the right one.
+     * A refresh cannot fail a preparation. Only a style that is not stored reaches the origin in
+     * front of the caller, and that is the one that can still raise.
      *
-     * The byte ceiling stays [acquireStyle]'s to enforce, at [PipelineStage.STYLE_PREPARATION],
-     * which is why no `limitName` is passed here.
+     * The shape check keeps a captive portal's HTML 200 out of the store, where it would otherwise
+     * be served to every later preparation. The byte ceiling stays [acquireStyle]'s to enforce, at
+     * [PipelineStage.STYLE_PREPARATION], which is why no `limitName` is passed here.
      */
     private suspend fun acquireRemoteStyle(url: String): ByteArray {
         val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
@@ -889,6 +887,7 @@ private class DefaultBasemapRasterizer(
             maxBytes = configuration.resourceLimits.maxStyleBytes,
             transportLabel = "Style",
             cacheLabel = "style",
+            isStoredEntryUsable = ByteArray::isStyleDocument,
         )
     }
 

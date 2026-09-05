@@ -1,6 +1,8 @@
 package com.rohittp.rentile
 
 import kotlinx.coroutines.CompletableDeferred
+import com.rohittp.rentile.internal.sha256Hex
+import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -14,6 +16,7 @@ private const val NOW_MILLIS = 1_000_000L
 private const val STYLE_URL = "https://styles.example.test/basic.json?key=secret"
 private const val FIRST_STYLE =
     """{"version":8,"layers":[{"id":"base","type":"background","paint":{"background-color":"#102030"}}]}"""
+private const val CAPTIVE_PORTAL_HTML = "<html><body>Sign in to continue</body></html>"
 private const val SECOND_STYLE =
     """{"version":8,"layers":[{"id":"base","type":"background","paint":{"background-color":"#a0b0c0"}}]}"""
 
@@ -78,7 +81,7 @@ class StyleRevalidationTest {
         store.clearWrites()
         withRasterizer(transport, store) { rasterizer ->
             rasterizer.prepare(StyleInput.Remote(STYLE_URL))
-            store.awaitWrite()
+            store.awaitWrites(1)
         }
 
         assertEquals(listOf(ResourceClass.STYLE), store.writes(), "the 304 must refresh the entry's recency")
@@ -100,7 +103,7 @@ class StyleRevalidationTest {
         store.clearWrites()
         val servedStaleDigest = withRasterizer(transport, store) { rasterizer ->
             val digest = rasterizer.prepare(StyleInput.Remote(STYLE_URL)).digest
-            store.awaitWrite()
+            store.awaitWrites(1)
             digest
         }
         val afterReplacementDigest = withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)).digest }
@@ -309,6 +312,70 @@ class StyleRevalidationTest {
     }
 
     @Test
+    fun aCaptivePortalPageIsNeitherStoredNorServedAsAStyle() = runTest {
+        // A sign-in page answers 200 with HTML and no validators. Stored, it would be served to
+        // every later preparation, fail to compile every time, and -- being the newest file -- be
+        // the last thing an age-trimmed cache evicted.
+        val store = InMemoryRawResourceStore()
+        val transport = RecordingTransport { TransportResponse(200, CAPTIVE_PORTAL_HTML.encodeToByteArray()) }
+
+        withRasterizer(transport, store) { rasterizer ->
+            assertFailsWith<ResourceDecodeException> { rasterizer.prepare(StyleInput.Remote(STYLE_URL)) }
+        }
+
+        assertEquals(0, store.size(), "nothing that is not a style document is stored")
+    }
+
+    @Test
+    fun anAlreadyPoisonedStyleEntryIsEvictedOnReadAndRefetched() = runTest {
+        // The guard cannot un-store what an earlier version wrote, so a poisoned entry has to heal
+        // on its own: the read that finds it drops it and fetches in the foreground.
+        val store = InMemoryRawResourceStore()
+        store.write(
+            styleKey(),
+            StoredRawResource(
+                bytes = CAPTIVE_PORTAL_HTML.encodeToByteArray(),
+                contentDigest = CAPTIVE_PORTAL_HTML.encodeToByteArray().sha256Hex(),
+                metadata = RawResourceMetadata(etag = "\"portal\"", storedAtEpochMillis = NOW_MILLIS),
+            ),
+        )
+        val transport = RecordingTransport {
+            TransportResponse(200, FIRST_STYLE.encodeToByteArray(), TransportResponseMetadata(etag = "\"v1\""))
+        }
+
+        val digest = withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)).digest }
+
+        assertTrue(digest.isNotEmpty())
+        assertEquals(1, transport.requests().size, "the poisoned entry was refetched, not revalidated")
+        assertNull(transport.requests()[0].metadata.ifNoneMatch, "its validators went with it")
+    }
+
+    @Test
+    fun aBackgroundReplacementThatIsNotAStyleIsRejected() = runTest {
+        val store = InMemoryRawResourceStore()
+        val rejected = CompletableDeferred<Unit>()
+        val transport = RecordingTransport { request ->
+            if (request.metadata.ifNoneMatch == null) {
+                TransportResponse(200, FIRST_STYLE.encodeToByteArray(), TransportResponseMetadata(etag = "\"v1\""))
+            } else {
+                TransportResponse(200, CAPTIVE_PORTAL_HTML.encodeToByteArray())
+            }
+        }
+        val metrics = MetricsSink { metric ->
+            if (metric.name == MetricName.BACKGROUND_REVALIDATION_FAILED) rejected.complete(Unit)
+        }
+
+        val coldDigest = withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)).digest }
+        withRasterizer(transport, store, metrics) { rasterizer ->
+            rasterizer.prepare(StyleInput.Remote(STYLE_URL))
+            rejected.await()
+        }
+        val afterDigest = withRasterizer(transport, store) { it.prepare(StyleInput.Remote(STYLE_URL)).digest }
+
+        assertEquals(coldDigest, afterDigest, "the store still holds the style, not the portal page")
+    }
+
+    @Test
     fun anInlineStyleNeverTouchesTheStore() = runTest {
         val transport = RecordingTransport { error("An inline style must not reach the transport") }
         val store = InMemoryRawResourceStore()
@@ -321,6 +388,9 @@ class StyleRevalidationTest {
         assertEquals(0, store.size())
         assertEquals(0, transport.requests().size)
     }
+
+    private fun styleKey(): RawResourceKey =
+        RawResourceKey(STYLE_URL.withRedactedAuthenticationQuery().sha256Hex(), ResourceClass.STYLE)
 
     private fun rasterizerFor(
         transport: ResourceTransport,

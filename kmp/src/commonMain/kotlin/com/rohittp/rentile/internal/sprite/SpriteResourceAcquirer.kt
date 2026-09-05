@@ -8,6 +8,8 @@ import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.SafetyLimitException
 import com.rohittp.rentile.internal.SingleFlight
 import com.rohittp.rentile.internal.RevalidatingResourceAcquirer
+import com.rohittp.rentile.internal.hasPngSignature
+import com.rohittp.rentile.internal.isJsonObjectDocument
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import kotlinx.coroutines.CoroutineScope
@@ -72,11 +74,16 @@ internal class SpriteResourceAcquirer(
     }
 
     /**
-     * Acquires one sprite document, revalidating a stored entry rather than trusting it forever.
+     * Acquires one sprite document: from the store when it is there, from the origin when it is not.
      *
-     * A cached sprite used to be reused unconditionally and for good, so a corrected icon sheet
-     * never reached a consumer that had already fetched the old one. The shared helper applies
-     * ADR 0007 instead: fresh is used, stale is revalidated, and a `304` reuses the stored bytes.
+     * A cached sprite was once reused unconditionally and for good, so a corrected icon sheet never
+     * reached a consumer that had already fetched the old one; then it was revalidated in front of
+     * the caller, which cost two round trips on the preparation path for documents that answer 304
+     * every time. A stored sprite is now returned immediately and refreshed behind the caller, and
+     * a corrected sheet arrives at the next preparation.
+     *
+     * The shape checks -- a JSON object for the metadata, a PNG signature for the image -- keep a
+     * captive portal's HTML 200 from being stored as either.
      */
     private suspend fun acquireRaw(
         url: String,
@@ -94,6 +101,11 @@ internal class SpriteResourceAcquirer(
             cacheLabel = "sprite",
             accept = accept,
             limitName = if (resourceClass == ResourceClass.SPRITE_JSON) "maxMetadataBytes" else "maxSpriteImageBytes",
+            isStoredEntryUsable = if (resourceClass == ResourceClass.SPRITE_JSON) {
+                ByteArray::isJsonObjectDocument
+            } else {
+                ByteArray::hasPngSignature
+            },
         )
     }
 

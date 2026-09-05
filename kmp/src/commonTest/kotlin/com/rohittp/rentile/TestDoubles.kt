@@ -57,19 +57,28 @@ internal class WriteRecordingRawResourceStore : RawResourceStore {
             }
             entries[key] = resource
             written += key.resourceClass
-            nextWrite
+            // A fresh latch for the next waiter, so waiting for the second of two writes is not a
+            // wait on an already-completed deferred.
+            nextWrite.also { nextWrite = CompletableDeferred() }
         }
         signal.complete(Unit)
     }
 
     /**
-     * Suspends until a write lands, which is how a test waits for a background refresh.
+     * Suspends until at least [count] writes have landed since the last [clearWrites].
      *
      * A background revalidation runs in the rasterizer's own scope, so nothing the test holds can
-     * be joined; what it can observe is the store the refresh writes through.
+     * be joined; what it can observe is the store the refresh writes through. The count is checked
+     * under the same lock the write takes, so a write that lands between two waits cannot be missed.
      */
-    suspend fun awaitWrite() {
-        mutex.withLock { nextWrite }.await()
+    suspend fun awaitWrites(count: Int) {
+        while (true) {
+            val signal = mutex.withLock {
+                if (written.size >= count) return
+                nextWrite
+            }
+            signal.await()
+        }
     }
 
     override suspend fun remove(key: RawResourceKey) {
