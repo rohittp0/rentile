@@ -29,6 +29,7 @@ import com.rohittp.rentile.RawWarmSummary
 import com.rohittp.rentile.RenderBatch
 import com.rohittp.rentile.RenderDiagnostic
 import com.rohittp.rentile.RenderOptions
+import com.rohittp.rentile.RenderPriority
 import com.rohittp.rentile.RenderedTile
 import com.rohittp.rentile.ExactRecoveryResult
 import com.rohittp.rentile.ResourceSubstitution
@@ -118,10 +119,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.supervisorScope
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import org.jetbrains.skia.Color
 import org.jetbrains.skia.BlendMode
 import org.jetbrains.skia.Bitmap
@@ -170,8 +169,10 @@ import kotlin.math.sqrt
 import kotlinx.coroutines.coroutineScope
 import kotlin.time.TimeSource
 
-internal fun createBasemapRasterizer(configuration: RentileConfiguration): BasemapRasterizer =
-    DefaultBasemapRasterizer(configuration)
+internal fun createBasemapRasterizer(
+    configuration: RentileConfiguration,
+    renderLaneRecorderForTest: ((GateLane) -> Unit)? = null,
+): BasemapRasterizer = DefaultBasemapRasterizer(configuration, renderLaneRecorderForTest)
 
 private const val EARTH_CIRCUMFERENCE_METERS = 40_075_016.68557849
 private const val MAX_ANCESTOR_DISTANCE = 2
@@ -197,6 +198,7 @@ private val SUBSTITUTABLE_RESOURCE_CLASSES = setOf(
 @OptIn(ExperimentalAtomicApi::class)
 private class DefaultBasemapRasterizer(
     private val configuration: RentileConfiguration,
+    renderLaneRecorderForTest: ((GateLane) -> Unit)? = null,
 ) : BasemapRasterizer {
     private val owner = Any()
     private val closing = AtomicBoolean(false)
@@ -227,7 +229,12 @@ private class DefaultBasemapRasterizer(
     // failure. Like the sprite acquirer it owns nothing beyond that scope, so cancelling
     // rootJob in close() is all the teardown it needs.
     private val glyphAcquirer = GlyphResourceAcquirer(configuration, scope, resourceWorkCoordinator)
-    private val renderPermits = Semaphore(configuration.executionPolicy.maxConcurrentMetatileWorkers)
+    // Two queues, not a Semaphore: a caller waiting on a tile it is about to present must not
+    // queue behind read-ahead the same rasterizer accepted earlier. See PriorityGate.
+    private val renderPermits = PriorityGate(
+        configuration.executionPolicy.maxConcurrentMetatileWorkers,
+        renderLaneRecorderForTest,
+    )
 
     init {
         rootJob.invokeOnCompletion {
@@ -743,7 +750,11 @@ private class DefaultBasemapRasterizer(
         }
     }
 
-    override suspend fun render(batch: PreparedBatch, tiles: List<TileId>): RenderBatch = operation {
+    override suspend fun render(
+        batch: PreparedBatch,
+        tiles: List<TileId>,
+        priority: RenderPriority,
+    ): RenderBatch = operation {
         val prepared = requireOwnedBatch(batch)
         val lease = prepared.acquireRenderLease()
         try {
@@ -755,7 +766,9 @@ private class DefaultBasemapRasterizer(
                 requested.map { tile ->
                     async {
                         currentCoroutineContext().ensureActive()
-                        renderPermits.withPermit { renderTile(prepared, lease.state.resources, tile) }
+                        renderPermits.withPermit(priority.lane) {
+                            renderTile(prepared, lease.state.resources, tile)
+                        }
                     }
                 }.awaitAll()
             }
@@ -779,7 +792,11 @@ private class DefaultBasemapRasterizer(
         }
     }
 
-    override suspend fun renderRaw(batch: PreparedBatch, tiles: List<TileId>): RawRenderBatch =
+    override suspend fun renderRaw(
+        batch: PreparedBatch,
+        tiles: List<TileId>,
+        priority: RenderPriority,
+    ): RawRenderBatch =
         operation {
             val prepared = requireOwnedBatch(batch)
             val lease = prepared.acquireRenderLease()
@@ -792,7 +809,7 @@ private class DefaultBasemapRasterizer(
                     requested.map { tile ->
                         async {
                             currentCoroutineContext().ensureActive()
-                            renderPermits.withPermit {
+                            renderPermits.withPermit(priority.lane) {
                                 renderTileRaw(prepared, lease.state.resources, tile)
                             }
                         }
@@ -823,10 +840,11 @@ private class DefaultBasemapRasterizer(
         options: RenderOptions,
         resourceAccess: ResourceAccessMode,
         substitutionPolicy: TileSubstitutionPolicy,
+        priority: RenderPriority,
     ): RenderBatch {
         val batch = prepareBatch(style, tiles, options, resourceAccess, substitutionPolicy)
         return try {
-            render(batch)
+            render(batch, priority = priority)
         } finally {
             batch.close()
         }

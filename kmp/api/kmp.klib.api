@@ -135,6 +135,17 @@ final enum class com.rohittp.rentile/PipelineStage : kotlin/Enum<com.rohittp.ren
     final fun values(): kotlin/Array<com.rohittp.rentile/PipelineStage> // com.rohittp.rentile/PipelineStage.values|values#static(){}[0]
 }
 
+final enum class com.rohittp.rentile/RenderPriority : kotlin/Enum<com.rohittp.rentile/RenderPriority> { // com.rohittp.rentile/RenderPriority|null[0]
+    enum entry NORMAL // com.rohittp.rentile/RenderPriority.NORMAL|null[0]
+    enum entry URGENT // com.rohittp.rentile/RenderPriority.URGENT|null[0]
+
+    final val entries // com.rohittp.rentile/RenderPriority.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/RenderPriority> // com.rohittp.rentile/RenderPriority.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): com.rohittp.rentile/RenderPriority // com.rohittp.rentile/RenderPriority.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<com.rohittp.rentile/RenderPriority> // com.rohittp.rentile/RenderPriority.values|values#static(){}[0]
+}
+
 final enum class com.rohittp.rentile/RentileErrorCode : kotlin/Enum<com.rohittp.rentile/RentileErrorCode> { // com.rohittp.rentile/RentileErrorCode|null[0]
     enum entry BATCH_RENDER_FAILED // com.rohittp.rentile/RentileErrorCode.BATCH_RENDER_FAILED|null[0]
     enum entry FOREIGN_LABEL_CANDIDATE_PLAN // com.rohittp.rentile/RentileErrorCode.FOREIGN_LABEL_CANDIDATE_PLAN|null[0]
@@ -316,9 +327,9 @@ abstract interface com.rohittp.rentile/BasemapRasterizer : kotlin/AutoCloseable 
     abstract suspend fun planLabelCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/LabelCandidatePlan // com.rohittp.rentile/BasemapRasterizer.planLabelCandidates|planLabelCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ResourceAccessMode){}[0]
     abstract suspend fun prepare(com.rohittp.rentile/StyleInput, com.rohittp.rentile/CompatibilityPolicy = ...): com.rohittp.rentile/PreparedStyle // com.rohittp.rentile/BasemapRasterizer.prepare|prepare(com.rohittp.rentile.StyleInput;com.rohittp.rentile.CompatibilityPolicy){}[0]
     abstract suspend fun prepareBatch(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ..., com.rohittp.rentile/TileSubstitutionPolicy = ...): com.rohittp.rentile/PreparedBatch // com.rohittp.rentile/BasemapRasterizer.prepareBatch|prepareBatch(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode;com.rohittp.rentile.TileSubstitutionPolicy){}[0]
-    abstract suspend fun render(com.rohittp.rentile/PreparedBatch, kotlin.collections/List<com.rohittp.rentile/TileId> = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedBatch;kotlin.collections.List<com.rohittp.rentile.TileId>){}[0]
-    abstract suspend fun render(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ..., com.rohittp.rentile/TileSubstitutionPolicy = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode;com.rohittp.rentile.TileSubstitutionPolicy){}[0]
-    abstract suspend fun renderRaw(com.rohittp.rentile/PreparedBatch, kotlin.collections/List<com.rohittp.rentile/TileId> = ...): com.rohittp.rentile/RawRenderBatch // com.rohittp.rentile/BasemapRasterizer.renderRaw|renderRaw(com.rohittp.rentile.PreparedBatch;kotlin.collections.List<com.rohittp.rentile.TileId>){}[0]
+    abstract suspend fun render(com.rohittp.rentile/PreparedBatch, kotlin.collections/List<com.rohittp.rentile/TileId> = ..., com.rohittp.rentile/RenderPriority = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedBatch;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderPriority){}[0]
+    abstract suspend fun render(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/RenderOptions = ..., com.rohittp.rentile/ResourceAccessMode = ..., com.rohittp.rentile/TileSubstitutionPolicy = ..., com.rohittp.rentile/RenderPriority = ...): com.rohittp.rentile/RenderBatch // com.rohittp.rentile/BasemapRasterizer.render|render(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderOptions;com.rohittp.rentile.ResourceAccessMode;com.rohittp.rentile.TileSubstitutionPolicy;com.rohittp.rentile.RenderPriority){}[0]
+    abstract suspend fun renderRaw(com.rohittp.rentile/PreparedBatch, kotlin.collections/List<com.rohittp.rentile/TileId> = ..., com.rohittp.rentile/RenderPriority = ...): com.rohittp.rentile/RawRenderBatch // com.rohittp.rentile/BasemapRasterizer.renderRaw|renderRaw(com.rohittp.rentile.PreparedBatch;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderPriority){}[0]
     abstract suspend fun retryExact(com.rohittp.rentile/PreparedBatch): com.rohittp.rentile/ExactRecoveryResult // com.rohittp.rentile/BasemapRasterizer.retryExact|retryExact(com.rohittp.rentile.PreparedBatch){}[0]
     abstract suspend fun warmRawResources(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/RawWarmSummary // com.rohittp.rentile/BasemapRasterizer.warmRawResources|warmRawResources(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ResourceAccessMode){}[0]
 }

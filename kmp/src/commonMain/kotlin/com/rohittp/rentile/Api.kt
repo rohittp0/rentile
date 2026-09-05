@@ -84,6 +84,31 @@ public enum class ResourceAccessMode {
 }
 
 /**
+ * Which of the two render queues a render operation joins.
+ *
+ * A freed metatile worker goes to an [URGENT] request whenever one is waiting and to a [NORMAL]
+ * request only when none is. Ordering *within* a queue is unchanged: both are FIFO, and a request
+ * already drawing is never preempted, so an [URGENT] request waits at most for the tiles currently
+ * in the workers.
+ *
+ * Priority is a scheduling decision and nothing else. It never reaches the draw path, never enters
+ * an output tile's request or content key, and two tiles rendered at different priorities are
+ * byte-identical. It is also relative, not a guarantee: a caller that marks everything [URGENT] has
+ * one FIFO queue again.
+ */
+public enum class RenderPriority {
+    /**
+     * A tile the caller is about to present, or whose absence pauses presentation — the ancestor a
+     * provisional tile needs to keep playback running, or a tile drawn on demand for the frame in
+     * front of a user.
+     */
+    URGENT,
+
+    /** Read-ahead: a tile rendered before anything is waiting for it. */
+    NORMAL,
+}
+
+/**
  * Content-affecting controls for output-tile creation.
  *
  * [outputSizePx] is a device pixel ratio expressed as a size, not a zoom shift. Style evaluation
@@ -1013,9 +1038,14 @@ public interface BasemapRasterizer : AutoCloseable {
         resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
     ): List<ValidatedDemTile>
 
+    /**
+     * Draws [tiles] under [priority], which decides only which waiting request the next freed
+     * metatile worker serves. Omitting it renders as read-ahead; see [RenderPriority].
+     */
     public suspend fun render(
         batch: PreparedBatch,
         tiles: List<TileId> = batch.tiles,
+        priority: RenderPriority = RenderPriority.NORMAL,
     ): RenderBatch
 
     /**
@@ -1025,6 +1055,7 @@ public interface BasemapRasterizer : AutoCloseable {
     public suspend fun renderRaw(
         batch: PreparedBatch,
         tiles: List<TileId> = batch.tiles,
+        priority: RenderPriority = RenderPriority.NORMAL,
     ): RawRenderBatch
 
     public suspend fun render(
@@ -1033,6 +1064,7 @@ public interface BasemapRasterizer : AutoCloseable {
         options: RenderOptions = RenderOptions(),
         resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
         substitutionPolicy: TileSubstitutionPolicy = TileSubstitutionPolicy.Disabled,
+        priority: RenderPriority = RenderPriority.NORMAL,
     ): RenderBatch
 
     /** Idempotent, non-blocking, and non-throwing. */

@@ -19,12 +19,12 @@ public abstract interface class com/rohittp/rentile/BasemapRasterizer : java/lan
 	public static synthetic fun prepare$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/StyleInput;Lcom/rohittp/rentile/CompatibilityPolicy;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun prepareBatch (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lcom/rohittp/rentile/TileSubstitutionPolicy;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun prepareBatch$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lcom/rohittp/rentile/TileSubstitutionPolicy;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
-	public abstract fun render (Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public abstract fun render (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lcom/rohittp/rentile/TileSubstitutionPolicy;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun render$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
-	public static synthetic fun render$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lcom/rohittp/rentile/TileSubstitutionPolicy;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
-	public abstract fun renderRaw (Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun renderRaw$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun render (Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun render (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lcom/rohittp/rentile/TileSubstitutionPolicy;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun render$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun render$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lcom/rohittp/rentile/TileSubstitutionPolicy;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun renderRaw (Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun renderRaw$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun retryExact (Lcom/rohittp/rentile/PreparedBatch;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun terrainSourceDescriptor (Lcom/rohittp/rentile/PreparedStyle;)Lcom/rohittp/rentile/TerrainSourceDescriptor;
 	public abstract fun warmRawResources (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -39,9 +39,9 @@ public final class com/rohittp/rentile/BasemapRasterizer$DefaultImpls {
 	public static synthetic fun planLabelCandidates$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun prepare$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/StyleInput;Lcom/rohittp/rentile/CompatibilityPolicy;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun prepareBatch$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lcom/rohittp/rentile/TileSubstitutionPolicy;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
-	public static synthetic fun render$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
-	public static synthetic fun render$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lcom/rohittp/rentile/TileSubstitutionPolicy;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
-	public static synthetic fun renderRaw$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun render$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun render$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lcom/rohittp/rentile/TileSubstitutionPolicy;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun renderRaw$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun warmRawResources$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
@@ -827,6 +827,14 @@ public final class com/rohittp/rentile/RenderOptions {
 
 public final class com/rohittp/rentile/RenderOptions$Companion {
 	public final fun getSUPPORTED_OUTPUT_SIZES ()Ljava/util/Set;
+}
+
+public final class com/rohittp/rentile/RenderPriority : java/lang/Enum {
+	public static final field NORMAL Lcom/rohittp/rentile/RenderPriority;
+	public static final field URGENT Lcom/rohittp/rentile/RenderPriority;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/rohittp/rentile/RenderPriority;
+	public static fun values ()[Lcom/rohittp/rentile/RenderPriority;
 }
 
 public final class com/rohittp/rentile/RenderedTile {

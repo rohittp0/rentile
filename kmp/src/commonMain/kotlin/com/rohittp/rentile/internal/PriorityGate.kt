@@ -1,5 +1,6 @@
 package com.rohittp.rentile.internal
 
+import com.rohittp.rentile.RenderPriority
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
@@ -8,42 +9,77 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/** Which queue a waiter joins. [WARM] only ever runs on a slot [ACQUISITION] does not want. */
-internal enum class ResourcePriority { ACQUISITION, WARM }
+/**
+ * Which of a gate's two queues a waiter joins. A [DEFERRED] waiter is only ever handed a permit no
+ * [FIRST] waiter wants.
+ */
+internal enum class GateLane { FIRST, DEFERRED }
+
+/** Which lane one raw-resource exchange takes. Warming never runs on a slot acquisition wants. */
+internal enum class ResourcePriority(val lane: GateLane) {
+    ACQUISITION(GateLane.FIRST),
+    WARM(GateLane.DEFERRED),
+}
+
+/** Which lane one output tile's draw takes, from the priority its caller asked for. */
+internal val RenderPriority.lane: GateLane
+    get() = when (this) {
+        RenderPriority.URGENT -> GateLane.FIRST
+        RenderPriority.NORMAL -> GateLane.DEFERRED
+    }
 
 /**
- * A permit gate with two FIFO queues, where a freed permit is offered to [ResourcePriority.WARM]
- * only when no [ResourcePriority.ACQUISITION] waiter wants it.
+ * A permit gate with two FIFO queues, where a freed permit is offered to [GateLane.DEFERRED] only
+ * when no [GateLane.FIRST] waiter wants it.
  *
- * A plain `Semaphore` cannot express this, and the alternative — bounding how far ahead prefetching
- * may run — is a guess that is wrong at both ends: too small and the connection budget still idles,
- * too large and prefetching takes every freed slot from the acquisition it is meant to help. That is
- * the failure mode ADR 0017 recorded, where a read-ahead spent the contended budget on tiles the run
- * would not reach for minutes. Strict priority removes the parameter instead of tuning it, so
- * prefetching can safely cover a whole session.
+ * Two resources in a rasterizer are scarce and contended by work of two very different urgencies.
+ * Network exchanges: a read-ahead warming the cache shares the connection budget with the
+ * acquisition a caller is waiting on. Metatile workers: a read-ahead render shares the same one or
+ * two workers with the tile a caller is about to put on screen. Both fail the same way when the
+ * queue is plain FIFO — work nobody is waiting for holds every slot — and it is not a small effect:
+ * on a device, playback held for 6.8-10.5 s at a boundary while the two raster workers drew 35-65
+ * read-ahead tiles ahead of the handful the resume needed.
  *
- * Prefetching is not preempted once its request is in flight: acquisition may wait for one in-flight
- * exchange to finish, which is bounded by a single request's latency rather than being starvation.
- * Cancelling an in-flight fetch would throw away bytes already paid for.
+ * A plain `Semaphore` cannot express this, and the alternative — bounding how far ahead the
+ * read-ahead may run — is a guess that is wrong at both ends: too small and the budget still idles,
+ * too large and the read-ahead takes every freed slot from the work it is meant to help. That is the
+ * failure mode the consumer's ADR 0017 recorded, where a read-ahead spent the contended budget on
+ * tiles the run would not reach for minutes. Strict priority removes the parameter instead of tuning
+ * it, so a read-ahead can safely cover a whole session.
  *
- * That bound is a permit-holding rule, and every holder must keep it: **a permit covers one
- * exchange and nothing else -- never a `Retry-After` wait, a backoff, or any other sleep.** A holder
- * that waits under its permit converts "one request's latency" into "one request's latency plus
- * however long it chose to sleep", and a burst of such holders parks the whole gate; prefetching
- * ([warmRawResource]) therefore leaves the gate before it waits and comes back for a fresh permit.
+ * Deferred work is not preempted once it holds a permit: a [GateLane.FIRST] waiter may wait for one
+ * in-flight exchange or one tile's draw to finish, which is bounded by a single unit of work rather
+ * than being starvation. Cancelling either would throw away work already paid for — bytes on the
+ * wire, or pixels already drawn.
+ *
+ * That bound is a permit-holding rule, and every holder must keep it: **a permit covers one exchange
+ * or one tile draw and nothing else -- never a `Retry-After` wait, a backoff, or any other sleep,
+ * and never a wait on a second permit.** A holder that waits under its permit converts "one unit of
+ * work" into "one unit of work plus however long it chose to sleep", and a burst of such holders
+ * parks the whole gate; prefetching ([warmRawResource]) therefore leaves the gate before it waits
+ * and comes back for a fresh permit.
  */
-internal class PriorityGate(private val permits: Int) {
+internal class PriorityGate(
+    private val permits: Int,
+    /**
+     * Receives every lane this gate is asked for, so a test can prove which lane a call site
+     * requests. Null in production. Nothing else can observe it: a lane changes only *when* work
+     * runs, never what it returns, so a caller that passed the wrong one would otherwise produce
+     * identical output and merely lose the priority.
+     */
+    private val laneRecorderForTest: ((GateLane) -> Unit)? = null,
+) {
     private val mutex = Mutex()
     private var available = permits
-    private val acquisitionWaiters = ArrayDeque<CompletableDeferred<Unit>>()
-    private val warmWaiters = ArrayDeque<CompletableDeferred<Unit>>()
+    private val firstWaiters = ArrayDeque<CompletableDeferred<Unit>>()
+    private val deferredWaiters = ArrayDeque<CompletableDeferred<Unit>>()
 
     init {
         require(permits > 0) { "a gate needs at least one permit, got $permits" }
     }
 
-    suspend fun <T> withPermit(priority: ResourcePriority, block: suspend () -> T): T {
-        acquire(priority)
+    suspend fun <T> withPermit(lane: GateLane, block: suspend () -> T): T {
+        acquire(lane)
         try {
             return block()
         } finally {
@@ -51,16 +87,17 @@ internal class PriorityGate(private val permits: Int) {
         }
     }
 
-    private suspend fun acquire(priority: ResourcePriority) {
+    private suspend fun acquire(lane: GateLane) {
+        laneRecorderForTest?.invoke(lane)
         val waiter = mutex.withLock {
             if (available > 0) {
                 available--
                 null
             } else {
                 CompletableDeferred<Unit>().also { queued ->
-                    when (priority) {
-                        ResourcePriority.ACQUISITION -> acquisitionWaiters.addLast(queued)
-                        ResourcePriority.WARM -> warmWaiters.addLast(queued)
+                    when (lane) {
+                        GateLane.FIRST -> firstWaiters.addLast(queued)
+                        GateLane.DEFERRED -> deferredWaiters.addLast(queued)
                     }
                 }
             }
@@ -74,7 +111,7 @@ internal class PriorityGate(private val permits: Int) {
             // life of the rasterizer.
             withContext(NonCancellable) {
                 mutex.withLock {
-                    val stillQueued = acquisitionWaiters.remove(waiter) || warmWaiters.remove(waiter)
+                    val stillQueued = firstWaiters.remove(waiter) || deferredWaiters.remove(waiter)
                     if (!stillQueued && waiter.isCompleted) releaseLocked()
                 }
             }
@@ -101,7 +138,7 @@ internal class PriorityGate(private val permits: Int) {
     }
 
     private fun releaseLocked() {
-        val next = acquisitionWaiters.removeFirstOrNull() ?: warmWaiters.removeFirstOrNull()
+        val next = firstWaiters.removeFirstOrNull() ?: deferredWaiters.removeFirstOrNull()
         if (next == null) available++ else next.complete(Unit)
     }
 

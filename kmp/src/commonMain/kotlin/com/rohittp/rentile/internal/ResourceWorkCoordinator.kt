@@ -23,8 +23,8 @@ internal class ResourceWorkCoordinator(
         priority: ResourcePriority = ResourcePriority.ACQUISITION,
         block: suspend () -> T,
     ): T =
-        permitsFor(url).withPermit(priority) {
-            exchangePermits.withPermit(priority) { block() }
+        permitsFor(url).withPermit(priority.lane) {
+            exchangePermits.withPermit(priority.lane) { block() }
         }
 
     suspend fun <T> decode(block: suspend () -> T): T = decodePermits.withPermit { block() }
