@@ -130,6 +130,14 @@ Performance profiling and numeric acceptance budgets are intentionally deferred 
 
 The public consumer coordinate is `com.rohittp.rentile:kmp`. Releases `0.1.0` through `0.1.4` remain on Maven Central; the shared repository at `https://maven.rohittp.com` is canonical after the migration and is also the version line: each release takes the highest version already published there and advances its patch component. `VERSION_NAME` in the root `gradle.properties` governs only when it names a version strictly above everything public, which is how a deliberate minor or major release is requested. `0.6.0` is published, and is the highest version on that line. The source tree declares `0.7.0` for the breaking terrain-texel addition; that declaration is a release request, not proof that the coordinate has been published. Snapshot versions never govern and remain local-repository-only. Every push to `main` outside documentation publishes; documentation-only commits do not consume a version, and releases are serialised so concurrent pushes cannot race for one coordinate. The release workflow rejects an existing primary POM before upload, requires the exact version to pass signed local publication plus Android, JVM, iOS, macOS, Linux, and rolling-corpus gates, verifies every public artifact, then resolves it from a fresh credential-free consumer. A GitHub Release is not required. Version numbers are cheap and non-contiguous; a gap does not imply a withdrawn version.
 
+`0.11.0` and `0.11.1` are both **partial**: an R2 `500` while writing
+`kmp-linuxx64/maven-metadata.xml.md5` abandoned the publications Gradle had not reached, so neither
+version has a `kmp-macosarm64` coordinate while the root module still advertises its macOS variants.
+`0.11.1` is otherwise whole and is what consumers use; a `macosArm64` consumer of either resolves a
+404. See the [0.11.1 migration ledger](docs/migrations/0.11.1.md) for the two-step repair. A released
+coordinate is immutable and the workflow rejects an existing primary POM, which is why the gap is
+recorded rather than fixed by a rebuild.
+
 Rentile is licensed under Apache-2.0. Published artifacts also carry a maintained third-party notices inventory for dependencies and copied or adapted upstream code.
 
 Public documentation and the Maven POM project URL use `https://rohittp.com/rentile/`. The repository commits a dependency-free static site under `docs/` using the same GitHub Pages publishing arrangement as the author's Dependables repository; Rentile does not add a deployment workflow or repository-level custom-domain file.
