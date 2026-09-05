@@ -53,11 +53,18 @@ internal val RenderPriority.lane: GateLane
  * wire, or pixels already drawn.
  *
  * That bound is a permit-holding rule, and every holder must keep it: **a permit covers one exchange
- * or one tile draw and nothing else -- never a `Retry-After` wait, a backoff, or any other sleep,
- * and never a wait on a second permit.** A holder that waits under its permit converts "one unit of
- * work" into "one unit of work plus however long it chose to sleep", and a burst of such holders
- * parks the whole gate; prefetching ([warmRawResource]) therefore leaves the gate before it waits
- * and comes back for a fresh permit.
+ * or one tile draw and nothing else -- never a `Retry-After` wait, a backoff, or any other sleep.**
+ * A holder that waits under its permit converts "one unit of work" into "one unit of work plus
+ * however long it chose to sleep", and a burst of such holders parks the whole gate; prefetching
+ * ([warmRawResource]) therefore leaves the gate before it waits and comes back for a fresh permit.
+ *
+ * Waiting for a *second permit* under a held one is the single deliberate exception, and it is on
+ * the network path only: [ResourceWorkCoordinator.exchange] holds an origin permit while it queues
+ * for the global exchange gate. The nesting order is fixed (origin, then global) so it cannot
+ * deadlock, and both gates are priority-aware, so a [GateLane.FIRST] exchange still overtakes at
+ * each of them -- the bound there is two gate waits rather than one. The render path takes no such
+ * nesting: `renderTile` and `renderTileRaw` draw from already-acquired resources and acquire
+ * nothing.
  */
 internal class PriorityGate(
     private val permits: Int,
