@@ -6,13 +6,16 @@ Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a
 
 Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
-`0.6.0` is published and is the newest version on the public line. The source tree currently
-declares `VERSION_NAME=0.7.0`, a deliberate prerelease minor because appending decoded texels to
-`ValidatedDemTile` breaks that class's constructor and destructuring. It is not a published release
-until the `Build and Publish` workflow has passed and the coordinate is publicly resolvable.
-Consumers upgrading from `0.6.x` must follow the
-[0.7.0 migration guide](docs/migrations/0.7.0.md), and those still on `0.5.x` the
-[0.6.0 migration guide](docs/migrations/0.6.0.md) first.
+`0.11.1` is published and is the newest version on the public line. The source tree currently
+declares `VERSION_NAME=0.11.2`, a performance release that decodes a sprite atlas once for a whole
+prepared batch instead of once per tile; it changes no public signature, no key and no pixel. A
+declaration is not a published release until the `Build and Publish` workflow has passed and the
+coordinate is publicly resolvable. Consumers upgrading from `0.11.x` should read the
+[0.11.2 migration guide](docs/migrations/0.11.2.md), which also carries the one change an
+OkHttp-backed transport has to make for Rentile's per-origin budget to be spendable.
+
+`0.11.0` and `0.11.1` are both published without a `kmp-macosarm64` coordinate. See the
+[0.11.1 migration ledger](docs/migrations/0.11.1.md).
 
 ## Targets
 
