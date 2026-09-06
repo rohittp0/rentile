@@ -172,7 +172,9 @@ import kotlin.time.TimeSource
 internal fun createBasemapRasterizer(
     configuration: RentileConfiguration,
     renderLaneRecorderForTest: ((GateLane) -> Unit)? = null,
-): BasemapRasterizer = DefaultBasemapRasterizer(configuration, renderLaneRecorderForTest)
+    spriteAtlasDecodeRecorderForTest: (() -> Unit)? = null,
+): BasemapRasterizer =
+    DefaultBasemapRasterizer(configuration, renderLaneRecorderForTest, spriteAtlasDecodeRecorderForTest)
 
 private const val EARTH_CIRCUMFERENCE_METERS = 40_075_016.68557849
 private const val MAX_ANCESTOR_DISTANCE = 2
@@ -199,6 +201,16 @@ private val SUBSTITUTABLE_RESOURCE_CLASSES = setOf(
 private class DefaultBasemapRasterizer(
     private val configuration: RentileConfiguration,
     renderLaneRecorderForTest: ((GateLane) -> Unit)? = null,
+    /**
+     * Invoked once per sprite-atlas image a prepared batch of this rasterizer actually draws from.
+     *
+     * One such image is one decode — Skia memoises a lazily decoded image against the image object
+     * it was asked for — so counting them is the only way a test can see that a whole batch now
+     * shares one, exactly as `renderLaneRecorderForTest` is the only way one can see which queue a
+     * render joined. Nothing else distinguishes one decode from fifty-two: the tiles are identical
+     * either way, only slower.
+     */
+    private val spriteAtlasDecodeRecorderForTest: (() -> Unit)? = null,
 ) : BasemapRasterizer {
     private val owner = Any()
     private val closing = AtomicBoolean(false)
@@ -317,6 +329,7 @@ private class DefaultBasemapRasterizer(
             tiles = stableTiles,
             options = options,
             initialState = state,
+            spriteAtlasDecodeRecorderForTest = spriteAtlasDecodeRecorderForTest,
         )
     }
 
@@ -1613,6 +1626,7 @@ private class DefaultBasemapRasterizer(
             vectorResources = vectorResources,
             outputSizePx = batch.options.outputSizePx,
             tile = tile,
+            sprites = batch.sharedSpriteAtlas(),
             diagnostics = renderDiagnostics,
         )
         return TileRender(tile, png, renderDiagnostics.toList())
@@ -1641,6 +1655,7 @@ private class DefaultBasemapRasterizer(
             vectorResources = resources.vector[tile].orEmpty(),
             outputSizePx = size,
             tile = tile,
+            sprites = batch.sharedSpriteAtlas(),
             diagnostics = renderDiagnostics,
         )
         return RawTileRender(tile, rgba, size, size, renderDiagnostics.toList())
@@ -1654,9 +1669,10 @@ private class DefaultBasemapRasterizer(
         vectorResources: List<VectorResource>,
         outputSizePx: Int,
         tile: TileId,
+        sprites: SharedSpriteAtlas?,
         diagnostics: MutableList<RenderDiagnostic>,
     ): ByteArray = drawCompositedTile(
-        style, layers, rasterResources, vectorResources, outputSizePx, tile, diagnostics,
+        style, layers, rasterResources, vectorResources, outputSizePx, tile, sprites, diagnostics,
     ) { surface ->
         val encodeStarted = TimeSource.Monotonic.markNow()
         val image = surface.makeImageSnapshot()
@@ -1692,9 +1708,10 @@ private class DefaultBasemapRasterizer(
         vectorResources: List<VectorResource>,
         outputSizePx: Int,
         tile: TileId,
+        sprites: SharedSpriteAtlas?,
         diagnostics: MutableList<RenderDiagnostic>,
     ): ByteArray = drawCompositedTile(
-        style, layers, rasterResources, vectorResources, outputSizePx, tile, diagnostics,
+        style, layers, rasterResources, vectorResources, outputSizePx, tile, sprites, diagnostics,
     ) { surface ->
         val image = surface.makeImageSnapshot()
         try {
@@ -1775,6 +1792,7 @@ private class DefaultBasemapRasterizer(
         vectorResources: List<VectorResource>,
         outputSizePx: Int,
         tile: TileId,
+        sprites: SharedSpriteAtlas?,
         diagnostics: MutableList<RenderDiagnostic>,
         finish: (Surface) -> T,
     ): T {
@@ -1794,7 +1812,7 @@ private class DefaultBasemapRasterizer(
                 cause = error,
             )
         }
-        val spriteContext = style.spriteAtlas?.let(::SpriteRenderContext)
+        val spriteContext = sprites?.let { SpriteRenderContext(it.atlas, it.image) }
         try {
             surface.canvas.clear(Color.TRANSPARENT)
             // Everything below draws in style space: a fixed STYLE_REFERENCE_TILE_SIZE_PX-wide
@@ -1815,7 +1833,6 @@ private class DefaultBasemapRasterizer(
                     layers = layers.filterIsInstance<IconDrawLayer>(),
                     resources = vectorResources,
                     sprites = spriteContext,
-                    atlas = style.spriteAtlas,
                     logicalSizePx = logicalSizePx,
                     tile = tile,
                     diagnostics = diagnostics,
@@ -2427,7 +2444,6 @@ private class DefaultBasemapRasterizer(
         layers: List<IconDrawLayer>,
         resources: List<VectorResource>,
         sprites: SpriteRenderContext,
-        atlas: CompiledSpriteAtlas,
         logicalSizePx: Int,
         tile: TileId,
         diagnostics: MutableList<RenderDiagnostic>,
@@ -2445,7 +2461,8 @@ private class DefaultBasemapRasterizer(
             var skippedFeatures = 0
             var skippedMissingSprite = 0
             for ((featureIndex, feature) in sourceLayer.features.withIndex()) {
-                val baseContext = featureContext(tile, feature).copy(imageAvailable = atlas.entries::containsKey)
+                val baseContext =
+                    featureContext(tile, feature).copy(imageAvailable = sprites.atlas.entries::containsKey)
                 if (!layer.filter.matches(baseContext)) continue
                 val imageName = evaluateIconImageName(layer.image.evaluate(baseContext), feature) ?: continue
                 // A feature that named an icon is a candidate from here on. Counting it only after
@@ -3225,19 +3242,22 @@ private data class SpriteRenderImage(
     val image: Image,
 )
 
+/**
+ * One tile's private view of the sprite sheet, over an atlas image it borrows and does not own.
+ *
+ * This object stays per tile deliberately. Its [images] memo is a plain [MutableMap] and the
+ * tiles of one batch are drawn concurrently on `maxConcurrentMetatileWorkers` real threads, so
+ * sharing the context itself would need a lock this module has no common-source primitive for —
+ * `kotlinx.coroutines.sync.Mutex` is suspending and the draw path is not. What is shared instead
+ * is exactly the expensive and immutable half: [SharedSpriteAtlas.image]. Skia documents `SkImage`
+ * as unmodifiable after creation and thread-safe, guards the lazy decode behind it, and every
+ * extraction below only samples it. The per-sprite [Image]s this builds are this tile's own, are
+ * never published to another thread, and are closed with it.
+ */
 private class SpriteRenderContext(
-    private val atlas: CompiledSpriteAtlas,
+    val atlas: CompiledSpriteAtlas,
+    private val atlasImage: Image,
 ) : AutoCloseable {
-    private val atlasImage = try {
-        Image.makeFromEncoded(atlas.pngBytes)
-    } catch (error: Throwable) {
-        throw ResourceDecodeException(
-            message = "Prepared sprite atlas image cannot be decoded",
-            resourceClass = ResourceClass.SPRITE_IMAGE,
-            sanitizedResourceId = atlas.contentDigest,
-            cause = error,
-        )
-    }
     private val images = mutableMapOf<String, SpriteRenderImage>()
 
     fun image(name: String): SpriteRenderImage? {
@@ -3272,7 +3292,54 @@ private class SpriteRenderContext(
     override fun close() {
         images.values.forEach { it.image.close() }
         images.clear()
-        atlasImage.close()
+        // Not atlasImage: it belongs to the prepared batch and outlives every tile drawn from it.
+    }
+}
+
+/**
+ * The sprite atlas of one prepared batch, decoded once for every tile that batch draws.
+ *
+ * Decoding here rather than in [SpriteRenderContext] is the whole point. `Image.makeFromEncoded`
+ * returns a *lazy* image: the call itself is a few microseconds, and the PNG is decoded on the
+ * first draw that samples it and then memoised against that image. A fresh image per tile
+ * therefore paid for a fresh decode per tile — measured on this repo's own probe at 0.9 ms per
+ * tile for a 1024 px sheet and 5.1 ms for a 2048 px one, so 265 ms of pure repeat decoding across
+ * a 52-tile session. One image for the batch decodes once and every later tile samples the memo.
+ *
+ * The batch is the scope because it is the widest one with a close: [PreparedBatch] is
+ * `AutoCloseable` and the caller closes it, while a [PreparedStyle] has no close of its own
+ * (ADR 0016 makes the rasterizer the owner), so a style-scoped atlas would hold decoded pixels for
+ * the life of the rasterizer. The style overload of `render` prepares and closes a batch around
+ * one call, so it decodes once too.
+ */
+private class SharedSpriteAtlas(
+    val atlas: CompiledSpriteAtlas,
+    val image: Image,
+) : AutoCloseable {
+    override fun close() {
+        image.close()
+    }
+
+    companion object {
+        /**
+         * Wraps the decode failure exactly as [SpriteRenderContext] used to, and is called from
+         * the same place in the pipeline — the first tile draw of a batch — so a sprite sheet that
+         * passes acquisition's signature check and then fails Skia still surfaces the same typed
+         * exception from the same operation it always did.
+         */
+        fun decode(atlas: CompiledSpriteAtlas): SharedSpriteAtlas {
+            val image = try {
+                Image.makeFromEncoded(atlas.pngBytes)
+            } catch (error: Throwable) {
+                throw ResourceDecodeException(
+                    message = "Prepared sprite atlas image cannot be decoded",
+                    resourceClass = ResourceClass.SPRITE_IMAGE,
+                    sanitizedResourceId = atlas.contentDigest,
+                    cause = error,
+                )
+            }
+            return SharedSpriteAtlas(atlas, image)
+        }
     }
 }
 
@@ -3766,11 +3833,13 @@ private class DefaultPreparedBatch(
     override val tiles: List<TileId>,
     val options: RenderOptions,
     initialState: PreparedBatchState,
+    private val spriteAtlasDecodeRecorderForTest: (() -> Unit)? = null,
 ) : PreparedBatch {
     private val closed = AtomicBoolean(false)
     private val activeLeases = AtomicInt(0)
     private val state = AtomicReference(initialState)
     private val recoveryMutex = Mutex()
+    private val spriteAtlas = AtomicReference<SharedSpriteAtlas?>(null)
 
     override val contentKeys: Map<TileId, String>
         get() = state.load().contentKeys
@@ -3790,6 +3859,36 @@ private class DefaultPreparedBatch(
     }
 
     fun snapshot(): PreparedBatchState = state.load()
+
+    /**
+     * The one decoded sprite atlas every tile of this batch draws from, or null for a style with
+     * no sprite.
+     *
+     * Decoded on first use rather than at construction so that an atlas Skia refuses still fails
+     * where it always failed — inside a render, not inside `prepareBatch` — and so that a batch a
+     * caller prepares but never renders costs nothing. Called only under a render lease, which is
+     * what keeps [releaseResourcesIfUnused] from closing the image out from under a draw.
+     *
+     * Two workers can arrive here at once on the first tile of a batch, so the winner is decided
+     * by a compare-and-set and the loser closes the image it built. That is cheap and correct in
+     * the order that matters: `Image.makeFromEncoded` is lazy, so a discarded loser never decoded
+     * anything — it is the *sampling* the winner's image goes on to memoise that this whole
+     * arrangement exists to do once.
+     */
+    fun sharedSpriteAtlas(): SharedSpriteAtlas? {
+        val atlas = style.spriteAtlas ?: return null
+        spriteAtlas.load()?.let { return it }
+        val decoded = SharedSpriteAtlas.decode(atlas)
+        if (!spriteAtlas.compareAndSet(null, decoded)) {
+            decoded.close()
+            return spriteAtlas.load()
+        }
+        // Recorded on the winning publish, not on every construction: a loser is closed before
+        // anything samples it, and a lazy image nothing samples never decodes. Counting
+        // constructions would make the recorder report races rather than decodes.
+        spriteAtlasDecodeRecorderForTest?.invoke()
+        return decoded
+    }
 
     fun replaceState(replacement: PreparedBatchState) {
         ensureOpen()
@@ -3818,6 +3917,9 @@ private class DefaultPreparedBatch(
         if (closed.load() && activeLeases.load() == 0) {
             val current = state.load()
             state.store(current.copy(resources = PreparedResources.Empty))
+            // Exchanged rather than read-then-closed: close() and the last lease release can both
+            // reach this, and a native image must be closed exactly once.
+            spriteAtlas.exchange(null)?.close()
         }
     }
 }
