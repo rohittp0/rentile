@@ -128,15 +128,18 @@ Performance profiling and numeric acceptance budgets are intentionally deferred 
 
 ## Distribution
 
-The public consumer coordinate is `com.rohittp.rentile:kmp`. Releases `0.1.0` through `0.1.4` remain on Maven Central; the shared repository at `https://maven.rohittp.com` is canonical after the migration and is also the version line: each release takes the highest version already published there and advances its patch component. `VERSION_NAME` in the root `gradle.properties` governs only when it names a version strictly above everything public, which is how a deliberate minor or major release is requested. `0.11.1` is published, and is the highest version on that line. The source tree declares `0.11.2` for the sprite-atlas decode hoist; that declaration is a release request, not proof that the coordinate has been published. Snapshot versions never govern and remain local-repository-only. Every push to `main` outside documentation publishes; documentation-only commits do not consume a version, and releases are serialised so concurrent pushes cannot race for one coordinate. The release workflow rejects an existing primary POM before upload, requires the exact version to pass signed local publication plus Android, JVM, iOS, macOS, Linux, and rolling-corpus gates, verifies every public artifact, then resolves it from a fresh credential-free consumer. A GitHub Release is not required. Version numbers are cheap and non-contiguous; a gap does not imply a withdrawn version.
+The public consumer coordinate is `com.rohittp.rentile:kmp`. Releases `0.1.0` through `0.1.4` remain on Maven Central; the shared repository at `https://maven.rohittp.com` is canonical after the migration and is also the version line: each release takes the highest version already published there and advances its patch component. `VERSION_NAME` in the root `gradle.properties` governs only when it names a version strictly above everything public, which is how a deliberate minor or major release is requested. `0.11.2` is published, and is the highest version on that line. Snapshot versions never govern and remain local-repository-only. Every push to `main` outside documentation publishes; documentation-only commits do not consume a version, and releases are serialised so concurrent pushes cannot race for one coordinate. The release workflow rejects an existing primary POM before upload, requires the exact version to pass signed local publication plus Android, JVM, iOS, macOS, Linux, and rolling-corpus gates, verifies every public artifact, then resolves it from a fresh credential-free consumer. A GitHub Release is not required. Version numbers are cheap and non-contiguous; a gap does not imply a withdrawn version.
 
 `0.11.0` and `0.11.1` are both **partial**: an R2 `500` while writing
 `kmp-linuxx64/maven-metadata.xml.md5` abandoned the publications Gradle had not reached, so neither
-version has a `kmp-macosarm64` coordinate while the root module still advertises its macOS variants.
-`0.11.1` is otherwise whole and is what consumers use; a `macosArm64` consumer of either resolves a
-404. See the [0.11.1 migration ledger](docs/migrations/0.11.1.md) for the two-step repair. A released
-coordinate is immutable and the workflow rejects an existing primary POM, which is why the gap is
-recorded rather than fixed by a rebuild.
+version has a `kmp-macosarm64` coordinate while the root module still advertises its macOS variants,
+and a `macosArm64` consumer of either resolves a 404. A released coordinate is immutable and the
+workflow rejects an existing primary POM, which is why the gap is recorded rather than fixed by a
+rebuild. **`0.11.2` is whole** — all eight coordinates published and signed, both public-verification
+steps run and passed — and is what consumers use; it also rewrote the stale
+`kmp-linuxx64/maven-metadata.xml.md5` on its way past, so the first of that ledger's two repairs is
+done. See the [0.11.1 migration ledger](docs/migrations/0.11.1.md) and the
+[0.11.2 ledger](docs/migrations/0.11.2.md).
 
 Rentile is licensed under Apache-2.0. Published artifacts also carry a maintained third-party notices inventory for dependencies and copied or adapted upstream code.
 
