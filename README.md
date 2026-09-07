@@ -6,16 +6,16 @@ Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a
 
 Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
-`0.11.2` is published, whole on all eight coordinates, and is the newest version on the public line.
-It decodes a sprite atlas once for a whole prepared batch instead of once per tile, and changes no
-public signature, no key and no pixel, so it is a drop-in for `0.11.1`. Consumers upgrading from
-`0.11.x` should still read the [0.11.2 migration guide](docs/migrations/0.11.2.md), which carries
-the one change an OkHttp-backed transport has to make for Rentile's per-origin budget to be
-spendable.
+`0.11.3` is published, whole on all eight coordinates, and is the newest version on the public line.
+It decodes a raster or DEM source tile once for the draws of a prepared batch that read it instead of
+once per draw, and changes no public signature, no key and no pixel, so it is a drop-in for `0.11.2`.
+See the [0.11.3 migration guide](docs/migrations/0.11.3.md). Consumers upgrading from `0.11.0` or
+`0.11.1` should also read the [0.11.2 guide](docs/migrations/0.11.2.md), which carries the one change
+an OkHttp-backed transport has to make for Rentile's per-origin budget to be spendable.
 
 `0.11.0` and `0.11.1` are both published *without* a `kmp-macosarm64` coordinate, so a consumer with
-that target resolves a 404 from either. A released coordinate is immutable; move to `0.11.2`. See the
-[0.11.1 migration ledger](docs/migrations/0.11.1.md).
+that target resolves a 404 from either. A released coordinate is immutable; move to `0.11.2` or
+later. See the [0.11.1 migration ledger](docs/migrations/0.11.1.md).
 
 ## Targets
 
