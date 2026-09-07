@@ -173,8 +173,13 @@ internal fun createBasemapRasterizer(
     configuration: RentileConfiguration,
     renderLaneRecorderForTest: ((GateLane) -> Unit)? = null,
     spriteAtlasDecodeRecorderForTest: (() -> Unit)? = null,
-): BasemapRasterizer =
-    DefaultBasemapRasterizer(configuration, renderLaneRecorderForTest, spriteAtlasDecodeRecorderForTest)
+    sourceTileDecodeRecorderForTest: ((ResourceClass) -> Unit)? = null,
+): BasemapRasterizer = DefaultBasemapRasterizer(
+    configuration,
+    renderLaneRecorderForTest,
+    spriteAtlasDecodeRecorderForTest,
+    sourceTileDecodeRecorderForTest,
+)
 
 private const val EARTH_CIRCUMFERENCE_METERS = 40_075_016.68557849
 private const val MAX_ANCESTOR_DISTANCE = 2
@@ -211,6 +216,16 @@ private class DefaultBasemapRasterizer(
      * either way, only slower.
      */
     private val spriteAtlasDecodeRecorderForTest: (() -> Unit)? = null,
+    /**
+     * Invoked once per raster or DEM source tile this rasterizer's draw path decodes, tagged with
+     * the resource class that was decoded.
+     *
+     * Same reason as [spriteAtlasDecodeRecorderForTest]: one decode and nine produce identical
+     * tiles, only slower, so a count is the only thing that can see the difference. A decode that
+     * loses the publish race is not counted — its image is closed before anything reads it, and
+     * counting it would make the recorder report races rather than the decodes the batch kept.
+     */
+    private val sourceTileDecodeRecorderForTest: ((ResourceClass) -> Unit)? = null,
 ) : BasemapRasterizer {
     private val owner = Any()
     private val closing = AtomicBoolean(false)
@@ -330,6 +345,7 @@ private class DefaultBasemapRasterizer(
             options = options,
             initialState = state,
             spriteAtlasDecodeRecorderForTest = spriteAtlasDecodeRecorderForTest,
+            sourceTileDecodeRecorderForTest = sourceTileDecodeRecorderForTest,
         )
     }
 
@@ -775,6 +791,7 @@ private class DefaultBasemapRasterizer(
             requested.forEach { tile ->
                 if (tile !in lease.state.contentKeys) throw TileNotInPreparedBatchException(tile)
             }
+            warmSharedDemTiles(prepared, lease.state.resources, requested, priority)
             val tileResults = coroutineScope {
                 requested.map { tile ->
                     async {
@@ -818,6 +835,7 @@ private class DefaultBasemapRasterizer(
                 requested.forEach { tile ->
                     if (tile !in lease.state.contentKeys) throw TileNotInPreparedBatchException(tile)
                 }
+                warmSharedDemTiles(prepared, lease.state.resources, requested, priority)
                 val results = coroutineScope {
                     requested.map { tile ->
                         async {
@@ -1582,6 +1600,54 @@ private class DefaultBasemapRasterizer(
         }
     }
 
+    /**
+     * Decodes, once each, the DEM tiles more than one of [tiles] is about to read.
+     *
+     * Only the DEM path needs this. A shared *raster* image is lazy, so two workers reaching one
+     * first is settled by a compare-and-set whose loser discards an image that never decoded
+     * anything — free, exactly as ADR 0033's sprite atlas is. A shared DEM image is not lazy (see
+     * `decodedDemImage`: Skia re-decodes a lazy image for every `readPixels`), so a race there
+     * would pay for a decode and throw it away, and the batch shape that benefits most is the one
+     * that races hardest: sixteen output tiles over one nine-tile neighbourhood start together on
+     * every worker and all want the same nine. Measured over a sixteen-tile hillshade metatile,
+     * leaving them to race cost 118 ms of decoding where doing it once costs 31 ms.
+     *
+     * Doing it here rather than in `prepareBatch` keeps the property that a source tile Skia
+     * refuses fails from a render. Doing it *best-effort* keeps the rest of that property: a DEM
+     * that cannot be decoded is left uncached and the draw that needs it decodes it and throws,
+     * so the failure still names the output tile it always named rather than whichever tile this
+     * loop happened to attribute it to.
+     */
+    private suspend fun warmSharedDemTiles(
+        prepared: DefaultPreparedBatch,
+        resources: PreparedResources,
+        tiles: List<TileId>,
+        priority: RenderPriority,
+    ) {
+        val pending = prepared.sharedSourceTiles.undecodedDemTiles(
+            tiles.flatMap { resources.raster[it].orEmpty() },
+        )
+        if (pending.isEmpty()) return
+        coroutineScope {
+            pending.map { resource ->
+                async {
+                    currentCoroutineContext().ensureActive()
+                    renderPermits.withPermit(priority.lane) {
+                        try {
+                            prepared.sharedSourceTiles.shareDem(resource) {
+                                decodedDemImage(resource, resource.sample.outputTile)
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Throwable) {
+                            // Left to the draw, which reports it against its own output tile.
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+    }
+
     private fun renderTile(
         batch: DefaultPreparedBatch,
         resources: PreparedResources,
@@ -1627,6 +1693,7 @@ private class DefaultBasemapRasterizer(
             outputSizePx = batch.options.outputSizePx,
             tile = tile,
             sprites = batch.sharedSpriteAtlas(),
+            sourceTiles = batch.sharedSourceTiles,
             diagnostics = renderDiagnostics,
         )
         return TileRender(tile, png, renderDiagnostics.toList())
@@ -1656,6 +1723,7 @@ private class DefaultBasemapRasterizer(
             outputSizePx = size,
             tile = tile,
             sprites = batch.sharedSpriteAtlas(),
+            sourceTiles = batch.sharedSourceTiles,
             diagnostics = renderDiagnostics,
         )
         return RawTileRender(tile, rgba, size, size, renderDiagnostics.toList())
@@ -1670,9 +1738,10 @@ private class DefaultBasemapRasterizer(
         outputSizePx: Int,
         tile: TileId,
         sprites: SharedSpriteAtlas?,
+        sourceTiles: SharedSourceTileImages,
         diagnostics: MutableList<RenderDiagnostic>,
     ): ByteArray = drawCompositedTile(
-        style, layers, rasterResources, vectorResources, outputSizePx, tile, sprites, diagnostics,
+        style, layers, rasterResources, vectorResources, outputSizePx, tile, sprites, sourceTiles, diagnostics,
     ) { surface ->
         val encodeStarted = TimeSource.Monotonic.markNow()
         val image = surface.makeImageSnapshot()
@@ -1709,9 +1778,10 @@ private class DefaultBasemapRasterizer(
         outputSizePx: Int,
         tile: TileId,
         sprites: SharedSpriteAtlas?,
+        sourceTiles: SharedSourceTileImages,
         diagnostics: MutableList<RenderDiagnostic>,
     ): ByteArray = drawCompositedTile(
-        style, layers, rasterResources, vectorResources, outputSizePx, tile, sprites, diagnostics,
+        style, layers, rasterResources, vectorResources, outputSizePx, tile, sprites, sourceTiles, diagnostics,
     ) { surface ->
         val image = surface.makeImageSnapshot()
         try {
@@ -1793,6 +1863,7 @@ private class DefaultBasemapRasterizer(
         outputSizePx: Int,
         tile: TileId,
         sprites: SharedSpriteAtlas?,
+        sourceTiles: SharedSourceTileImages,
         diagnostics: MutableList<RenderDiagnostic>,
         finish: (Surface) -> T,
     ): T {
@@ -1844,7 +1915,7 @@ private class DefaultBasemapRasterizer(
                     is RasterDrawLayer -> {
                         val resource = rasterResources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest }
                             ?: continue
-                        drawRaster(surface, layer, resource, logicalSizePx, tile)
+                        drawRaster(surface, layer, resource, logicalSizePx, tile, sourceTiles)
                     }
                     is HillshadeDrawLayer -> {
                         val centerSample = layer.source.sampleFor(tile) ?: continue
@@ -1854,7 +1925,7 @@ private class DefaultBasemapRasterizer(
                                 it.sample.sourceX == centerSample.sourceX &&
                                 it.sample.sourceY == centerSample.sourceY
                         } ?: continue
-                        drawHillshade(surface, layer, center, resources, logicalSizePx, tile)
+                        drawHillshade(surface, layer, center, resources, logicalSizePx, tile, sourceTiles)
                     }
                     is FillDrawLayer -> {
                         val resource = vectorResources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest }
@@ -1940,19 +2011,16 @@ private class DefaultBasemapRasterizer(
         resource: RasterResource,
         logicalSizePx: Int,
         tile: TileId,
+        sourceTiles: SharedSourceTileImages,
     ) {
         val rasterPaint = evaluateRasterPaint(layer, tile)
-        val image = try {
-            Image.makeFromEncoded(resource.bytes)
-        } catch (error: Throwable) {
-            throw ResourceDecodeException(
-                message = "Prepared raster tile cannot be decoded",
-                resourceClass = ResourceClass.RASTER_TILE,
-                sanitizedResourceId = resource.sample.identity.sha256Hex(),
-                affectedTiles = listOf(tile),
-                cause = error,
-            )
-        }
+        // Lazy, and shared only when this batch draws these same bytes more than once. Skia's
+        // `Image.makeFromEncoded` parses a header and defers the decode to the first draw that
+        // samples the image, memoising it against that image object — so an image per draw was a
+        // decode per draw, and one image for the batch is one decode for the batch.
+        val shared = sourceTiles.shareRaster(resource) { encodedImage(resource, tile) }
+        val image = shared ?: encodedImage(resource, tile)
+            .also { sourceTileDecodeRecorderForTest?.invoke(ResourceClass.RASTER_TILE) }
         try {
             val sample = resource.sample
             val sourceLeft = image.width.toFloat() * sample.childX / sample.childScale
@@ -1982,8 +2050,29 @@ private class DefaultBasemapRasterizer(
                 colorFilter?.close()
             }
         } finally {
-            image.close()
+            // A shared image is not closed here: it belongs to the prepared batch and outlives
+            // every draw that borrows it.
+            if (shared == null) image.close()
         }
+    }
+
+    /**
+     * The batch's raster tile as a lazy Skia image, failing the way this path has always failed.
+     *
+     * Used both for a draw that owns its image and for the one a batch shares, so a sheet that
+     * passes acquisition's decode and then fails Skia raises the same typed exception from the
+     * same operation either way.
+     */
+    private fun encodedImage(resource: RasterResource, tile: TileId): Image = try {
+        Image.makeFromEncoded(resource.bytes)
+    } catch (error: Throwable) {
+        throw ResourceDecodeException(
+            message = "Prepared raster tile cannot be decoded",
+            resourceClass = ResourceClass.RASTER_TILE,
+            sanitizedResourceId = resource.sample.identity.sha256Hex(),
+            affectedTiles = listOf(tile),
+            cause = error,
+        )
     }
 
     private fun drawHillshade(
@@ -1993,6 +2082,7 @@ private class DefaultBasemapRasterizer(
         resources: List<RasterResource>,
         logicalSizePx: Int,
         tile: TileId,
+        sourceTiles: SharedSourceTileImages,
     ) {
         val context = StyleEvaluationContext(zoom = tile.z.toDouble())
         val exaggeration = evaluatedNumber(layer.exaggeration.evaluate(context), "hillshade-exaggeration", tile)
@@ -2007,35 +2097,30 @@ private class DefaultBasemapRasterizer(
         val shadow = evaluatedColor(layer.shadowColor.evaluate(context), "hillshade-shadow-color", tile)
         val encoding = layer.source.demEncoding ?: DemEncoding.MAPBOX
 
+        // One entry per source tile this draw reads, and every one of them is this draw's own:
+        // Skia's own header says an SkBitmap is not thread safe and that each thread must have its
+        // own, while threads may share the pixels behind it. What the batch shares is therefore the
+        // image these are read from, not these.
         val decoded = mutableMapOf<Pair<Int, Int>, Bitmap>()
+        val ownedBitmaps = mutableListOf<Bitmap>()
         try {
             for (resource in resources) {
-                val image = try {
-                    Image.makeFromEncoded(resource.bytes)
-                } catch (error: Throwable) {
-                    throw ResourceDecodeException(
-                        message = "Prepared DEM tile cannot be decoded",
-                        resourceClass = ResourceClass.DEM_TILE,
-                        sanitizedResourceId = resource.sample.identity.sha256Hex(),
-                        affectedTiles = listOf(tile),
-                        cause = error,
-                    )
-                }
+                // Shared only when this batch's draws read the same DEM more than once, which is
+                // the ordinary case: neighbourhoods overlap, so one DEM tile is read by up to nine
+                // output tiles. The shared image is raster-backed — its decode is already done —
+                // because a *lazy* image memoises its decode for a draw and not for `readPixels`,
+                // so sharing one of those would save nothing at all here.
+                val shared = sourceTiles.shareDem(resource) { decodedDemImage(resource, tile) }
+                // A DEM only this draw reads keeps the lazy image it always had: forcing that one
+                // into a raster image would buy a copy nobody reads twice.
+                val image = shared ?: demImage(resource, tile)
+                    .also { sourceTileDecodeRecorderForTest?.invoke(ResourceClass.DEM_TILE) }
                 try {
-                    val bitmap = Bitmap()
-                    if (!bitmap.allocN32Pixels(image.width, image.height, false) || !image.readPixels(bitmap)) {
-                        bitmap.close()
-                        throw ResourceDecodeException(
-                            message = "Prepared DEM pixels cannot be read",
-                            resourceClass = ResourceClass.DEM_TILE,
-                            sanitizedResourceId = resource.sample.identity.sha256Hex(),
-                            affectedTiles = listOf(tile),
-                        )
-                    }
-                    decoded[resource.sample.sourceX to resource.sample.sourceY]?.close()
+                    val bitmap = demPixels(image, resource, tile)
+                    ownedBitmaps += bitmap
                     decoded[resource.sample.sourceX to resource.sample.sourceY] = bitmap
                 } finally {
-                    image.close()
+                    if (shared == null) image.close()
                 }
             }
 
@@ -2126,7 +2211,66 @@ private class DefaultBasemapRasterizer(
                 hillshade.close()
             }
         } finally {
-            decoded.values.forEach(Bitmap::close)
+            // The owned list rather than the map's values: two resources can land on one source
+            // coordinate, and the one the map dropped still has to be closed.
+            ownedBitmaps.forEach(Bitmap::close)
+        }
+    }
+
+    /** One DEM tile as a lazy Skia image, failing the way this path has always failed. */
+    private fun demImage(resource: RasterResource, tile: TileId): Image = try {
+        Image.makeFromEncoded(resource.bytes)
+    } catch (error: Throwable) {
+        throw ResourceDecodeException(
+            message = "Prepared DEM tile cannot be decoded",
+            resourceClass = ResourceClass.DEM_TILE,
+            sanitizedResourceId = resource.sample.identity.sha256Hex(),
+            affectedTiles = listOf(tile),
+            cause = error,
+        )
+    }
+
+    /** One DEM tile's pixels, in the canonical N32 bitmap [drawHillshade] samples heights from. */
+    private fun demPixels(image: Image, resource: RasterResource, tile: TileId): Bitmap {
+        val bitmap = Bitmap()
+        if (!bitmap.allocN32Pixels(image.width, image.height, false) || !image.readPixels(bitmap)) {
+            bitmap.close()
+            throw ResourceDecodeException(
+                message = "Prepared DEM pixels cannot be read",
+                resourceClass = ResourceClass.DEM_TILE,
+                sanitizedResourceId = resource.sample.identity.sha256Hex(),
+                affectedTiles = listOf(tile),
+            )
+        }
+        return bitmap
+    }
+
+    /**
+     * One DEM tile decoded once, as a raster-backed image every later reader copies from.
+     *
+     * This is the shape the measurement chose. A lazy image memoises its decode against itself for
+     * a *draw*, which is why one shared lazy sprite sheet serves a whole batch (ADR 0033) — but
+     * `readPixels` is not a draw, and Skia re-decodes for every one of them: measured on this
+     * repository's probe, 52 `readPixels` off one lazy 512 px DEM cost 143.1 ms against 141.3 ms
+     * for 52 freshly decoded images, a saving of nothing. Forcing the decode once and handing out
+     * a raster-backed image costs 1.3 ms for the same 52, and the pixels are identical because
+     * they *are* the pixels the first decode produced.
+     *
+     * The bitmap is marked immutable so `Image.makeFromBitmap` shares its pixels instead of copying
+     * them, and is closed here: the image holds the pixel reference from then on.
+     */
+    private fun decodedDemImage(resource: RasterResource, tile: TileId): Image {
+        val encoded = demImage(resource, tile)
+        try {
+            val bitmap = demPixels(encoded, resource, tile)
+            try {
+                bitmap.setImmutable()
+                return Image.makeFromBitmap(bitmap)
+            } finally {
+                bitmap.close()
+            }
+        } finally {
+            encoded.close()
         }
     }
 
@@ -3826,6 +3970,143 @@ private fun ByteArray.isPng(): Boolean =
         this[6] == 0x1a.toByte() &&
         this[7] == 0x0a.toByte()
 
+/**
+ * The decoded source tiles one prepared batch shares between the tiles it draws.
+ *
+ * `drawRaster` and `drawHillshade` each called `Image.makeFromEncoded` on every draw, and for
+ * hillshade that is nine calls per output tile — a DEM neighbourhood — where the neighbourhoods of
+ * adjacent output tiles overlap almost entirely. A sixteen-tile metatile over a hillshade style
+ * therefore decoded 144 DEM tiles to read 36 distinct ones, or 9 when the batch overzooms.
+ *
+ * **A decode is shared only when this batch reads the same bytes more than once**, which is what
+ * keeps this from being a memory regression dressed as a saving. A raster style at its source's own
+ * zoom gives every output tile a source tile of its own, so nothing there is shared and nothing is
+ * retained; an overzoomed one gives sixteen output tiles a single source tile, and that one is.
+ * Nothing is held that was not going to be decoded more than once anyway.
+ *
+ * The key is [RasterResource.contentDigest], not the sample identity: identical bytes decode
+ * identically whatever tile asked for them, and it is the only key that stays right when a
+ * substituted resource carries an ancestor's bytes under the requested tile's sample.
+ *
+ * **Only the image is shared.** Skia's own header says an `SkImage` cannot be modified after it is
+ * created; it also says an `SkBitmap` is *not* thread safe and that each thread must have its own,
+ * though threads may share the pixels behind one. The tiles of a batch draw concurrently on
+ * `maxConcurrentMetatileWorkers` real threads, so the per-draw `Bitmap` that `drawHillshade` reads
+ * heights from stays per draw and only the image it is filled from is shared. This module has no
+ * common-source non-suspending lock to guard anything else with — `kotlinx.coroutines.sync.Mutex`
+ * is suspending and the draw path is not (ADR 0033) — and needs none: publication is a
+ * compare-and-set and every reader afterwards only samples.
+ */
+@OptIn(ExperimentalAtomicApi::class)
+private class SharedSourceTileImages(
+    initialShareable: Set<String>,
+    private val decodeRecorderForTest: ((ResourceClass) -> Unit)?,
+) : AutoCloseable {
+    private val shareable = AtomicReference(initialShareable)
+    private val rasterImages = AtomicReference<Map<String, Image>>(emptyMap())
+    private val demImages = AtomicReference<Map<String, Image>>(emptyMap())
+
+    /**
+     * The batch's shared image for [resource], or null when this batch reads these bytes once and
+     * the caller should decode one of its own.
+     *
+     * Decoded on first use rather than at `prepareBatch`, so bytes Skia refuses still fail inside a
+     * render where they always did, and a batch a caller prepares but never renders costs nothing.
+     * Called only under a render lease, which is what stops [close] freeing an image out from under
+     * a draw.
+     */
+    fun shareRaster(resource: RasterResource, decode: () -> Image): Image? =
+        share(rasterImages, ResourceClass.RASTER_TILE, resource, decode)
+
+    /** As [shareRaster], for a DEM tile; see `decodedDemImage` for why this one is not lazy. */
+    fun shareDem(resource: RasterResource, decode: () -> Image): Image? =
+        share(demImages, ResourceClass.DEM_TILE, resource, decode)
+
+    /**
+     * Adds the digests a replaced batch state shares, and never removes one.
+     *
+     * `retryExact` can replace a batch's resources while a render holds a lease on the state it
+     * started from, so an entry has to stay valid for that render. Content addressing is what makes
+     * keeping it correct rather than merely convenient: an image filed under a digest is the decode
+     * of those exact bytes for as long as the batch lives.
+     */
+    fun share(digests: Set<String>) {
+        if (digests.isEmpty()) return
+        while (true) {
+            val current = shareable.load()
+            if (current.containsAll(digests)) return
+            if (shareable.compareAndSet(current, current + digests)) return
+        }
+    }
+
+    /**
+     * One representative resource per shareable DEM digest this batch has not decoded yet.
+     *
+     * Deduplicated by digest, so the caller decodes each set of bytes once however many of its
+     * tiles read them. Any of the resources carrying a digest will do: they are the same bytes.
+     */
+    fun undecodedDemTiles(resources: List<RasterResource>): List<RasterResource> {
+        val shared = shareable.load()
+        if (shared.isEmpty()) return emptyList()
+        val decoded = demImages.load()
+        val pending = LinkedHashMap<String, RasterResource>()
+        for (resource in resources) {
+            if (resource.sample.source.resourceClass != ResourceClass.DEM_TILE) continue
+            val digest = resource.contentDigest
+            if (digest !in shared || digest in decoded) continue
+            if (digest !in pending) pending[digest] = resource
+        }
+        return pending.values.toList()
+    }
+
+    override fun close() {
+        rasterImages.exchange(emptyMap()).values.forEach { it.close() }
+        demImages.exchange(emptyMap()).values.forEach { it.close() }
+    }
+
+    private fun share(
+        entries: AtomicReference<Map<String, Image>>,
+        resourceClass: ResourceClass,
+        resource: RasterResource,
+        decode: () -> Image,
+    ): Image? {
+        val digest = resource.contentDigest
+        if (digest !in shareable.load()) return null
+        entries.load()[digest]?.let { return it }
+        val decoded = decode()
+        while (true) {
+            val current = entries.load()
+            current[digest]?.let {
+                // A loser closes what it built and reads the winner's. For a raster tile that costs
+                // nothing at all — a lazy image nothing sampled never decoded — and for a DEM it
+                // costs one decode this draw would have done anyway before any of this existed.
+                decoded.close()
+                return it
+            }
+            if (entries.compareAndSet(current, current + (digest to decoded))) {
+                // Recorded on the winning publish, so the count a test reads is decodes the batch
+                // kept rather than races it happened to run.
+                decodeRecorderForTest?.invoke(resourceClass)
+                return decoded
+            }
+        }
+    }
+}
+
+/**
+ * The content digests more than one of [resources]' raster entries carries — the decodes a batch
+ * can share, and the only ones it is worth holding pixels for.
+ */
+private fun shareableSourceTileDigests(resources: PreparedResources): Set<String> {
+    val counts = mutableMapOf<String, Int>()
+    for (perTile in resources.raster.values) {
+        for (resource in perTile) {
+            counts[resource.contentDigest] = (counts[resource.contentDigest] ?: 0) + 1
+        }
+    }
+    return counts.filterValues { it > 1 }.keys
+}
+
 @OptIn(ExperimentalAtomicApi::class)
 private class DefaultPreparedBatch(
     val owner: Any,
@@ -3834,12 +4115,24 @@ private class DefaultPreparedBatch(
     val options: RenderOptions,
     initialState: PreparedBatchState,
     private val spriteAtlasDecodeRecorderForTest: (() -> Unit)? = null,
+    sourceTileDecodeRecorderForTest: ((ResourceClass) -> Unit)? = null,
 ) : PreparedBatch {
     private val closed = AtomicBoolean(false)
     private val activeLeases = AtomicInt(0)
     private val state = AtomicReference(initialState)
     private val recoveryMutex = Mutex()
     private val spriteAtlas = AtomicReference<SharedSpriteAtlas?>(null)
+
+    /**
+     * The decoded raster and DEM source tiles every draw of this batch borrows.
+     *
+     * Batch-scoped for ADR 0033's reason: a `PreparedBatch` is the widest thing that closes, so it
+     * is the widest thing that can release decoded pixels on a boundary the caller already manages.
+     */
+    val sharedSourceTiles = SharedSourceTileImages(
+        initialShareable = shareableSourceTileDigests(initialState.resources),
+        decodeRecorderForTest = sourceTileDecodeRecorderForTest,
+    )
 
     override val contentKeys: Map<TileId, String>
         get() = state.load().contentKeys
@@ -3892,6 +4185,7 @@ private class DefaultPreparedBatch(
 
     fun replaceState(replacement: PreparedBatchState) {
         ensureOpen()
+        sharedSourceTiles.share(shareableSourceTileDigests(replacement.resources))
         state.store(replacement)
     }
 
@@ -3920,6 +4214,7 @@ private class DefaultPreparedBatch(
             // Exchanged rather than read-then-closed: close() and the last lease release can both
             // reach this, and a native image must be closed exactly once.
             spriteAtlas.exchange(null)?.close()
+            sharedSourceTiles.close()
         }
     }
 }
