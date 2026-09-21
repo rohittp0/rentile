@@ -31,6 +31,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class RentileRuntimeTest {
@@ -266,6 +267,35 @@ class RentileRuntimeTest {
             assertEquals(DiagnosticCode.UNSUPPORTED_RETAINED_CONSTRUCT, error.diagnostics.single().code)
             assertEquals("0", error.diagnostics.single().details["layerIndex"])
             assertTrue(error.diagnostics.single().details.getValue("layerIdDigest").length == 64)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    /**
+     * A `filter` on a raster, hillshade or background layer draws nothing differently: those layers
+     * have no features to filter, and the MapLibre schema does not define `filter` for them at all.
+     * Real styles carry it regardless -- the Satellite style this project serves has
+     * `"filter":["all"]` on its single raster layer -- and rejecting it failed the *entire* style
+     * under UNSUPPORTED_RETAINED_CONSTRUCT. On the host that meant a preview showing the error text
+     * instead of a map, and a video export aborting with MAP_FAILED after 26 ms, over a property
+     * that cannot change a pixel. Every other implementation ignores it; so does this one.
+     *
+     * Deliberately not narrowed to the no-op `["all"]`: a filter is equally meaningless on these
+     * layers whatever it says, so accepting only the trivial one would leave the same failure a
+     * `["==","x",1]` away.
+     */
+    @Test
+    fun aFilterOnAFeaturelessLayerIsIgnoredRatherThanFailingTheStyle() = runTest {
+        val rasterizer = testRasterizer()
+        try {
+            val style = rasterizer.prepare(
+                StyleInput.InlineJson(
+                    """{"version":8,"sources":{"tiles":{"type":"raster","tiles":["https://tiles.example.test/{z}/{x}/{y}.png"],"tileSize":512},"dem":{"type":"raster-dem","tiles":["https://dem.example.test/{z}/{x}/{y}.png"],"tileSize":512}},"layers":[{"id":"bg","type":"background","filter":["all"],"paint":{"background-color":"#ffffff"}},{"id":"sat","type":"raster","source":"tiles","filter":["all"],"paint":{"raster-opacity":1}},{"id":"hills","type":"hillshade","source":"dem","filter":["==","class","x"]}]}""",
+                ),
+            )
+            assertNotNull(style)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()

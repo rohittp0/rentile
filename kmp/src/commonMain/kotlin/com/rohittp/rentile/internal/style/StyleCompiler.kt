@@ -1525,7 +1525,9 @@ internal class StyleCompiler(
         index: Int,
         layerId: String,
     ): RasterDrawLayer {
-        val knownLayerKeys = setOf("id", "type", "source", "minzoom", "maxzoom", "layout", "paint", "metadata")
+        val knownLayerKeys =
+            setOf("id", "type", "source", "minzoom", "maxzoom", "layout", "paint", "metadata") +
+                FEATURELESS_LAYER_IGNORED_KEYS
         if ((layer.keys - knownLayerKeys).isNotEmpty()) {
             failRetained(index, layerId, "a raster layer property is unsupported")
         }
@@ -1643,7 +1645,9 @@ internal class StyleCompiler(
         index: Int,
         layerId: String,
     ): HillshadeDrawLayer {
-        val knownLayerKeys = setOf("id", "type", "source", "minzoom", "maxzoom", "layout", "paint", "metadata")
+        val knownLayerKeys =
+            setOf("id", "type", "source", "minzoom", "maxzoom", "layout", "paint", "metadata") +
+                FEATURELESS_LAYER_IGNORED_KEYS
         if ((layer.keys - knownLayerKeys).isNotEmpty()) {
             failRetained(index, layerId, "a hillshade layer property is unsupported")
         }
@@ -1826,7 +1830,9 @@ internal class StyleCompiler(
         index: Int,
         layerId: String,
     ): CompiledBackgroundLayer {
-        val knownLayerKeys = setOf("id", "type", "minzoom", "maxzoom", "layout", "paint", "metadata")
+        val knownLayerKeys =
+            setOf("id", "type", "minzoom", "maxzoom", "layout", "paint", "metadata") +
+                FEATURELESS_LAYER_IGNORED_KEYS
         if ((layer.keys - knownLayerKeys).isNotEmpty()) {
             failRetained(index, layerId, "a background layer property is unsupported")
         }
@@ -2212,6 +2218,25 @@ internal class StyleCompiler(
     private companion object {
         const val RENDERER_SEMANTIC_VERSION = "rentile-renderer-4"
         val SUPPORTED_LAYER_TYPES = setOf("background", "fill", "line", "raster", "hillshade")
+
+        /**
+         * Keys accepted and ignored on the layer types that have no features to filter -- raster,
+         * hillshade and background.
+         *
+         * The MapLibre schema does not define `filter` for those types, so it cannot change a
+         * pixel there. Real styles carry it anyway: the Satellite style shipped by this library's
+         * first consumer has `"filter":["all"]` on its single raster layer. Before this, the strict
+         * unknown-key check rejected it and `failRetained` took the **whole style** down with
+         * UNSUPPORTED_RETAINED_CONSTRUCT -- which on that host meant a preview drawing its error
+         * text instead of a map, and a video export aborting with MAP_FAILED after 26 ms, over a
+         * property that does nothing.
+         *
+         * Ignoring it is what every other implementation does, and it does not weaken the strict
+         * profile: a construct that can alter drawing still fails loudly. The leniency is scoped to
+         * the types where the property is definitionally inert, not granted to unknown keys at
+         * large.
+         */
+        val FEATURELESS_LAYER_IGNORED_KEYS = setOf("filter")
         val LEGACY_PLACE_NAME_SOURCE_LAYERS = setOf(
             "place",
             "continent_label",
