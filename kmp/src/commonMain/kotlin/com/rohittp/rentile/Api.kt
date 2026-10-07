@@ -46,12 +46,53 @@ public class CompatibilityPolicy private constructor(
     public val id: String,
     public val minimumOutputZoom: Int,
     public val maximumOutputZoom: Int,
+    /** Whether every symbol layer belongs to the host; see [RentileV1HostSymbols]. */
+    internal val hostOwnedSymbols: Boolean = false,
 ) {
     public companion object {
+        /**
+         * The default profile. Output Tiles carry the icons of symbol layers whose icon does not
+         * depend on text - icon-only layers, and text-and-icon layers whose icon is independent of
+         * the text, with that text removed - and only visible text-bearing vector symbol layers
+         * become label layers. See ADR 0024 and ADR 0026.
+         */
         public val RentileV1: CompatibilityPolicy = CompatibilityPolicy(
             id = "rentile-v1",
             minimumOutputZoom = 0,
             maximumOutputZoom = 22,
+        )
+
+        /**
+         * [RentileV1] with every symbol layer handed to the host, for a host that draws icons and
+         * text in screen space the way Mapbox GL does.
+         *
+         * - Output Tiles carry no symbol layer at all: no icon is drawn into them, and a vector
+         *   source only symbol layers read is never fetched for them. Patterns on background, fill
+         *   and line layers are unaffected. Each visible symbol layer reports
+         *   [DiagnosticCode.SYMBOL_LAYER_HOST_OWNED].
+         * - Every visible vector symbol layer with a meaningful `text-field` **or** a meaningful
+         *   `icon-image` is a label layer. A feature with an icon and no text yields a candidate
+         *   whose [LabelCandidate.glyphs] are empty, whose [LabelCandidate.text] and
+         *   [LabelCandidate.textSize] are null, whose [LabelCandidate.boundingBox] is the
+         *   zero-area box at the anchor and whose [LabelCandidate.textOptional] is true; the rest
+         *   of its text half is inert (see [LabelCandidate]).
+         * - A feature with both whose text is lost - empty after evaluation, a script this profile
+         *   cannot lay out, an unusable text property, glyphs the atlas cannot cover, or a text
+         *   construct the profile cannot compile - still yields its icon alone, and
+         *   [DiagnosticCode.LABEL_FEATURE_SKIPPED] counts it as `textLostIconRetained`.
+         * - Icon-only candidates need no glyphs, so they survive a style with no `glyphs` template.
+         * - An unresolvable sprite never fails preparation for a symbol layer's sake; the icons it
+         *   would have supplied are skipped and reported through [DiagnosticCode.ICON_FEATURE_SKIPPED].
+         *
+         * Text candidates themselves are laid out exactly as under [RentileV1]. Because [id] is
+         * part of [PreparedStyle.digest], every key derived from a style prepared under this
+         * profile differs from the same style's keys under [RentileV1]. See ADR 0035.
+         */
+        public val RentileV1HostSymbols: CompatibilityPolicy = CompatibilityPolicy(
+            id = "rentile-v1-host-symbols",
+            minimumOutputZoom = 0,
+            maximumOutputZoom = 22,
+            hostOwnedSymbols = true,
         )
         public val Default: CompatibilityPolicy = RentileV1
     }
@@ -588,6 +629,15 @@ public data class LabelIconRef(
  * the unit the style specification gives them. They are inputs to the consumer's screen-space
  * placement, not results of it.
  *
+ * Under [CompatibilityPolicy.RentileV1HostSymbols] a candidate can be an icon alone: [icon] is
+ * non-null, [glyphs] is empty, [text] and [textSize] are null, [boundingBox] is the zero-area box
+ * at the anchor and [textOptional] is true. Its placement, [line], [rotationDegrees],
+ * [symbolSpacing], [avoidEdges], [zOrder], [sortKey] and identity are the symbol's own; every other
+ * text property is inert and fixed - permission to overlap and to be ignored by placement, no
+ * padding, transparent zero-opacity paint, no translation - so a host that forgets to skip the
+ * empty text half neither blocks nor is blocked by it and draws nothing for it. The icon is placed
+ * and collided by its own [LabelIconRef] fields.
+ *
  * Those pixels are *style* pixels, at the ratio of one, and label acquisition takes no
  * [RenderOptions] at all: the same candidates serve a tile drawn at any [RenderOptions.outputSizePx].
  * A consumer compositing labels over a tile rendered above [STYLE_REFERENCE_TILE_SIZE_PX] must
@@ -1087,7 +1137,13 @@ public interface BasemapRasterizer : AutoCloseable {
      */
     public suspend fun retryExact(batch: PreparedBatch): ExactRecoveryResult
 
-    /** Resolved visible text-bearing vector symbol layers in style order. URL templates remain private. */
+    /**
+     * Resolved label layers in style order. URL templates remain private.
+     *
+     * Under [CompatibilityPolicy.RentileV1] a label layer is a visible text-bearing vector symbol
+     * layer. Under [CompatibilityPolicy.RentileV1HostSymbols] it is any visible vector symbol layer
+     * with a meaningful `text-field` or a meaningful `icon-image`.
+     */
     public fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor>
 
     /** All-or-error validated MVT acquisition. Tile substitution is deliberately not applied. */
@@ -1173,7 +1229,9 @@ public interface BasemapRasterizer : AutoCloseable {
      *
      * A style declaring no `glyphs` template yields an empty batch carrying
      * [DiagnosticCode.GLYPH_RANGE_UNAVAILABLE] rather than failing: label preparation is opt-in,
-     * and a style without glyphs is legitimate.
+     * and a style without glyphs is legitimate. Under [CompatibilityPolicy.RentileV1HostSymbols]
+     * the batch still carries every icon-only candidate, since an icon needs no glyphs; only text
+     * is absent.
      */
     public suspend fun acquireLabelCandidates(
         style: PreparedStyle,

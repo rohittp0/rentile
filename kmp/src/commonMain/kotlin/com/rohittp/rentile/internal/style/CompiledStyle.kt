@@ -443,7 +443,13 @@ internal data class CompiledLabelIconProgram(
 internal data class CompiledLabelTextProgram(
     val layerOrder: Int,
     val filter: CompiledStyleFilter,
-    val text: CompiledStyleProperty,
+    /**
+     * Null for a program with no text half: an icon-only layer under
+     * [com.rohittp.rentile.CompatibilityPolicy.RentileV1HostSymbols], or a text-and-icon layer
+     * whose text half that profile could not compile. Every other text property then holds its
+     * specification default and is never read.
+     */
+    val text: CompiledStyleProperty?,
     val font: CompiledStyleProperty,
     val size: CompiledStyleProperty,
     /** How [size] behaves between integer zooms, for [com.rohittp.rentile.LabelCandidate.textSize]. */

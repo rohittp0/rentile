@@ -631,8 +631,12 @@ private class DefaultBasemapRasterizer(
         // this API is opt-in, so it reports and plans an empty closure rather than failing
         // (ADR 0026). The diagnostic is recorded here rather than at acquisition because it is a
         // planning fact: nothing about the tiles can change the answer.
-        if (compiledStyle.glyphsTemplate == null) {
-            recordDiagnosticSafely(LabelCandidateAssembler.glyphRangeUnavailable(stableTiles))
+        //
+        // Under the host-owned-symbols profile icons are candidates too, and they need no glyphs,
+        // so such a style still plans - with no text - rather than returning nothing.
+        val glyphsUnavailable = compiledStyle.glyphsTemplate == null
+        if (glyphsUnavailable) recordDiagnosticSafely(LabelCandidateAssembler.glyphRangeUnavailable(stableTiles))
+        if (glyphsUnavailable && !compiledStyle.policy.hostOwnedSymbols) {
             return@operation DefaultLabelCandidatePlan(
                 owner = owner,
                 style = compiledStyle,
@@ -665,6 +669,12 @@ private class DefaultBasemapRasterizer(
             resources = resources,
             limits = configuration.resourceLimits,
             iconImageNameOf = ::evaluateIconImageName,
+            textAvailable = !glyphsUnavailable,
+            planDiagnostics = if (glyphsUnavailable) {
+                listOf(LabelCandidateAssembler.glyphRangeUnavailable(stableTiles))
+            } else {
+                emptyList()
+            },
         )
         DefaultLabelCandidatePlan(
             owner = owner,
@@ -685,14 +695,18 @@ private class DefaultBasemapRasterizer(
         val assembly = state.assembly
             ?: return@operation LabelCandidateAssembler.emptyBatch(state.style, state.callerTiles, state.limits)
 
+        // Only a host-owned-symbols plan reaches here without a template, and it planned no text,
+        // so it requires no range and needs none.
         val glyphsTemplate = state.style.glyphsTemplate
-            ?: return@operation LabelCandidateAssembler.emptyBatch(state.style, state.callerTiles, state.limits)
+        if (glyphsTemplate == null && assembly.requiredRanges.isNotEmpty()) {
+            return@operation LabelCandidateAssembler.emptyBatch(state.style, state.callerTiles, state.limits)
+        }
         val rangeOutcomes = supervisorScope {
             assembly.requiredRanges.map { request ->
                 async {
                     acquireOutcome {
                         glyphAcquirer.acquire(
-                            glyphsTemplate.resolve(),
+                            checkNotNull(glyphsTemplate).resolve(),
                             request.fontStack,
                             request.rangeStart,
                             state.resourceAccess,
@@ -4278,7 +4292,7 @@ private class DefaultLabelCandidatePlan(
         }
 
     override val diagnostics: List<RenderDiagnostic> =
-        if (assembly == null) {
+        if (assembly == null || style.glyphsTemplate == null) {
             style.diagnostics + LabelCandidateAssembler.glyphRangeUnavailable(callerTiles)
         } else {
             style.diagnostics

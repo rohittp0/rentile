@@ -39,6 +39,9 @@ public enum class DiagnosticCode {
      * Output Tile or Label Candidate Batch was returned rather than failing.
      *
      * This covers both repaired Output Tile icon layers and icons coupled to retained label text.
+     * Under [CompatibilityPolicy.RentileV1HostSymbols] it covers every label layer's icon, an
+     * icon-only layer's included, and a style whose sprite could not be resolved at all counts
+     * every requested icon as `skippedMissingSprite` rather than failing preparation.
      * A feature is skipped either because an icon construct/property cannot produce a usable icon
      * (`icon-size: "big"`, a negative `icon-halo-width`, an unsupported icon property, or a
      * data-driven `icon-offset` that is not a numeric pair) or because it names an icon absent from
@@ -107,6 +110,10 @@ public enum class DiagnosticCode {
      * MVT still acquires, so a consumer using `labelLayerDescriptors`/`acquireLabelTiles` - an API
      * that predates label candidates - sees no change at all.
      *
+     * Under [CompatibilityPolicy.RentileV1HostSymbols] only the text is lost when the layer also
+     * has an icon: it keeps contributing icon-only candidates. There an icon-only layer whose filter
+     * or `symbol-*` property cannot compile reports this code too, and contributes nothing.
+     *
      * `details` carries `layerIndex` and `layerIdDigest`, the same identity pair used by other
      * layer-exclusion diagnostics, locating which layer was excluded in the compiled style.
      *
@@ -123,6 +130,9 @@ public enum class DiagnosticCode {
      * `causeCode`; it never contains a source URL. Legacy place-name source failures remain strict
      * because those descriptors were already reachable before 0.6.0.
      *
+     * Under [CompatibilityPolicy.RentileV1HostSymbols] the same applies to every label layer, an
+     * icon-only one included, under the same place-name exception.
+     *
      * Always INFO. No pre-existing capability failed.
      */
     LABEL_SOURCE_UNAVAILABLE,
@@ -131,6 +141,8 @@ public enum class DiagnosticCode {
      * Label candidates were requested for a prepared style whose `glyphs` URL template could not
      * be resolved, so an empty label-candidate batch was returned instead of failing. A style
      * that declares no `glyphs` key has no text to lay out - a legitimate style, not an error.
+     * Under [CompatibilityPolicy.RentileV1HostSymbols] the batch is not empty when the style has
+     * icons: every icon-bearing feature still yields its icon-only candidate, and only text is lost.
      *
      * Always INFO. Nothing failed: an empty batch is returned rather than the operation throwing.
      */
@@ -153,8 +165,11 @@ public enum class DiagnosticCode {
     LINE_PLACEMENT_LABEL_EXCLUDED,
 
     /**
-     * A text-bearing vector symbol layer produced no candidate for one or more of the features that wanted
-     * one, and the batch was returned without them rather than failing.
+     * A label layer produced no candidate for one or more of the features that wanted one, and the
+     * batch was returned without them rather than failing. Under [CompatibilityPolicy.RentileV1] a
+     * label layer is a text-bearing vector symbol layer; under
+     * [CompatibilityPolicy.RentileV1HostSymbols] it is any vector symbol layer with text or an icon,
+     * and a feature that wanted only an icon is counted in the same unit.
      *
      * Reported once per layer per acquisition, whatever the cause and however many features were
      * affected. The name is deliberately neutral because three unrelated conditions reach it, and
@@ -174,6 +189,14 @@ public enum class DiagnosticCode {
      * - `skippedNonPointGeometry` - the feature geometry is empty, degenerate, or incompatible
      *   with the resolved point/line placement, so no geographic anchor can be produced.
      *
+     * Under [CompatibilityPolicy.RentileV1HostSymbols] `skippedFeatures` also counts a feature
+     * that wanted only an icon and could not emit it ([ICON_FEATURE_SKIPPED] says why), and a fifth
+     * count is present: `textLostIconRetained`, labels whose text was lost for any of the reasons
+     * above - or a script [COMPLEX_SCRIPT_LABEL_EXCLUDED] reports, or a text construct the profile
+     * could not compile - while their icon was still emitted as an icon-only candidate. Those are
+     * not losses of a candidate, so they are not among the three, and their being reported is what
+     * keeps a layer whose text silently stopped drawing distinguishable from one that has none.
+     *
      * The three are counted apart rather than summed, because a consumer seeing no labels needs to
      * know which of them happened; they are strict subsets of `candidateFeatures` and share its
      * unit, one label meaning one anchor of one feature on one requested tile. A label whose
@@ -192,6 +215,20 @@ public enum class DiagnosticCode {
      * the result.
      */
     LABEL_FEATURE_SKIPPED,
+
+    /**
+     * Under [CompatibilityPolicy.RentileV1HostSymbols], a visible symbol layer with text or an icon
+     * is not drawn into Output Tiles because the host draws it from label candidates.
+     *
+     * `details` carries `layerIndex` and `layerIdDigest`, and `labelLayer`: `true` when the layer is
+     * a label layer, so [LabelLayerDescriptor] and label candidates represent it, and `false` when
+     * its source is not a vector tile source or it declares no `source-layer`, so nothing does -
+     * the one case in which the policy loses a symbol layer outright.
+     *
+     * Always INFO. Appended after every pre-existing entry, so existing ordinals are unchanged; an
+     * exhaustive `when` over this enum needs the new branch.
+     */
+    SYMBOL_LAYER_HOST_OWNED,
 }
 
 /** Sanitized diagnostic. [details] must never contain secrets or signed URLs. */
