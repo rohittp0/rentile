@@ -9,7 +9,7 @@ import com.rohittp.rentile.internal.style.TextJustify
 
 /**
  * Resolved text-layer style inputs [LabelLayout] needs to lay one label's text out.
- * `fontStackDigest` must match a [PackedGlyphAtlas.indexOf] key so glyph lookups land.
+ * `fontStackDigest` must match a [GlyphMetricsLookup.indexOf] key so glyph lookups land.
  */
 internal data class LabelTextStyle(
     val fontStackDigest: String,
@@ -36,7 +36,7 @@ internal data class LaidOutLabel(val quads: List<LabelGlyphQuad>, val box: Label
 internal object LabelLayout {
     /**
      * One codepoint's contribution to a line: either a drawable glyph ([entryIndex] indexes
-     * [PackedGlyphAtlas.entries]) or a non-drawable whitespace glyph, which still advances the
+     * [GlyphMetricsLookup.entries]) or a non-drawable whitespace glyph, which still advances the
      * pen but is never [entryIndex]-addressable because the atlas holds no entry for it.
      */
     private data class Token(val entryIndex: Int?, val advance: Int, val isBreak: Boolean)
@@ -44,7 +44,7 @@ internal object LabelLayout {
     /**
      * Lays [text] out against [atlas] and [style]. [whitespace] is [whitespaceAdvances] over the
      * same acquired glyph data the caller already used to build [atlas]; it is threaded through
-     * separately (rather than added to [PackedGlyphAtlas] itself) because a space's advance has no
+     * separately (rather than added to the atlas itself) because a space's advance has no
      * atlas entry at all - [GlyphAtlasPacker] deliberately drops glyphs with an empty bitmap - so
      * the only place that advance still lives is the [AcquiredGlyphRange] data the atlas was
      * packed from.
@@ -60,7 +60,7 @@ internal object LabelLayout {
      */
     fun layOut(
         text: String,
-        atlas: PackedGlyphAtlas,
+        atlas: GlyphMetricsLookup,
         whitespace: Map<Pair<String, Int>, Int>,
         style: LabelTextStyle,
     ): LaidOutLabel? {
@@ -78,7 +78,7 @@ internal object LabelLayout {
      * Advances for glyphs the atlas has no entry for - [GlyphAtlasPacker] never packs a glyph
      * with an empty bitmap, but such a glyph (a space, most often) still has a real advance the
      * provider measured, and layout must apply it rather than inventing a fallback constant.
-     * Keyed the same way [PackedGlyphAtlas.indexOf] is, so a lookup miss there can fall back
+     * Keyed the same way [GlyphMetricsLookup.indexOf] is, so a lookup miss there can fall back
      * to a lookup here before the codepoint is given up on entirely.
      *
      * Built once per batch by the caller and handed to every [layOut] call, never per label.
@@ -106,7 +106,7 @@ internal object LabelLayout {
      */
     private fun wrap(
         text: String,
-        atlas: PackedGlyphAtlas,
+        atlas: GlyphMetricsLookup,
         whitespace: Map<Pair<String, Int>, Int>,
         style: LabelTextStyle,
     ): List<List<Token>> {
@@ -205,7 +205,7 @@ internal object LabelLayout {
      * visibly wrong for the other, which is why nothing noticed: every fixture in the suite encoded
      * the assumption under test.
      */
-    private fun place(lines: List<List<Token>>, atlas: PackedGlyphAtlas, style: LabelTextStyle): List<LabelGlyphQuad> {
+    private fun place(lines: List<List<Token>>, atlas: GlyphMetricsLookup, style: LabelTextStyle): List<LabelGlyphQuad> {
         if (lines.isEmpty()) return emptyList()
 
         val letterSpacingPx = style.letterSpacingEm * GlyphRangeDecoder.EM_PX
@@ -279,7 +279,7 @@ internal object LabelLayout {
     }
 
     /** The union of every quad's own extent (not just its origin), expanded by [LabelTextStyle.paddingPx]. */
-    private fun bounds(quads: List<LabelGlyphQuad>, atlas: PackedGlyphAtlas, style: LabelTextStyle): LabelBox {
+    private fun bounds(quads: List<LabelGlyphQuad>, atlas: GlyphMetricsLookup, style: LabelTextStyle): LabelBox {
         var left = Double.POSITIVE_INFINITY
         var top = Double.POSITIVE_INFINITY
         var right = Double.NEGATIVE_INFINITY

@@ -62,6 +62,17 @@ final enum class com.rohittp.rentile/IconTextFit : kotlin/Enum<com.rohittp.renti
     final fun values(): kotlin/Array<com.rohittp.rentile/IconTextFit> // com.rohittp.rentile/IconTextFit.values|values#static(){}[0]
 }
 
+final enum class com.rohittp.rentile/LabelGlyphPacking : kotlin/Enum<com.rohittp.rentile/LabelGlyphPacking> { // com.rohittp.rentile/LabelGlyphPacking|null[0]
+    enum entry ACQUIRED_RANGES // com.rohittp.rentile/LabelGlyphPacking.ACQUIRED_RANGES|null[0]
+    enum entry REFERENCED_GLYPHS // com.rohittp.rentile/LabelGlyphPacking.REFERENCED_GLYPHS|null[0]
+
+    final val entries // com.rohittp.rentile/LabelGlyphPacking.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/LabelGlyphPacking> // com.rohittp.rentile/LabelGlyphPacking.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): com.rohittp.rentile/LabelGlyphPacking // com.rohittp.rentile/LabelGlyphPacking.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<com.rohittp.rentile/LabelGlyphPacking> // com.rohittp.rentile/LabelGlyphPacking.values|values#static(){}[0]
+}
+
 final enum class com.rohittp.rentile/LabelIconAnchor : kotlin/Enum<com.rohittp.rentile/LabelIconAnchor> { // com.rohittp.rentile/LabelIconAnchor|null[0]
     enum entry BOTTOM // com.rohittp.rentile/LabelIconAnchor.BOTTOM|null[0]
     enum entry BOTTOM_LEFT // com.rohittp.rentile/LabelIconAnchor.BOTTOM_LEFT|null[0]
@@ -943,6 +954,22 @@ final class com.rohittp.rentile/LabelGlyphAtlas { // com.rohittp.rentile/LabelGl
     final fun toString(): kotlin/String // com.rohittp.rentile/LabelGlyphAtlas.toString|toString(){}[0]
 }
 
+final class com.rohittp.rentile/LabelGlyphAtlasPolicy { // com.rohittp.rentile/LabelGlyphAtlasPolicy|null[0]
+    constructor <init>(com.rohittp.rentile/LabelGlyphPacking = ..., kotlin/Int? = ...) // com.rohittp.rentile/LabelGlyphAtlasPolicy.<init>|<init>(com.rohittp.rentile.LabelGlyphPacking;kotlin.Int?){}[0]
+
+    final val maxDimensionPx // com.rohittp.rentile/LabelGlyphAtlasPolicy.maxDimensionPx|{}maxDimensionPx[0]
+        final fun <get-maxDimensionPx>(): kotlin/Int? // com.rohittp.rentile/LabelGlyphAtlasPolicy.maxDimensionPx.<get-maxDimensionPx>|<get-maxDimensionPx>(){}[0]
+    final val packing // com.rohittp.rentile/LabelGlyphAtlasPolicy.packing|{}packing[0]
+        final fun <get-packing>(): com.rohittp.rentile/LabelGlyphPacking // com.rohittp.rentile/LabelGlyphAtlasPolicy.packing.<get-packing>|<get-packing>(){}[0]
+
+    final fun component1(): com.rohittp.rentile/LabelGlyphPacking // com.rohittp.rentile/LabelGlyphAtlasPolicy.component1|component1(){}[0]
+    final fun component2(): kotlin/Int? // com.rohittp.rentile/LabelGlyphAtlasPolicy.component2|component2(){}[0]
+    final fun copy(com.rohittp.rentile/LabelGlyphPacking = ..., kotlin/Int? = ...): com.rohittp.rentile/LabelGlyphAtlasPolicy // com.rohittp.rentile/LabelGlyphAtlasPolicy.copy|copy(com.rohittp.rentile.LabelGlyphPacking;kotlin.Int?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelGlyphAtlasPolicy.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelGlyphAtlasPolicy.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/LabelGlyphAtlasPolicy.toString|toString(){}[0]
+}
+
 final class com.rohittp.rentile/LabelGlyphEntry { // com.rohittp.rentile/LabelGlyphEntry|null[0]
     constructor <init>(kotlin/String, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int) // com.rohittp.rentile/LabelGlyphEntry.<init>|<init>(kotlin.String;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int){}[0]
 
@@ -1393,7 +1420,7 @@ final class com.rohittp.rentile/RenderedTile { // com.rohittp.rentile/RenderedTi
 }
 
 final class com.rohittp.rentile/RentileConfiguration { // com.rohittp.rentile/RentileConfiguration|null[0]
-    constructor <init>(com.rohittp.rentile/ResourceTransport, com.rohittp.rentile/RawResourceStore, com.rohittp.rentile/MapSessionProvider = ..., com.rohittp.rentile/CredentialProvider = ..., com.rohittp.rentile/RentileClock = ..., com.rohittp.rentile/MetricsSink = ..., com.rohittp.rentile/DiagnosticSink = ..., com.rohittp.rentile/ExecutionPolicy = ..., com.rohittp.rentile/ResourceLimits = ...) // com.rohittp.rentile/RentileConfiguration.<init>|<init>(com.rohittp.rentile.ResourceTransport;com.rohittp.rentile.RawResourceStore;com.rohittp.rentile.MapSessionProvider;com.rohittp.rentile.CredentialProvider;com.rohittp.rentile.RentileClock;com.rohittp.rentile.MetricsSink;com.rohittp.rentile.DiagnosticSink;com.rohittp.rentile.ExecutionPolicy;com.rohittp.rentile.ResourceLimits){}[0]
+    constructor <init>(com.rohittp.rentile/ResourceTransport, com.rohittp.rentile/RawResourceStore, com.rohittp.rentile/MapSessionProvider = ..., com.rohittp.rentile/CredentialProvider = ..., com.rohittp.rentile/RentileClock = ..., com.rohittp.rentile/MetricsSink = ..., com.rohittp.rentile/DiagnosticSink = ..., com.rohittp.rentile/ExecutionPolicy = ..., com.rohittp.rentile/ResourceLimits = ..., com.rohittp.rentile/LabelGlyphAtlasPolicy = ...) // com.rohittp.rentile/RentileConfiguration.<init>|<init>(com.rohittp.rentile.ResourceTransport;com.rohittp.rentile.RawResourceStore;com.rohittp.rentile.MapSessionProvider;com.rohittp.rentile.CredentialProvider;com.rohittp.rentile.RentileClock;com.rohittp.rentile.MetricsSink;com.rohittp.rentile.DiagnosticSink;com.rohittp.rentile.ExecutionPolicy;com.rohittp.rentile.ResourceLimits;com.rohittp.rentile.LabelGlyphAtlasPolicy){}[0]
 
     final val clock // com.rohittp.rentile/RentileConfiguration.clock|{}clock[0]
         final fun <get-clock>(): com.rohittp.rentile/RentileClock // com.rohittp.rentile/RentileConfiguration.clock.<get-clock>|<get-clock>(){}[0]
@@ -1403,6 +1430,8 @@ final class com.rohittp.rentile/RentileConfiguration { // com.rohittp.rentile/Re
         final fun <get-diagnosticSink>(): com.rohittp.rentile/DiagnosticSink // com.rohittp.rentile/RentileConfiguration.diagnosticSink.<get-diagnosticSink>|<get-diagnosticSink>(){}[0]
     final val executionPolicy // com.rohittp.rentile/RentileConfiguration.executionPolicy|{}executionPolicy[0]
         final fun <get-executionPolicy>(): com.rohittp.rentile/ExecutionPolicy // com.rohittp.rentile/RentileConfiguration.executionPolicy.<get-executionPolicy>|<get-executionPolicy>(){}[0]
+    final val labelGlyphAtlas // com.rohittp.rentile/RentileConfiguration.labelGlyphAtlas|{}labelGlyphAtlas[0]
+        final fun <get-labelGlyphAtlas>(): com.rohittp.rentile/LabelGlyphAtlasPolicy // com.rohittp.rentile/RentileConfiguration.labelGlyphAtlas.<get-labelGlyphAtlas>|<get-labelGlyphAtlas>(){}[0]
     final val metricsSink // com.rohittp.rentile/RentileConfiguration.metricsSink|{}metricsSink[0]
         final fun <get-metricsSink>(): com.rohittp.rentile/MetricsSink // com.rohittp.rentile/RentileConfiguration.metricsSink.<get-metricsSink>|<get-metricsSink>(){}[0]
     final val rawResourceStore // com.rohittp.rentile/RentileConfiguration.rawResourceStore|{}rawResourceStore[0]
@@ -1415,6 +1444,7 @@ final class com.rohittp.rentile/RentileConfiguration { // com.rohittp.rentile/Re
         final fun <get-transport>(): com.rohittp.rentile/ResourceTransport // com.rohittp.rentile/RentileConfiguration.transport.<get-transport>|<get-transport>(){}[0]
 
     final fun component1(): com.rohittp.rentile/ResourceTransport // com.rohittp.rentile/RentileConfiguration.component1|component1(){}[0]
+    final fun component10(): com.rohittp.rentile/LabelGlyphAtlasPolicy // com.rohittp.rentile/RentileConfiguration.component10|component10(){}[0]
     final fun component2(): com.rohittp.rentile/RawResourceStore // com.rohittp.rentile/RentileConfiguration.component2|component2(){}[0]
     final fun component3(): com.rohittp.rentile/MapSessionProvider // com.rohittp.rentile/RentileConfiguration.component3|component3(){}[0]
     final fun component4(): com.rohittp.rentile/CredentialProvider // com.rohittp.rentile/RentileConfiguration.component4|component4(){}[0]
@@ -1423,7 +1453,7 @@ final class com.rohittp.rentile/RentileConfiguration { // com.rohittp.rentile/Re
     final fun component7(): com.rohittp.rentile/DiagnosticSink // com.rohittp.rentile/RentileConfiguration.component7|component7(){}[0]
     final fun component8(): com.rohittp.rentile/ExecutionPolicy // com.rohittp.rentile/RentileConfiguration.component8|component8(){}[0]
     final fun component9(): com.rohittp.rentile/ResourceLimits // com.rohittp.rentile/RentileConfiguration.component9|component9(){}[0]
-    final fun copy(com.rohittp.rentile/ResourceTransport = ..., com.rohittp.rentile/RawResourceStore = ..., com.rohittp.rentile/MapSessionProvider = ..., com.rohittp.rentile/CredentialProvider = ..., com.rohittp.rentile/RentileClock = ..., com.rohittp.rentile/MetricsSink = ..., com.rohittp.rentile/DiagnosticSink = ..., com.rohittp.rentile/ExecutionPolicy = ..., com.rohittp.rentile/ResourceLimits = ...): com.rohittp.rentile/RentileConfiguration // com.rohittp.rentile/RentileConfiguration.copy|copy(com.rohittp.rentile.ResourceTransport;com.rohittp.rentile.RawResourceStore;com.rohittp.rentile.MapSessionProvider;com.rohittp.rentile.CredentialProvider;com.rohittp.rentile.RentileClock;com.rohittp.rentile.MetricsSink;com.rohittp.rentile.DiagnosticSink;com.rohittp.rentile.ExecutionPolicy;com.rohittp.rentile.ResourceLimits){}[0]
+    final fun copy(com.rohittp.rentile/ResourceTransport = ..., com.rohittp.rentile/RawResourceStore = ..., com.rohittp.rentile/MapSessionProvider = ..., com.rohittp.rentile/CredentialProvider = ..., com.rohittp.rentile/RentileClock = ..., com.rohittp.rentile/MetricsSink = ..., com.rohittp.rentile/DiagnosticSink = ..., com.rohittp.rentile/ExecutionPolicy = ..., com.rohittp.rentile/ResourceLimits = ..., com.rohittp.rentile/LabelGlyphAtlasPolicy = ...): com.rohittp.rentile/RentileConfiguration // com.rohittp.rentile/RentileConfiguration.copy|copy(com.rohittp.rentile.ResourceTransport;com.rohittp.rentile.RawResourceStore;com.rohittp.rentile.MapSessionProvider;com.rohittp.rentile.CredentialProvider;com.rohittp.rentile.RentileClock;com.rohittp.rentile.MetricsSink;com.rohittp.rentile.DiagnosticSink;com.rohittp.rentile.ExecutionPolicy;com.rohittp.rentile.ResourceLimits;com.rohittp.rentile.LabelGlyphAtlasPolicy){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RentileConfiguration.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/RentileConfiguration.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/RentileConfiguration.toString|toString(){}[0]

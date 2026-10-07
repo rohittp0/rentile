@@ -227,6 +227,21 @@ class ApiContractTest {
         assertFailsWith<UnsupportedOperationException> { legacy.acquireSpriteAtlas(style) }
     }
 
+    @Test
+    fun theGlyphAtlasPolicyDefaultsToWhatEveryEarlierReleasePacked() {
+        val policy = LabelGlyphAtlasPolicy()
+
+        assertEquals(LabelGlyphPacking.ACQUIRED_RANGES, policy.packing)
+        assertEquals(null, policy.maxDimensionPx)
+        assertEquals(policy, RentileConfiguration(TRANSPORT, STORE).labelGlyphAtlas)
+        assertEquals(4096, LabelGlyphAtlasPolicy(maxDimensionPx = 4096).maxDimensionPx)
+        for (rejected in listOf(0, -1)) {
+            assertFailsWith<IllegalArgumentException>("maxDimensionPx $rejected must be rejected") {
+                LabelGlyphAtlasPolicy(maxDimensionPx = rejected)
+            }
+        }
+    }
+
     /** Overrides exactly the members `BasemapRasterizer` had before `acquireSpriteAtlas`. */
     private class LegacyRasterizer : BasemapRasterizer {
         override suspend fun prepare(style: StyleInput, policy: CompatibilityPolicy): PreparedStyle = TODO()
@@ -286,5 +301,14 @@ class ApiContractTest {
         ): RenderBatch = TODO()
         override fun close() = Unit
         override suspend fun awaitClosed() = Unit
+    }
+
+    private companion object {
+        val TRANSPORT = ResourceTransport { error("No transport is used") }
+        val STORE = object : RawResourceStore {
+            override suspend fun read(key: RawResourceKey): StoredRawResource? = null
+            override suspend fun write(key: RawResourceKey, resource: StoredRawResource) = Unit
+            override suspend fun remove(key: RawResourceKey) = Unit
+        }
     }
 }

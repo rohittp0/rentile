@@ -388,6 +388,21 @@ public final class com/rohittp/rentile/LabelGlyphAtlas {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class com/rohittp/rentile/LabelGlyphAtlasPolicy {
+	public fun <init> ()V
+	public fun <init> (Lcom/rohittp/rentile/LabelGlyphPacking;Ljava/lang/Integer;)V
+	public synthetic fun <init> (Lcom/rohittp/rentile/LabelGlyphPacking;Ljava/lang/Integer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/rohittp/rentile/LabelGlyphPacking;
+	public final fun component2 ()Ljava/lang/Integer;
+	public final fun copy (Lcom/rohittp/rentile/LabelGlyphPacking;Ljava/lang/Integer;)Lcom/rohittp/rentile/LabelGlyphAtlasPolicy;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/LabelGlyphAtlasPolicy;Lcom/rohittp/rentile/LabelGlyphPacking;Ljava/lang/Integer;ILjava/lang/Object;)Lcom/rohittp/rentile/LabelGlyphAtlasPolicy;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMaxDimensionPx ()Ljava/lang/Integer;
+	public final fun getPacking ()Lcom/rohittp/rentile/LabelGlyphPacking;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class com/rohittp/rentile/LabelGlyphEntry {
 	public fun <init> (Ljava/lang/String;IIIIIIII)V
 	public final fun component1 ()Ljava/lang/String;
@@ -413,6 +428,14 @@ public final class com/rohittp/rentile/LabelGlyphEntry {
 	public final fun getY ()I
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/rohittp/rentile/LabelGlyphPacking : java/lang/Enum {
+	public static final field ACQUIRED_RANGES Lcom/rohittp/rentile/LabelGlyphPacking;
+	public static final field REFERENCED_GLYPHS Lcom/rohittp/rentile/LabelGlyphPacking;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/rohittp/rentile/LabelGlyphPacking;
+	public static fun values ()[Lcom/rohittp/rentile/LabelGlyphPacking;
 }
 
 public final class com/rohittp/rentile/LabelGlyphQuad {
@@ -874,9 +897,10 @@ public final class com/rohittp/rentile/RentileClock$Companion {
 }
 
 public final class com/rohittp/rentile/RentileConfiguration {
-	public fun <init> (Lcom/rohittp/rentile/ResourceTransport;Lcom/rohittp/rentile/RawResourceStore;Lcom/rohittp/rentile/MapSessionProvider;Lcom/rohittp/rentile/CredentialProvider;Lcom/rohittp/rentile/RentileClock;Lcom/rohittp/rentile/MetricsSink;Lcom/rohittp/rentile/DiagnosticSink;Lcom/rohittp/rentile/ExecutionPolicy;Lcom/rohittp/rentile/ResourceLimits;)V
-	public synthetic fun <init> (Lcom/rohittp/rentile/ResourceTransport;Lcom/rohittp/rentile/RawResourceStore;Lcom/rohittp/rentile/MapSessionProvider;Lcom/rohittp/rentile/CredentialProvider;Lcom/rohittp/rentile/RentileClock;Lcom/rohittp/rentile/MetricsSink;Lcom/rohittp/rentile/DiagnosticSink;Lcom/rohittp/rentile/ExecutionPolicy;Lcom/rohittp/rentile/ResourceLimits;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lcom/rohittp/rentile/ResourceTransport;Lcom/rohittp/rentile/RawResourceStore;Lcom/rohittp/rentile/MapSessionProvider;Lcom/rohittp/rentile/CredentialProvider;Lcom/rohittp/rentile/RentileClock;Lcom/rohittp/rentile/MetricsSink;Lcom/rohittp/rentile/DiagnosticSink;Lcom/rohittp/rentile/ExecutionPolicy;Lcom/rohittp/rentile/ResourceLimits;Lcom/rohittp/rentile/LabelGlyphAtlasPolicy;)V
+	public synthetic fun <init> (Lcom/rohittp/rentile/ResourceTransport;Lcom/rohittp/rentile/RawResourceStore;Lcom/rohittp/rentile/MapSessionProvider;Lcom/rohittp/rentile/CredentialProvider;Lcom/rohittp/rentile/RentileClock;Lcom/rohittp/rentile/MetricsSink;Lcom/rohittp/rentile/DiagnosticSink;Lcom/rohittp/rentile/ExecutionPolicy;Lcom/rohittp/rentile/ResourceLimits;Lcom/rohittp/rentile/LabelGlyphAtlasPolicy;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Lcom/rohittp/rentile/ResourceTransport;
+	public final fun component10 ()Lcom/rohittp/rentile/LabelGlyphAtlasPolicy;
 	public final fun component2 ()Lcom/rohittp/rentile/RawResourceStore;
 	public final fun component3 ()Lcom/rohittp/rentile/MapSessionProvider;
 	public final fun component4 ()Lcom/rohittp/rentile/CredentialProvider;
@@ -885,13 +909,14 @@ public final class com/rohittp/rentile/RentileConfiguration {
 	public final fun component7 ()Lcom/rohittp/rentile/DiagnosticSink;
 	public final fun component8 ()Lcom/rohittp/rentile/ExecutionPolicy;
 	public final fun component9 ()Lcom/rohittp/rentile/ResourceLimits;
-	public final fun copy (Lcom/rohittp/rentile/ResourceTransport;Lcom/rohittp/rentile/RawResourceStore;Lcom/rohittp/rentile/MapSessionProvider;Lcom/rohittp/rentile/CredentialProvider;Lcom/rohittp/rentile/RentileClock;Lcom/rohittp/rentile/MetricsSink;Lcom/rohittp/rentile/DiagnosticSink;Lcom/rohittp/rentile/ExecutionPolicy;Lcom/rohittp/rentile/ResourceLimits;)Lcom/rohittp/rentile/RentileConfiguration;
-	public static synthetic fun copy$default (Lcom/rohittp/rentile/RentileConfiguration;Lcom/rohittp/rentile/ResourceTransport;Lcom/rohittp/rentile/RawResourceStore;Lcom/rohittp/rentile/MapSessionProvider;Lcom/rohittp/rentile/CredentialProvider;Lcom/rohittp/rentile/RentileClock;Lcom/rohittp/rentile/MetricsSink;Lcom/rohittp/rentile/DiagnosticSink;Lcom/rohittp/rentile/ExecutionPolicy;Lcom/rohittp/rentile/ResourceLimits;ILjava/lang/Object;)Lcom/rohittp/rentile/RentileConfiguration;
+	public final fun copy (Lcom/rohittp/rentile/ResourceTransport;Lcom/rohittp/rentile/RawResourceStore;Lcom/rohittp/rentile/MapSessionProvider;Lcom/rohittp/rentile/CredentialProvider;Lcom/rohittp/rentile/RentileClock;Lcom/rohittp/rentile/MetricsSink;Lcom/rohittp/rentile/DiagnosticSink;Lcom/rohittp/rentile/ExecutionPolicy;Lcom/rohittp/rentile/ResourceLimits;Lcom/rohittp/rentile/LabelGlyphAtlasPolicy;)Lcom/rohittp/rentile/RentileConfiguration;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/RentileConfiguration;Lcom/rohittp/rentile/ResourceTransport;Lcom/rohittp/rentile/RawResourceStore;Lcom/rohittp/rentile/MapSessionProvider;Lcom/rohittp/rentile/CredentialProvider;Lcom/rohittp/rentile/RentileClock;Lcom/rohittp/rentile/MetricsSink;Lcom/rohittp/rentile/DiagnosticSink;Lcom/rohittp/rentile/ExecutionPolicy;Lcom/rohittp/rentile/ResourceLimits;Lcom/rohittp/rentile/LabelGlyphAtlasPolicy;ILjava/lang/Object;)Lcom/rohittp/rentile/RentileConfiguration;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getClock ()Lcom/rohittp/rentile/RentileClock;
 	public final fun getCredentialProvider ()Lcom/rohittp/rentile/CredentialProvider;
 	public final fun getDiagnosticSink ()Lcom/rohittp/rentile/DiagnosticSink;
 	public final fun getExecutionPolicy ()Lcom/rohittp/rentile/ExecutionPolicy;
+	public final fun getLabelGlyphAtlas ()Lcom/rohittp/rentile/LabelGlyphAtlasPolicy;
 	public final fun getMetricsSink ()Lcom/rohittp/rentile/MetricsSink;
 	public final fun getRawResourceStore ()Lcom/rohittp/rentile/RawResourceStore;
 	public final fun getResourceLimits ()Lcom/rohittp/rentile/ResourceLimits;

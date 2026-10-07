@@ -839,6 +839,8 @@ public data class RentileConfiguration(
     public val diagnosticSink: DiagnosticSink = DiagnosticSink.None,
     public val executionPolicy: ExecutionPolicy = ExecutionPolicy(),
     public val resourceLimits: ResourceLimits = ResourceLimits(),
+    /** Appended, for the reason recorded on [ResourceLimits.maxGlyphRangeBytes]. */
+    public val labelGlyphAtlas: LabelGlyphAtlasPolicy = LabelGlyphAtlasPolicy(),
 )
 
 /** Immutable style program owned by the rasterizer instance that prepared it. */
@@ -1228,4 +1230,51 @@ public data class SpriteAtlas(
     override fun toString(): String =
         "SpriteAtlas(byteCount=${pngBytes.size}, width=$width, height=$height, pixelRatio=$pixelRatio, " +
             "contentKey=$contentKey, entryCount=${entries.size})"
+}
+
+/** Which glyphs a [LabelCandidateBatch]'s [LabelGlyphAtlas] holds. See [LabelGlyphAtlasPolicy]. */
+public enum class LabelGlyphPacking {
+    /**
+     * Every drawable glyph of every Glyph Range the batch acquired, whether or not a candidate
+     * draws it - what every release before this policy packed, and still the default. A Glyph
+     * Range is 256 codepoints wide while a label uses a handful of them, so for dense CJK text
+     * this is the large case: Outdoor at Tokyo z14 packed an 8192-pixel-wide atlas of over a
+     * hundred megabytes decoded.
+     */
+    ACQUIRED_RANGES,
+
+    /**
+     * Only the glyphs some candidate's [LabelGlyphQuad]s reference, packed in the same canonical
+     * order. Layout is unchanged - the same candidates, quads at the same positions and scales,
+     * each naming the same glyph - but [LabelGlyphQuad.entryIndex] indexes this shorter
+     * [LabelGlyphAtlas.entries], so the batch's request and content keys differ from
+     * [ACQUIRED_RANGES]'s.
+     */
+    REFERENCED_GLYPHS,
+}
+
+/**
+ * How a host wants its label glyph atlas built: which glyphs it holds, and how large the texture
+ * may grow. The default reproduces every earlier release exactly - the same entries, the same
+ * pixels and the same keys.
+ *
+ * [maxDimensionPx] caps the glyph atlas's width and height and nothing else. It lays the atlas out
+ * exactly as lowering [ResourceLimits.maxRasterDimensionPx] to the same value would, so the same
+ * glyphs produce the same texture and the same [LabelGlyphAtlas.contentKey] either way, but it
+ * leaves that limit, and with it every raster tile and sprite sheet, alone. Set it to the GPU's
+ * maximum texture size: a GL host that sizes for 4096 cannot sample an 8192-wide atlas at all. An
+ * atlas that cannot fit raises [SafetyLimitException] with `limitName`
+ * `labelGlyphAtlas.maxDimensionPx`; pair the cap with [LabelGlyphPacking.REFERENCED_GLYPHS] so a
+ * dense viewport fits. Null leaves the atlas bounded by `maxRasterDimensionPx` alone, as before.
+ *
+ * A cap moves cells, never indices, so it changes no candidate and neither label key; the atlas
+ * key covers the atlas's dimensions and moves with the texture.
+ */
+public data class LabelGlyphAtlasPolicy(
+    public val packing: LabelGlyphPacking = LabelGlyphPacking.ACQUIRED_RANGES,
+    public val maxDimensionPx: Int? = null,
+) {
+    init {
+        require(maxDimensionPx == null || maxDimensionPx > 0) { "maxDimensionPx must be positive" }
+    }
 }

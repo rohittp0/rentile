@@ -5,6 +5,8 @@ import com.rohittp.rentile.DiagnosticSeverity
 import com.rohittp.rentile.LabelCandidate
 import com.rohittp.rentile.LabelCandidateBatch
 import com.rohittp.rentile.LabelGlyphAtlas
+import com.rohittp.rentile.LabelGlyphAtlasPolicy
+import com.rohittp.rentile.LabelGlyphPacking
 import com.rohittp.rentile.LabelIconRef
 import com.rohittp.rentile.LabelIconAnchor
 import com.rohittp.rentile.LabelLinePoint
@@ -168,6 +170,12 @@ internal val LABEL_TILE_ORDER: Comparator<TileId> = compareBy(TileId::z, TileId:
  */
 private const val CANCELLATION_CHECK_MASK = 0x3FF
 
+/**
+ * What referenced-only glyph packing adds to both label keys, so a cache filled under one packing
+ * never serves the other: the candidates' entry indices differ between them.
+ */
+internal const val REFERENCED_GLYPH_PACKING_KEY_PART = "glyph-packing:referenced"
+
 internal data class GeometryAnchor(
     val point: VectorCoordinate,
     val line: List<VectorCoordinate> = emptyList(),
@@ -248,8 +256,15 @@ internal class LabelAssembly internal constructor(
     suspend fun assemble(
         ranges: List<AcquiredGlyphRange>,
         record: (RenderDiagnostic) -> Unit,
+        glyphAtlas: LabelGlyphAtlasPolicy = LabelGlyphAtlasPolicy(),
     ): LabelCandidateBatch {
-        val atlas = GlyphAtlasPacker.pack(ranges, limits)
+        val drawable = GlyphAtlasPacker.canonicalGlyphs(ranges)
+        val referencedOnly = glyphAtlas.packing == LabelGlyphPacking.REFERENCED_GLYPHS
+        // The default packs every acquired glyph before layout, exactly as it always has.
+        // Referenced-only packing lays out against metrics alone and packs afterwards, so the
+        // full atlas's pixel buffer - the hundred-megabyte case for dense CJK - never exists.
+        val packedAtlas = if (referencedOnly) null else GlyphAtlasPacker.packGlyphs(drawable, limits, glyphAtlas.maxDimensionPx)
+        val atlas: GlyphMetricsLookup = packedAtlas ?: GlyphAtlasPacker.metricsIndex(drawable)
         // Once per batch, never per label: the map depends only on the acquired ranges, and
         // rebuilding it inside layOut cost up to 256 x 256 map operations for every label.
         val whitespace = LabelLayout.whitespaceAdvances(ranges)
@@ -319,21 +334,26 @@ internal class LabelAssembly internal constructor(
             )
         }
 
+        val (published, publishedCandidates) = if (packedAtlas != null) {
+            packedAtlas to candidates
+        } else {
+            packReferenced(drawable, candidates, glyphAtlas.maxDimensionPx)
+        }
         return LabelCandidateBatch(
-            candidates = candidates,
+            candidates = publishedCandidates,
             layerStyles = layerStyles,
             atlas = LabelGlyphAtlas(
                 // Defensive copy, the convention ValidatedMvtTile already follows for its
                 // bytes: this type's equals and hashCode are computed over the array's
                 // contents, so handing out a reference to the packer's own buffer would let
                 // a mutation change an already-published atlas's hash.
-                pngBytes = atlas.pngBytes.copyOf(),
-                width = atlas.width,
-                height = atlas.height,
-                contentKey = atlas.contentKey,
-                entries = atlas.entries,
+                pngBytes = published.pngBytes.copyOf(),
+                width = published.width,
+                height = published.height,
+                contentKey = published.contentKey,
+                entries = published.entries,
             ),
-            contentKey = contentKey(ranges),
+            contentKey = contentKey(ranges, referencedOnly),
             // The prepared style's own diagnostics ride along exactly as they do on a
             // PreparedBatch: UNSUPPORTED_TEXT_CONSTRUCT and any retained legacy/future
             // LINE_PLACEMENT_LABEL_EXCLUDED diagnostic explain why a layer visible through
@@ -341,6 +361,36 @@ internal class LabelAssembly internal constructor(
             // only this batch could not distinguish an excluded layer from an empty one.
             diagnostics = style.diagnostics + labelDiagnostics(layoutLosses).onEach(record),
         )
+    }
+
+    /**
+     * Packs only the glyphs [candidates] reference and re-points every quad at its new entry.
+     *
+     * [candidates] were laid out against [GlyphAtlasPacker.metricsIndex] of [drawable], so a quad's
+     * entry index is a position in [drawable]. The referenced positions are kept in ascending
+     * order, which keeps the subset canonical: the packer lays it out exactly as it would lay out
+     * those glyphs alone, and the remap below is monotonic.
+     */
+    private suspend fun packReferenced(
+        drawable: List<Pair<String, DecodedGlyph>>,
+        candidates: List<LabelCandidate>,
+        maxDimensionPx: Int?,
+    ): Pair<PackedGlyphAtlas, List<LabelCandidate>> {
+        val referenced = BooleanArray(drawable.size)
+        for (candidate in candidates) {
+            for (quad in candidate.glyphs) referenced[quad.entryIndex] = true
+        }
+        val remapped = IntArray(drawable.size) { -1 }
+        var next = 0
+        for (index in drawable.indices) {
+            if (referenced[index]) remapped[index] = next++
+        }
+        val atlas = GlyphAtlasPacker.packGlyphs(drawable.filterIndexed { index, _ -> referenced[index] }, limits, maxDimensionPx)
+        val repointed = candidates.mapIndexed { index, candidate ->
+            if (index and CANCELLATION_CHECK_MASK == 0) currentCoroutineContext().ensureActive()
+            candidate.copy(glyphs = candidate.glyphs.map { quad -> quad.copy(entryIndex = remapped[quad.entryIndex]) })
+        }
+        return atlas to repointed
     }
 
     /** One entry per layer per code, in layer order, so the list is identical between runs. */
@@ -364,7 +414,7 @@ internal class LabelAssembly internal constructor(
      * text fields, different paint - and a content key that cannot tell those apart would hand a
      * consumer another style's cached candidates.
      */
-    private fun contentKey(ranges: List<AcquiredGlyphRange>): String = buildString {
+    private fun contentKey(ranges: List<AcquiredGlyphRange>, referencedOnly: Boolean): String = buildString {
         append("rentile-label-candidates-2\n")
         append(style.digest)
         append('\n')
@@ -376,6 +426,9 @@ internal class LabelAssembly internal constructor(
         // Two different tile sets can share every MVT and glyph digest - overzoomed siblings of
         // one source tile do exactly that - and would otherwise alias onto one content key.
         append(requestedTiles.joinToString(",") { "${it.z}/${it.x}/${it.y}" })
+        // Referenced-only packing changes every entryIndex for identical inputs, so it is part of
+        // the identity; the default appends nothing and its key is what it always was.
+        if (referencedOnly) append("\n$REFERENCED_GLYPH_PACKING_KEY_PART")
     }.sha256Hex()
 }
 

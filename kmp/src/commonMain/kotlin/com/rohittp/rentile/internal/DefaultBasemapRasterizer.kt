@@ -15,6 +15,7 @@ import com.rohittp.rentile.InvalidTileIdException
 import com.rohittp.rentile.LabelCandidateBatch
 import com.rohittp.rentile.LabelCandidatePlan
 import com.rohittp.rentile.LabelCandidatePlanClosedException
+import com.rohittp.rentile.LabelGlyphPacking
 import com.rohittp.rentile.LabelLayerDescriptor
 import com.rohittp.rentile.MetricName
 import com.rohittp.rentile.PipelineStage
@@ -63,6 +64,7 @@ import com.rohittp.rentile.internal.glyph.GlyphResourceAcquirer
 import com.rohittp.rentile.internal.glyph.LABEL_TILE_ORDER
 import com.rohittp.rentile.internal.glyph.LabelAssembly
 import com.rohittp.rentile.internal.glyph.LabelCandidateAssembler
+import com.rohittp.rentile.internal.glyph.REFERENCED_GLYPH_PACKING_KEY_PART
 import com.rohittp.rentile.internal.mvt.DecodedVectorFeature
 import com.rohittp.rentile.internal.mvt.DecodedVectorGeometry
 import com.rohittp.rentile.internal.mvt.VectorResource
@@ -615,11 +617,20 @@ private class DefaultBasemapRasterizer(
         // the glyphs template's included, since that is where its credential lives. It also folds
         // in compiled.policy.id. So nothing else from the style is needed here, and nothing that
         // is here can leak a credential.
-        return listOf(
-            LABEL_SEMANTICS_VERSION,
-            compiled.digest,
-            stableTileList,
-        ).joinToString("|").sha256Hex()
+        // Referenced-only glyph packing re-indexes every candidate's quads, so it joins the key;
+        // the default adds nothing, and its key is unchanged.
+        val packing = listOfNotNull(
+            REFERENCED_GLYPH_PACKING_KEY_PART.takeIf {
+                configuration.labelGlyphAtlas.packing == LabelGlyphPacking.REFERENCED_GLYPHS
+            },
+        )
+        return (
+            listOf(
+                LABEL_SEMANTICS_VERSION,
+                compiled.digest,
+                stableTileList,
+            ) + packing
+            ).joinToString("|").sha256Hex()
     }
 
     override suspend fun planLabelCandidates(
@@ -707,7 +718,7 @@ private class DefaultBasemapRasterizer(
         throwAcquisitionFailures(rangeOutcomes)
         val ranges = rangeOutcomes.map { (it as AcquisitionOutcome.Success<AcquiredGlyphRange>).value }
 
-        assembly.assemble(ranges, ::recordDiagnosticSafely)
+        assembly.assemble(ranges, ::recordDiagnosticSafely, configuration.labelGlyphAtlas)
     }
 
     override suspend fun acquireLabelCandidates(
