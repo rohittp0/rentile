@@ -42,6 +42,7 @@ import com.rohittp.rentile.ResourceAcquisitionException
 import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.ResourceDecodeException
 import com.rohittp.rentile.SafetyLimitException
+import com.rohittp.rentile.SpriteAtlas
 import com.rohittp.rentile.STYLE_REFERENCE_TILE_SIZE_PX
 import com.rohittp.rentile.StyleInput
 import com.rohittp.rentile.StylePreparationException
@@ -84,6 +85,8 @@ import com.rohittp.rentile.internal.raster.neighbor
 import com.rohittp.rentile.internal.sprite.SpriteResourceAcquirer
 import com.rohittp.rentile.internal.sprite.CompiledSpriteAtlas
 import com.rohittp.rentile.internal.sprite.SpriteAtlasEntry
+import com.rohittp.rentile.internal.sprite.SpriteReference
+import com.rohittp.rentile.internal.sprite.toPublicSpriteAtlas
 import com.rohittp.rentile.internal.style.BackgroundDrawLayer
 import com.rohittp.rentile.internal.style.CompiledDrawLayer
 import com.rohittp.rentile.internal.style.CompiledColor
@@ -889,6 +892,31 @@ private class DefaultBasemapRasterizer(
 
     override suspend fun awaitClosed() {
         closed.await()
+    }
+
+    override suspend fun acquireSpriteAtlas(
+        style: PreparedStyle,
+        pixelRatio: Int,
+        resourceAccess: ResourceAccessMode,
+    ): SpriteAtlas? {
+        // Before the operation, like validateTile: a bad argument is the caller's error and must
+        // not depend on whether the rasterizer happens to be open.
+        require(pixelRatio == 1 || pixelRatio == 2) { "Sprite pixel ratio must be 1 or 2" }
+        return operation {
+            val compiledStyle = requireOwnedStyle(style)
+            when (val reference = compiledStyle.spriteReference) {
+                SpriteReference.Absent -> null
+                is SpriteReference.Unacquirable -> throw StylePreparationException(reference.reason)
+                is SpriteReference.Resolved -> {
+                    // The prepared sheet is the one every LabelIconRef was sized from, so ratio one
+                    // hands that back rather than whatever the store holds now (ADR 0036).
+                    val prepared = compiledStyle.spriteAtlas.takeIf { pixelRatio == 1 }
+                    val atlas = prepared
+                        ?: spriteAcquirer.acquire(reference.baseUrl.resolve(), pixelRatio, resourceAccess)
+                    atlas.toPublicSpriteAtlas(pixelRatio)
+                }
+            }
+        }
     }
 
     private suspend fun acquireStyle(input: StyleInput): AcquiredStyle {

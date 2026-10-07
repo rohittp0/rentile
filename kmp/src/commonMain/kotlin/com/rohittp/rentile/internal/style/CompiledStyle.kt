@@ -10,6 +10,7 @@ import com.rohittp.rentile.internal.ProtectedResourceUrl
 import com.rohittp.rentile.internal.SecretContext
 import com.rohittp.rentile.internal.sprite.CompiledSpriteAtlas
 import com.rohittp.rentile.internal.sprite.SpriteAtlasEntry
+import com.rohittp.rentile.internal.sprite.SpriteReference
 import kotlin.math.PI
 import kotlin.math.atan
 import kotlin.math.sinh
@@ -524,4 +525,6 @@ internal class CompiledPreparedStyle(
      */
     val glyphsTemplate: ProtectedResourceUrl?,
     val secretContext: SecretContext,
+    /** The root `sprite` key as `acquireSpriteAtlas` needs it; see [SpriteReference]. */
+    val spriteReference: SpriteReference = SpriteReference.Absent,
 ) : PreparedStyle

@@ -17,6 +17,8 @@ import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import com.rohittp.rentile.internal.metadata.ResolvedTileJson
 import com.rohittp.rentile.internal.metadata.resolveHttpReference
 import com.rohittp.rentile.internal.sprite.CompiledSpriteAtlas
+import com.rohittp.rentile.internal.sprite.resolveAbsoluteSpriteUrl
+import com.rohittp.rentile.internal.sprite.spriteReferenceOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -529,6 +531,7 @@ internal class StyleCompiler(
             spriteAtlas = spriteAtlas,
             glyphsTemplate = glyphsTemplate,
             secretContext = secretContext,
+            spriteReference = spriteReferenceOf(root, baseUri, secretContext),
         )
     }
 
@@ -2064,12 +2067,6 @@ internal class StyleCompiler(
         val layout = layer["layout"] as? JsonObject ?: JsonObject(emptyMap())
         if (layout["visibility"]?.asPrimitive()?.content == "none") return false
         return meaningfulLayoutValue(layout, "text-field") && meaningfulLayoutValue(layout, "icon-image")
-    }
-
-    private fun resolveAbsoluteSpriteUrl(spriteReference: String, baseUri: String?): String? = when {
-        spriteReference.startsWith("https://") || spriteReference.startsWith("http://") -> spriteReference
-        baseUri != null -> resolveHttpReference(baseUri, spriteReference)
-        else -> null
     }
 
     private suspend fun resolveRequiredSpriteAtlas(

@@ -339,8 +339,11 @@ text-bearing vector symbol layer. A host that wants them calls `acquireLabelCand
 projection, cross-tile collision, occlusion, and drawing on top. Point, line, and line-center
 candidates carry the geometry needed for that placement. When a label layer also declares an icon,
 the candidate carries that paired icon's sprite geometry, paint, collision, alignment, and text-fit
-inputs so the host places text and icon as one symbol. A host that must know its Glyph Range URLs
-before they are fetched calls `planLabelCandidates` first and reads them from the plan. Do not route
+inputs so the host places text and icon as one symbol. A host that draws those icons itself calls
+`acquireSpriteAtlas(style, pixelRatio = 2)` once per style for the provider's `@2x` sheet and draws
+each icon at `LabelIconRef` size times its own device ratio; candidate geometry never depends on
+which sheet it uses. A host that must know its Glyph Range URLs before they are fetched calls
+`planLabelCandidates` first and reads them from the plan. Do not route
 atmosphere, route overlays, vehicles, globe/plane mapping, or UI camera state through Rentile.
 
 ## 10. Local consumer verification

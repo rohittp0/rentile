@@ -6,6 +6,7 @@ import com.rohittp.rentile.RawResourceKey
 import com.rohittp.rentile.RawResourceMetadata
 import com.rohittp.rentile.RentileConfiguration
 import com.rohittp.rentile.RentileMetric
+import com.rohittp.rentile.ResourceAccessMode
 import com.rohittp.rentile.ResourceAcquisitionException
 import com.rohittp.rentile.ResourceClass
 import com.rohittp.rentile.ResourceDecodeException
@@ -80,6 +81,7 @@ internal class RevalidatingResourceAcquirer(
         accept: String? = null,
         limitName: String? = null,
         isStoredEntryUsable: (ByteArray) -> Boolean = { true },
+        accessMode: ResourceAccessMode = ResourceAccessMode.NORMAL,
     ): ByteArray {
         val request = ResourceRequest(
             key = key,
@@ -92,6 +94,13 @@ internal class RevalidatingResourceAcquirer(
             limitName = limitName,
             isStoredEntryUsable = isStoredEntryUsable,
         )
+        when (accessMode) {
+            ResourceAccessMode.CACHE_ONLY -> return acquireCacheOnly(request)
+            ResourceAccessMode.RELOAD -> return fetchAndStore(request).also {
+                revalidatedMutex.withLock { revalidated.add(key) }
+            }
+            ResourceAccessMode.NORMAL, ResourceAccessMode.CACHE_SUBSTITUTE_THEN_NETWORK -> Unit
+        }
         val cached = readReusableEntry(request)
         if (cached != null) {
             configuration.metricsSink.recordSafely(
@@ -110,6 +119,27 @@ internal class RevalidatingResourceAcquirer(
         // cost of a round trip, that they had not changed.
         revalidatedMutex.withLock { revalidated.add(key) }
         return fetched
+    }
+
+    /**
+     * The stored entry and nothing else. Preparation never asks for this - it takes no access
+     * mode - but `acquireSpriteAtlas` does, and a documented cache-only that still reached the
+     * network would break the offline export it exists for. No background refresh is scheduled
+     * either: that would be a transport exchange too, merely a later one.
+     */
+    private suspend fun acquireCacheOnly(request: ResourceRequest): ByteArray {
+        val resourceClass = request.key.resourceClass
+        val cached = readReusableEntry(request)
+        if (cached != null) {
+            record(MetricName.RAW_CACHE_HIT, resourceClass)
+            return cached.bytes
+        }
+        record(MetricName.RAW_CACHE_MISS, resourceClass)
+        throw ResourceAcquisitionException(
+            message = "${request.transportLabel} resource is unavailable in cache-only mode",
+            resourceClass = resourceClass,
+            sanitizedResourceId = request.sanitizedId,
+        )
     }
 
     /**
