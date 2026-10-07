@@ -405,6 +405,8 @@ internal data class IconDrawLayer(
 internal data class CompiledLabelIconProgram(
     val image: CompiledStyleProperty,
     val size: CompiledStyleProperty,
+    /** How [size] behaves between integer zooms, for [com.rohittp.rentile.LabelIconRef.size]. */
+    val sizeCurve: SymbolSizeCurve,
     val opacity: CompiledStyleProperty,
     val color: CompiledStyleProperty,
     val haloColor: CompiledStyleProperty,
@@ -444,6 +446,8 @@ internal data class CompiledLabelTextProgram(
     val text: CompiledStyleProperty,
     val font: CompiledStyleProperty,
     val size: CompiledStyleProperty,
+    /** How [size] behaves between integer zooms, for [com.rohittp.rentile.LabelCandidate.textSize]. */
+    val sizeCurve: SymbolSizeCurve,
     val placement: CompiledStyleProperty,
     val spacing: CompiledStyleProperty,
     val keepUpright: CompiledStyleProperty,

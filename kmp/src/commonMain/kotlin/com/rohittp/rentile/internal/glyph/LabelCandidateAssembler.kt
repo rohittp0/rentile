@@ -10,6 +10,7 @@ import com.rohittp.rentile.LabelIconAnchor
 import com.rohittp.rentile.LabelLinePoint
 import com.rohittp.rentile.LabelPlacement
 import com.rohittp.rentile.LabelLayerStyle
+import com.rohittp.rentile.LabelSymbolSize
 import com.rohittp.rentile.IconTextFit
 import com.rohittp.rentile.PipelineStage
 import com.rohittp.rentile.RasterizationException
@@ -191,6 +192,8 @@ internal data class PendingLabel(
     val sourceTile: TileId,
     val featureIndex: Int,
     val anchorIndex: Int,
+    /** The MVT feature id as its 64 bits, or null when the feature declared none. */
+    val featureId: Long?,
     val longitude: Double,
     val latitude: Double,
     val placement: LabelPlacement,
@@ -207,6 +210,7 @@ internal data class PendingLabel(
     val textOptional: Boolean,
     val text: String,
     val textStyle: LabelTextStyle,
+    val textSize: LabelSymbolSize,
     val icon: LabelIconRef?,
     val overlap: SymbolOverlap,
     val ignorePlacement: Boolean,
@@ -316,6 +320,9 @@ internal class LabelAssembly internal constructor(
                 translateX = label.translate.first,
                 translateY = label.translate.second,
                 translateAlignment = label.translateAlignment,
+                featureId = label.featureId,
+                text = label.text,
+                textSize = label.textSize,
             )
         }
 
@@ -365,7 +372,7 @@ internal class LabelAssembly internal constructor(
      * consumer another style's cached candidates.
      */
     private fun contentKey(ranges: List<AcquiredGlyphRange>): String = buildString {
-        append("rentile-label-candidates-2\n")
+        append("rentile-label-candidates-3\n")
         append(style.digest)
         append('\n')
         append(contentDigests.joinToString(","))
@@ -535,6 +542,13 @@ internal object LabelCandidateAssembler {
                         } else ResolvedLabel(
                             fontStack = fontStack,
                             textStyle = textStyleFor(program, context, fontStack, size, tile),
+                            textSize = program.sizeCurve.resolve(
+                                property = program.size,
+                                context = context,
+                                tileZoom = tile.z,
+                                tileZoomSize = size,
+                                specificationDefault = TEXT_SIZE_DEFAULT,
+                            ),
                             scalars = evaluateScalars(program, context, tile),
                             layerStyle = layerStyles.getOrPut(program.layerOrder to tile.z) {
                                 resolveLayerStyle(program.layerOrder, layer.descriptor.id, tile.z)
@@ -593,6 +607,7 @@ internal object LabelCandidateAssembler {
                             sourceTile = sourceTile,
                             featureIndex = featureIndex,
                             anchorIndex = anchorIndex,
+                            featureId = feature.id?.toLong(),
                             longitude = (sourceTile.x + anchor.point.x.toDouble() / extent) /
                                 dimension * 360.0 - 180.0,
                             latitude = mercatorLatitude(sourceTile.y + anchor.point.y.toDouble() / extent, dimension),
@@ -615,6 +630,7 @@ internal object LabelCandidateAssembler {
                             textOptional = scalars.textOptional,
                             text = text,
                             textStyle = textStyle,
+                            textSize = resolved.textSize,
                             icon = resolvedIcon.ref,
                             overlap = scalars.overlap,
                             ignorePlacement = scalars.ignorePlacement,
@@ -683,7 +699,7 @@ internal object LabelCandidateAssembler {
                 contentKey = atlas.contentKey,
                 entries = atlas.entries,
             ),
-            contentKey = "rentile-label-candidates-2\n${style.digest}\n\n".sha256Hex(),
+            contentKey = "rentile-label-candidates-3\n${style.digest}\n\n".sha256Hex(),
             diagnostics = style.diagnostics + glyphRangeUnavailable(tiles),
         )
     }
@@ -700,6 +716,7 @@ internal object LabelCandidateAssembler {
     private class ResolvedLabel(
         val fontStack: String,
         val textStyle: LabelTextStyle,
+        val textSize: LabelSymbolSize,
         val scalars: LabelScalars,
         val layerStyle: LabelLayerStyle,
     )
@@ -990,6 +1007,13 @@ internal object LabelCandidateAssembler {
                 avoidEdges = iconLayer.avoidEdges.evaluate(iconContext).asBoolean("symbol-avoid-edges", tile),
                 textFit = textFitOf(iconLayer.textFit.evaluate(iconContext), tile),
                 textFitPadding = iconLayer.textFitPadding.evaluate(iconContext).asNumberList("icon-text-fit-padding", tile, 4),
+                size = iconLayer.sizeCurve.resolve(
+                    property = iconLayer.size,
+                    context = iconContext,
+                    tileZoom = tile.z,
+                    tileZoomSize = size,
+                    specificationDefault = ICON_SIZE_DEFAULT,
+                ),
             ), requested = true)
         } catch (_: RasterizationException) {
             IconResolution(requested = true, skipped = true)
@@ -997,6 +1021,10 @@ internal object LabelCandidateAssembler {
     }
 
     private val TILE_ORDER: Comparator<TileId> = LABEL_TILE_ORDER
+
+    /** The style specification defaults Mapbox falls back to when a size does not evaluate. */
+    private const val TEXT_SIZE_DEFAULT = 16.0
+    private const val ICON_SIZE_DEFAULT = 1.0
 
     private val PENDING_ORDER: Comparator<PendingLabel> = compareBy(
         { it.program.layerOrder },

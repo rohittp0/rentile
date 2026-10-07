@@ -159,11 +159,27 @@ class ApiContractTest {
             haloWidth = 0.0, haloBlur = 0.0,
             translateX = 0.0, translateY = 0.0,
             translateAlignment = SymbolAlignment.MAP,
+            // Identity, not geometry: what the host de-duplicates a feature anchored in several
+            // tiles by. Neither is a screen coordinate.
+            featureId = 42L,
+            text = "Tokyo",
+            // A size function, not a size in screen pixels: the host evaluates it at its own
+            // camera zoom and scales the label-local geometry above by the result.
+            textSize = LabelSymbolSize(
+                kind = SymbolSizeKind.CAMERA,
+                tileZoomSize = 14.0,
+                lowerZoom = 14.0, upperZoom = 15.0,
+                lowerSize = 14.0, upperSize = 16.0,
+                interpolationBase = 1.0,
+            ),
         )
 
         assertEquals(0, candidate.layerStyleIndex)
         assertEquals(139.6503, candidate.longitude)
         assertEquals(14, candidate.sourceTile.z)
+        assertEquals(42L, candidate.featureId)
+        assertEquals("Tokyo", candidate.text)
+        assertEquals(15.0, candidate.textSize?.sizeAt(14.5))
     }
 
     @Test

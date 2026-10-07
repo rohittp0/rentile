@@ -1,6 +1,7 @@
 package com.rohittp.rentile
 
 import com.rohittp.rentile.internal.createBasemapRasterizer
+import kotlin.math.pow
 
 /** North-up XYZ output-tile identity. */
 public data class TileId(
@@ -420,6 +421,114 @@ public data class LabelLinePoint(
 )
 
 /**
+ * How a `text-size` or `icon-size` value depends on zoom and on the feature, in Mapbox GL's own
+ * four-way classification (`createPropertyExpression` in the style specification, which names
+ * them constant, source, camera and composite).
+ */
+public enum class SymbolSizeKind {
+    /** Depends on neither zoom nor the feature. */
+    CONSTANT,
+
+    /** Depends on the feature but not on zoom. */
+    SOURCE,
+
+    /** Depends on zoom, through one top-level zoom curve, but not on the feature. */
+    CAMERA,
+
+    /** Depends on both, through one top-level zoom curve whose stop values read the feature. */
+    COMPOSITE,
+}
+
+/**
+ * Everything a host needs to draw a symbol at the size Mapbox GL draws it at the camera's
+ * fractional zoom, rather than at the integer zoom of the tile the candidate came from.
+ *
+ * Rentile evaluates a size, and lays out every geometry that depends on it, at the requested
+ * tile's own integer zoom: that value is [tileZoomSize]. Mapbox GL does not draw at that size.
+ * Between integer zooms it computes the size in its renderer, and [sizeAt] reproduces that
+ * computation exactly as Mapbox GL JS `src/symbol/symbol_size.ts` (`getSizeData`,
+ * `evaluateSizeForZoom`, `evaluateSizeForFeature`) and the gl-native `SymbolSizeBinder`s in
+ * `src/mbgl/programs/symbol_program.hpp` both define it:
+ *
+ * - [SymbolSizeKind.CONSTANT] and [SymbolSizeKind.SOURCE]: the size is fixed for the feature,
+ *   so [sizeAt] is [tileZoomSize] at every zoom.
+ * - [SymbolSizeKind.CAMERA] and [SymbolSizeKind.COMPOSITE]: the size is **not** evaluated at the
+ *   camera zoom. Mapbox takes the pair of the curve's zoom stops covering `[z, z + 1]` - the
+ *   last stop at or below `z` ([lowerZoom]) and the first at or above `z + 1` ([upperZoom]) -
+ *   evaluates the size at both ([lowerSize], [upperSize]; per feature for composite), and
+ *   interpolates between them with the curve's own interpolation, clamping the factor to
+ *   `[0, 1]`. Mapbox's comment on this reads: "Even though we could get the exact value of the
+ *   camera function at z = tr.zoom, we intentionally do not". A stop lying strictly inside
+ *   `(z, z + 1)` is therefore skipped, and [sizeAt] at `z` itself can differ from
+ *   [tileZoomSize]; the host must draw [sizeAt].
+ *
+ * MapLibre GL JS diverged from this in August 2026 (maplibre-gl-js #8175) and now samples a
+ * camera curve at every stop and caps it; this follows Mapbox, whose renderer the host replaces.
+ *
+ * [interpolationBase] is null for a curve that never interpolates - a `step`, or a legacy
+ * `interval` function - so [sizeAt] returns [lowerSize]. A `step`'s first stop is its default
+ * output at negative infinity, exactly as Mapbox labels it, so [lowerZoom] can be
+ * [Double.NEGATIVE_INFINITY]; it is never used for arithmetic.
+ *
+ * Mapbox packs a source or composite size into a vertex attribute at 1/128 px (`SIZE_PACK_FACTOR`;
+ * GL JS rounds, gl-native truncates, and both cap it at 255 px). These values are not quantized,
+ * so they can differ from Mapbox's by less than 1/128 px.
+ *
+ * A size the style resolves to something other than a finite number at a covering stop is
+ * replaced there by the property's specification default (16 for `text-size`, 1 for `icon-size`),
+ * which is what Mapbox's own evaluation falls back to. A size that uses `zoom` anywhere other than
+ * as the input of one top-level `step` or `interpolate` (optionally inside `coalesce`) is a style
+ * Mapbox refuses to load, so there is no Mapbox answer to reproduce; it is reported as
+ * [SymbolSizeKind.CONSTANT] or [SymbolSizeKind.SOURCE] at [tileZoomSize], which is what it has
+ * always been drawn at.
+ *
+ * **Applying it.** Let `k = sizeAt(cameraZoom) / tileZoomSize`.
+ *
+ * - For [LabelCandidate.textSize], multiply every [LabelGlyphQuad]'s `x`, `y` and `scale` by `k`.
+ *   Label layout is linear in `text-size` - every offset, spacing, line height and wrap width is in
+ *   ems - so this is exactly the layout Rentile produces at that size. [LabelCandidate.boundingBox]
+ *   scales the same way except for its `text-padding` margin ([LabelCandidate.padding]), which is
+ *   in pixels: `left' = (left + padding) * k - padding`, and likewise for the other three edges.
+ *   [LabelCandidate.translateX] and [LabelCandidate.translateY] do not scale.
+ * - For [LabelIconRef.size], multiply [LabelIconRef.width], [LabelIconRef.height],
+ *   [LabelIconRef.offsetX] and [LabelIconRef.offsetY] by `k`; [LabelIconRef.translateX] and
+ *   [LabelIconRef.translateY] do not scale. A text-fitted icon is fitted to the label box as
+ *   already scaled.
+ *
+ * Mapbox sizes collision boxes, and fits `icon-text-fit` icons, against the text size evaluated at
+ * `z + 1` rather than at the camera zoom; a host that reproduces Mapbox's collision exactly reads
+ * that value as `sizeAt(z + 1.0)`, which is exact unless a stop lies strictly inside `(z, z + 1)`.
+ * Like every other pixel quantity on a candidate, all of these are Style Pixels; see
+ * [LabelCandidate].
+ */
+public data class LabelSymbolSize(
+    public val kind: SymbolSizeKind,
+    /** The size at the requested tile's own integer zoom: what every laid-out geometry used. */
+    public val tileZoomSize: Double,
+    public val lowerZoom: Double,
+    public val upperZoom: Double,
+    public val lowerSize: Double,
+    public val upperSize: Double,
+    /** 1 for linear interpolation, the base for exponential, null for none (`step`/`interval`). */
+    public val interpolationBase: Double?,
+) {
+    /** The size Mapbox GL draws at the fractional camera [zoom]; see the class documentation. */
+    public fun sizeAt(zoom: Double): Double {
+        val base = interpolationBase ?: return lowerSize
+        val difference = upperZoom - lowerZoom
+        val progress = zoom - lowerZoom
+        val factor = when {
+            difference == 0.0 -> 0.0
+            base == 1.0 -> progress / difference
+            else -> (base.pow(progress) - 1.0) / (base.pow(difference) - 1.0)
+        }
+        val t = factor.coerceIn(0.0, 1.0)
+        // Mapbox's `interpolate.number`: a * (1 - t) + b * t, in that form, so both ends are exact.
+        return lowerSize * (1.0 - t) + upperSize * t
+    }
+}
+
+/**
  * The sprite the style pairs with this label. [imageName] is an opaque lookup key into sprite
  * resources owned and resolved by the consumer; Rentile does not expose a public sprite atlas.
  *
@@ -459,6 +568,14 @@ public data class LabelIconRef(
     public val textFit: IconTextFit,
     /** `icon-text-fit-padding` in top, right, bottom, left order. */
     public val textFitPadding: List<Double>,
+    /**
+     * `icon-size` as a function of the camera's fractional zoom. [width], [height], [offsetX] and
+     * [offsetY] are at [LabelSymbolSize.tileZoomSize]; see [LabelSymbolSize] for how a host scales
+     * them to the size Mapbox GL draws.
+     *
+     * Appended, not inserted, for the reason recorded on [ResourceLimits.maxGlyphRangeBytes].
+     */
+    public val size: LabelSymbolSize,
 )
 
 /**
@@ -546,6 +663,45 @@ public data class LabelCandidate(
     /** See [translateX]. */
     public val translateY: Double,
     public val translateAlignment: SymbolAlignment,
+    /**
+     * The id the Label Tile declared for the feature this candidate came from, or null when the
+     * feature declared none.
+     *
+     * Appended, not inserted, for the reason recorded on [ResourceLimits.maxGlyphRangeBytes].
+     *
+     * The Mapbox Vector Tile specification makes the id an unsigned 64-bit integer; it is carried
+     * here as the same 64 bits in a [Long], so `featureId?.toULong()` recovers an id above
+     * [Long.MAX_VALUE] exactly. An absent id is null rather than the specification's default of
+     * zero, because zero would make every id-less feature look like the same feature.
+     *
+     * Together with [text] and the layer ([LabelLayerStyle.layerId]) this is what a host uses to
+     * recognise one line or polygon feature anchored separately in several tiles - each tile's
+     * candidate has its own anchor, so position cannot identify it. Ids are only as unique as the
+     * provider makes them: features without one, and providers that reuse ids across source
+     * layers, still need [text] to tell them apart.
+     */
+    public val featureId: Long?,
+    /**
+     * The text this candidate's [glyphs] were laid out from: the evaluated `text-field` after
+     * `{token}` expansion, `text-transform` and trimming. Null exactly when [glyphs] is empty
+     * because the candidate carries an icon and no text - see
+     * [CompatibilityPolicy.RentileV1HostSymbols].
+     *
+     * Appended, not inserted, for the reason recorded on [ResourceLimits.maxGlyphRangeBytes].
+     *
+     * A codepoint the glyph endpoints cannot serve (an astral-plane character) is still present
+     * here though it has no quad, so a host comparing this with what it draws must not expect a
+     * one-to-one correspondence between characters and [glyphs].
+     */
+    public val text: String?,
+    /**
+     * `text-size` as a function of the camera's fractional zoom. Every [LabelGlyphQuad] and the
+     * [boundingBox] are laid out at [LabelSymbolSize.tileZoomSize]; see [LabelSymbolSize] for how a
+     * host scales them to the size Mapbox GL draws. Null exactly when [text] is null.
+     *
+     * Appended, not inserted, for the reason recorded on [ResourceLimits.maxGlyphRangeBytes].
+     */
+    public val textSize: LabelSymbolSize?,
 )
 
 /** The immutable result of one Label acquisition. Not a Prepared Batch; see CONTEXT.md. */

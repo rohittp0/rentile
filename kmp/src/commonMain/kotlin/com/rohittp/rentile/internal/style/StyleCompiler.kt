@@ -1049,6 +1049,7 @@ internal class StyleCompiler(
             size = compilePropertyWithDefault(
                 layout["text-size"], JsonPrimitive(16.0), StyleType.NUMBER, index, layerId, "text-size",
             ),
+            sizeCurve = SymbolSizeCurve.of(layout["text-size"]),
             placement = compilePropertyWithDefault(
                 layout["symbol-placement"], JsonPrimitive("point"), StyleType.STRING, index, layerId, "symbol-placement",
             ),
@@ -1180,6 +1181,7 @@ internal class StyleCompiler(
         return CompiledLabelIconProgram(
             image = compileProperty(image, StyleType.VALUE, index, layerId, "icon-image"),
             size = compilePropertyWithDefault(layout["icon-size"], JsonPrimitive(1.0), StyleType.NUMBER, index, layerId, "icon-size"),
+            sizeCurve = SymbolSizeCurve.of(layout["icon-size"]),
             opacity = compilePropertyWithDefault(paint["icon-opacity"], JsonPrimitive(1.0), StyleType.NUMBER, index, layerId, "icon-opacity"),
             color = compileColorPropertyWithDefault(paint["icon-color"], JsonPrimitive("#000000"), index, layerId, "icon-color"),
             haloColor = compileColorPropertyWithDefault(paint["icon-halo-color"], JsonPrimitive("rgba(0,0,0,0)"), index, layerId, "icon-halo-color"),
