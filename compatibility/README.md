@@ -22,6 +22,34 @@ Required capabilities describe the rolling catalog, not Rentile's entire support
 
 Two cases, `tokyo-cjk-dense` and `cairo-rtl`, exist specifically to keep non-Latin text rendering honest. Tokyo is dense and CJK, so it exercises glyph-range fan-out: CJK labels pull in far more codepoints per tile than Latin scripts do, and that fan-out is exactly what a later bound on glyph-range size has to account for. Cairo is right-to-left, so it exercises the complex-script path, where Rentile must either fall back to a style-authored Latin label or drop the label outright, and must never emit garbled text.
 
+## The host-owned-symbols profile
+
+The manifest is `rentile-v1`'s, and the gate also renders every style under
+`rentile-v1-host-symbols` (ADR 0035), whose coverage it **derives** from this manifest instead of
+reading a second committed file. Two files listing the same rolling catalog would be two places to
+forget to update; one file and a fixed derivation cannot drift. The derived profile keeps every
+style reference, case, zoom, threshold and required capability, and changes three things:
+
+- `independent-point-icon` and `independent-line-icon` take the `label-candidate` disposition,
+  because that profile emits those icons as candidates instead of rasterizing them. Each needs
+  runtime evidence - a sampled candidate from a declaring layer that carries an icon, and for the
+  line capability `LINE`/`LINE_CENTER` placement with line geometry - and a descriptor for every
+  declaring layer.
+- Every visible vector symbol layer with a meaningful `text-field` **or** `icon-image` must have a
+  `LabelLayerDescriptor`, not only the text-bearing ones.
+- `TEXT_COMPONENT_REMOVED_ICON_RETAINED` and `TEXT_COUPLED_ICON_LAYER_EXCLUDED` join the forbidden
+  preparation diagnostics, because that profile repairs no icon into a tile.
+
+A symbol layer the profile cannot represent at all - one on a GeoJSON source, which has no Label
+Tiles - is counted as a `HOST_SYMBOL_LAYER_UNREPRESENTED` fidelity observation rather than failed,
+since the profile accepts that loss by design. The derived profile's report rows carry the style id
+with a `-host-symbols` suffix, its tiles and mosaics are written under that id, and its capability
+ledger is `capabilities-rentile-v1-host-symbols.txt` beside `capabilities.txt`. Both
+`tools/check_*` scripts validate the committed manifest only, which is all that is committed; the
+derivation is pinned by `MapCatalogCorpusSmokeTest.theHostSymbolsProfileIsDerivedFromTheCommittedManifest`.
+Rendering both profiles roughly doubles the gate's CPU time but not its downloads, because both read
+one shared raw store.
+
 ## Label candidates in the gate
 
 After a style's coverage tiles render, the gate additionally calls `acquireLabelCandidates` against three of the manifest's cases per style — `new-york-zoom-ladder`, `tokyo-cjk-dense` and `cairo-rtl` — taking the lowest- and highest-zoom tile of each and New York z14. Low zoom reaches settlement labels and glyph-range fan-out; high zoom reaches road, POI, water and other labels that were previously outside the place-only profile. New York z14 intersects the rolling catalog's z9/z12 functional `text-transform` layers while retaining place features, so the capability is proved by resolved candidate text rather than its static declaration. These geographies exercise a Latin baseline, functional casing, CJK glyph-range fan-out, and complex-script handling without multiplying the already long gate by every tile and zoom. Per style, the report records the candidate count, the glyph atlas dimensions, the distinct glyph-range count, and the redacted diagnostic codes, and checks that the glyph-range count never exceeds `maxGlyphRangesPerBatch`. The gate also plans each of those cases before acquiring it and asserts that the glyph-range URLs the acquisition then requests are a subset of the plan's predicted `glyphUrls` set, rather than asserting the two sets are equal, because the gate's raw resource store is warm and shared across every case and style in the run: a range one style's plan predicts can already have been fetched by an earlier style that resolved the same glyph provider, font stack, and codepoint block. That one-directional check is still the property a consumer preregistering exact URLs depends on, because a warm cache can only shrink what a case actually requests, never grow it beyond what its own plan predicted.
