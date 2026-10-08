@@ -44,6 +44,31 @@ import kotlin.test.assertTrue
  */
 class MapCatalogCorpusSmokeTest {
     @Test
+    fun liveCatalogHostExtrusionsPreserveAuthoredLayers(): Unit = runBlocking {
+        if (environmentPath("RENTILE_COVERAGE_MANIFEST") == null) return@runBlocking
+        val transport = smokeTransport()
+        val styles = loadMapCatalog(transport, PUBLIC_MAP_CATALOG_URL)
+        val rasterizer = Rentile.create(RentileConfiguration(transport, SmokeRawResourceStore()))
+        var stylesWithBuildings = 0
+        try {
+            for (style in styles) {
+                val prepared = rasterizer.prepare(StyleInput.Remote(style.url), CompatibilityPolicy.RentileV1HostSymbolsAndExtrusions)
+                val descriptors = rasterizer.extrusionLayerDescriptors(prepared)
+                if (descriptors.isEmpty()) continue
+                stylesWithBuildings++
+                val batch = rasterizer.acquireExtrusionCandidates(prepared, listOf(TileId(15, 9649, 12315)))
+                assertEquals(descriptors, batch.layerStyles.map { it.descriptor })
+                assertTrue(batch.candidates.isNotEmpty(), "Host extrusion layer emitted no polygons for style ${style.id}")
+                assertTrue(batch.candidates.any { candidate ->
+                    candidate.paintAtZoom(16.0)?.let { it.heightMetres > it.baseMetres } == true
+                }, "Host extrusion style emitted no positive-height building: ${style.id}")
+                assertTrue(batch.estimatedRetainedBytes <= ExtrusionLimits().maxRetainedBytes)
+            }
+            assertTrue(stylesWithBuildings > 0, "Live catalog no longer exercises host extrusions")
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
     fun rendersPublicCatalogCoverageThroughPublicInterface(): Unit = runBlocking {
         val coveragePath = environmentPath("RENTILE_COVERAGE_MANIFEST") ?: return@runBlocking
         val outputDirectory = environmentPath("RENTILE_CORPUS_REPORT_DIR")

@@ -134,6 +134,52 @@ internal class VectorResourceAcquirer(
         )
     }
 
+    /** A selective decode shares raw cache/flights without constructing the raster decoder graph. */
+    suspend fun <T> acquireSelective(
+        sample: VectorTileSample, accessMode: ResourceAccessMode, maxBytes: Long,
+        decode: suspend (ByteArray) -> T,
+    ): Pair<String, T> {
+        val url = sample.tileUrl()
+        val sanitizedId = url.withRedactedAuthenticationQuery().sha256Hex()
+        val key = RawResourceKey(sanitizedId, ResourceClass.VECTOR_TILE)
+        suspend fun decoded(bytes: ByteArray): T = workCoordinator.decode {
+            val byteLimit = minOf(maxBytes, configuration.resourceLimits.maxTileBytes)
+            val limitName = if (maxBytes <= configuration.resourceLimits.maxTileBytes) "maxEncodedTileBytes" else "maxTileBytes"
+            if (bytes.size.toLong() > byteLimit) throw SafetyLimitException(
+                "Extrusion tile exceeds its encoded byte limit", limitName, byteLimit,
+                bytes.size.toLong(), PipelineStage.RESOURCE_DECODING, affectedTiles = listOf(sample.outputTile),
+            )
+            try { decode(bytes) } catch (error: MvtDecodingException) {
+                if (error.limitName != null) throw SafetyLimitException(
+                    "Extrusion tile exceeds a decode limit", error.limitName, error.limit ?: 0,
+                    error.observed ?: 0, PipelineStage.RESOURCE_DECODING, affectedTiles = listOf(sample.outputTile),
+                )
+                throw ResourceDecodeException("Extrusion tile cannot be decoded", ResourceClass.VECTOR_TILE,
+                    sanitizedId, affectedTiles = listOf(sample.outputTile))
+            }
+        }
+        if (accessMode != ResourceAccessMode.RELOAD) {
+            val cached = readStore(key)
+            if (cached != null) {
+                val digest = cached.bytes.sha256Hex()
+                if (digest == cached.contentDigest) {
+                    try { return digest to decoded(cached.bytes) }
+                    catch (_: ResourceDecodeException) { /* malformed cached bytes heal on demand */ }
+                }
+                removeStore(key)
+            }
+            if (accessMode == ResourceAccessMode.CACHE_ONLY) throw ResourceAcquisitionException(
+                "Extrusion resource is unavailable in cache-only mode", ResourceClass.VECTOR_TILE,
+                sanitizedId, affectedTiles = listOf(sample.outputTile),
+            )
+        }
+        val flight = singleFlight.run(key) {
+            fetchDecodeAndStore(sample, url, sanitizedId, key, decodeRequested = false)
+        }
+        try { return flight.contentDigest to decoded(flight.bytes) }
+        catch (error: ResourceDecodeException) { removeStore(key); throw error }
+    }
+
     /**
      * Fetches [sample]'s bytes into the raw cache without decoding them.
      *
@@ -177,6 +223,7 @@ internal class VectorResourceAcquirer(
         url: String,
         sanitizedId: String,
         key: RawResourceKey,
+        decodeRequested: Boolean = true,
     ): VectorFlight {
         val response = executeTileRequestWithRetry {
             workCoordinator.exchange(url) {
@@ -225,7 +272,7 @@ internal class VectorResourceAcquirer(
                 affectedTiles = listOf(sample.outputTile),
             )
         }
-        val decoded = decodeOrThrow(bytes, sanitizedId, sample)
+        val decoded = if (decodeRequested) decodeOrThrow(bytes, sanitizedId, sample) else null
         val digest = bytes.sha256Hex()
         writeStore(
             key,

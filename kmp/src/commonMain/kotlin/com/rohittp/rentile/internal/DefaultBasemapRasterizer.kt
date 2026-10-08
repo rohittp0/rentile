@@ -69,6 +69,15 @@ import com.rohittp.rentile.internal.glyph.REFERENCED_GLYPH_PACKING_KEY_PART
 import com.rohittp.rentile.internal.mvt.DecodedVectorFeature
 import com.rohittp.rentile.internal.mvt.DecodedVectorGeometry
 import com.rohittp.rentile.internal.mvt.VectorResource
+import com.rohittp.rentile.ExtrusionCandidate
+import com.rohittp.rentile.ExtrusionCandidateBatch
+import com.rohittp.rentile.ExtrusionLayerDescriptor
+import com.rohittp.rentile.ExtrusionLimits
+import com.rohittp.rentile.internal.mvt.CompactExtrusionDecoder
+import com.rohittp.rentile.internal.mvt.ExtrusionBudget
+import com.rohittp.rentile.internal.style.FeatureGeometryType
+import com.rohittp.rentile.internal.style.StyleEvaluationContext
+import com.rohittp.rentile.internal.style.StyleValue
 import com.rohittp.rentile.internal.mvt.VectorResourceAcquirer
 import com.rohittp.rentile.internal.mvt.VectorTileSample
 import com.rohittp.rentile.internal.mvt.ancestor as vectorAncestor
@@ -104,10 +113,8 @@ import com.rohittp.rentile.internal.style.HillshadeDrawLayer
 import com.rohittp.rentile.internal.style.LineDrawLayer
 import com.rohittp.rentile.internal.style.RasterDrawLayer
 import com.rohittp.rentile.internal.style.RasterResampling
-import com.rohittp.rentile.internal.style.StyleEvaluationContext
 import com.rohittp.rentile.internal.style.SymbolPlacement
 import com.rohittp.rentile.internal.style.StyleCompiler
-import com.rohittp.rentile.internal.style.StyleValue
 import com.rohittp.rentile.internal.style.parseCssColor
 import com.rohittp.rentile.internal.style.iconAnchorOrNull
 import com.rohittp.rentile.internal.style.spriteAnchoring
@@ -522,6 +529,83 @@ private class DefaultBasemapRasterizer(
                 diagnostics = (recoveredRaster.diagnostics + recoveredVector.diagnostics).distinct(),
             )
         }
+    }
+
+    override fun extrusionLayerDescriptors(style: PreparedStyle): List<ExtrusionLayerDescriptor> =
+        requireOwnedStyle(style).extrusionLayers.map { it.descriptor }
+
+    override fun extrusionCandidateRequestKey(style: PreparedStyle, tiles: List<TileId>): String {
+        val compiled = requireOwnedStyle(style)
+        tiles.forEach { validateTile(it, compiled.policy) }
+        return ("rentile-extrusions-1\n" + compiled.digest + "\n" +
+            tiles.distinct().sortedWith(compareBy({ it.z }, { it.x }, { it.y })).joinToString("\n") { "${it.z}/${it.x}/${it.y}" }).sha256Hex()
+    }
+
+    override suspend fun acquireExtrusionCandidates(
+        style: PreparedStyle, tiles: List<TileId>, limits: ExtrusionLimits, resourceAccess: ResourceAccessMode,
+    ): ExtrusionCandidateBatch = operation {
+        val compiled = requireOwnedStyle(style)
+        if (tiles.size > limits.maxRequestedTiles) throw SafetyLimitException(
+            "Extrusion request has too many tiles", "maxRequestedTiles", limits.maxRequestedTiles.toLong(),
+            tiles.size.toLong(), PipelineStage.RESOURCE_DECODING,
+        )
+        val stableTiles = tiles.toList()
+        stableTiles.forEach { validateTile(it, compiled.policy) }
+        val key = extrusionCandidateRequestKey(style, stableTiles)
+        val layers = compiled.extrusionLayers
+        val budget = ExtrusionBudget(limits)
+        val candidates = ArrayList<ExtrusionCandidate>()
+        val content = ArrayList<String>()
+        val sampleMap = linkedMapOf<String, com.rohittp.rentile.internal.mvt.VectorTileSample>()
+        try { budget.retain(layers.size.toLong() * 256) }
+        catch (error: com.rohittp.rentile.internal.mvt.MvtDecodingException) {
+            throw SafetyLimitException("Extrusion layers exceed their budget", error.limitName!!,
+                error.limit!!, error.observed!!, PipelineStage.RESOURCE_DECODING)
+        }
+        val sources = layers.map { it.source }.distinctBy { it.idDigest }
+        for (source in sources) for (tile in stableTiles) source.sampleFor(tile)?.let { sample ->
+            if (sample.identity !in sampleMap) {
+                try { budget.retain(256) } catch (error: com.rohittp.rentile.internal.mvt.MvtDecodingException) {
+                    throw SafetyLimitException("Extrusion planning exceeds its budget", error.limitName!!,
+                        error.limit!!, error.observed!!, PipelineStage.RESOURCE_DECODING)
+                }
+                sampleMap[sample.identity] = sample
+            }
+        }
+        val samples = sampleMap.values.sortedBy { it.identity }
+        for (sample in samples) {
+            val sourceLayers = layers.withIndex().filter { it.value.source.idDigest == sample.source.idDigest }
+            val context = kotlin.coroutines.coroutineContext
+            val result = vectorAcquirer.acquireSelective(sample, resourceAccess, limits.maxEncodedTileBytes) { bytes ->
+                val checkpoint = budget.retained
+                val candidateCount = candidates.size
+                try {
+                    CompactExtrusionDecoder(configuration.resourceLimits, budget) { context.ensureActive() }.decode(
+                        bytes, sourceLayers.map { it.value.descriptor.sourceLayer }.toSet(),
+                    ) { feature ->
+                        val evaluation = StyleEvaluationContext(0.0, FeatureGeometryType.POLYGON,
+                            feature.id?.let { StyleValue.NumberValue(it.toULong().toDouble()) } ?: StyleValue.Null,
+                            feature.properties)
+                        for ((layerIndex, layer) in sourceLayers) {
+                            if (layer.descriptor.sourceLayer != feature.layer) continue
+                            budget.retain(192)
+                            candidates += ExtrusionCandidate(layerIndex, TileId(sample.sourceZ, sample.sourceX, sample.sourceY),
+                                sample.source.idDigest, feature.extent, feature.index, feature.id, feature.geometry,
+                                layer.program.zoomDependent, layer.program.bind(evaluation))
+                        }
+                    }
+                } catch (error: Throwable) {
+                    // A malformed cached tile can be retried: discard its partial assembly first.
+                    while (candidates.size > candidateCount) candidates.removeAt(candidates.lastIndex)
+                    budget.restore(checkpoint)
+                    throw error
+                }
+            }
+            content += sample.identity + ":" + result.first
+        }
+        // Group by authored layer, then canonical resource and feature order, independently of request order.
+        ExtrusionCandidateBatch(candidates.sortedBy { it.layerStyleIndex }, layers.map { it.program.layerStyle() },
+            (key + "\n" + content.joinToString("\n")).sha256Hex(), budget.retained)
     }
 
     override fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor> =

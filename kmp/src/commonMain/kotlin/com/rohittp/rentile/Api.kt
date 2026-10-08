@@ -54,6 +54,7 @@ public class CompatibilityPolicy private constructor(
     public val maximumOutputZoom: Int,
     /** Whether every symbol layer belongs to the host; see [RentileV1HostSymbols]. */
     internal val hostOwnedSymbols: Boolean = false,
+    internal val hostOwnedExtrusions: Boolean = false,
 ) {
     public companion object {
         /**
@@ -99,6 +100,15 @@ public class CompatibilityPolicy private constructor(
             minimumOutputZoom = 0,
             maximumOutputZoom = 22,
             hostOwnedSymbols = true,
+        )
+        /** Extrusions are host-owned; ordinary symbol behavior is unchanged. See ADR 0037. */
+        public val RentileV1HostExtrusions: CompatibilityPolicy = CompatibilityPolicy(
+            "rentile-v1-host-extrusions", 0, 22, hostOwnedExtrusions = true,
+        )
+        /** Every symbol and extrusion layer is host-owned. */
+        public val RentileV1HostSymbolsAndExtrusions: CompatibilityPolicy = CompatibilityPolicy(
+            "rentile-v1-host-symbols-and-extrusions", 0, 22,
+            hostOwnedSymbols = true, hostOwnedExtrusions = true,
         )
         public val Default: CompatibilityPolicy = RentileV1
     }
@@ -1171,6 +1181,28 @@ public data class RenderBatch(
 
 /** Public renderer boundary. Implementations are process-local resource owners. */
 public interface BasemapRasterizer : AutoCloseable {
+    /** Visible extrusion layers under a host-extrusion policy; empty under legacy profiles. */
+    public fun extrusionLayerDescriptors(style: PreparedStyle): List<ExtrusionLayerDescriptor> =
+        throw UnsupportedOperationException("Host extrusions are unsupported by this implementation")
+
+    /** Stable pre-acquisition identity. Limits do not change successful content. */
+    public fun extrusionCandidateRequestKey(style: PreparedStyle, tiles: List<TileId>): String =
+        throw UnsupportedOperationException("Host extrusions are unsupported by this implementation")
+
+    /**
+     * All-or-error canonical source polygons. No substitution, rasterization or triangulation.
+     * All visible layers are included regardless of current zoom; paintAtZoom determines activity.
+     * Host profiles omit these layers from Output Tiles, preventing a second painted footprint.
+     * NORMAL uses validated raw cache entries, CACHE_ONLY never fetches, RELOAD replaces them.
+     */
+    public suspend fun acquireExtrusionCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        limits: ExtrusionLimits = ExtrusionLimits(),
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): ExtrusionCandidateBatch =
+        throw UnsupportedOperationException("Host extrusions are unsupported by this implementation")
+
     public suspend fun prepare(
         style: StyleInput,
         policy: CompatibilityPolicy = CompatibilityPolicy.Default,

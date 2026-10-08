@@ -554,6 +554,7 @@ internal class CompiledPreparedStyle(
     val secretContext: SecretContext,
     /** The root `sprite` key as `acquireSpriteAtlas` needs it; see [SpriteReference]. */
     val spriteReference: SpriteReference = SpriteReference.Absent,
+    val extrusionLayers: List<CompiledExtrusionLayer> = emptyList(),
 ) : PreparedStyle {
     /**
      * Label layers recompiled per `text-field` override, keyed by the override's canonical JSON.

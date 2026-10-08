@@ -6,12 +6,15 @@ Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a
 
 Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
-`0.12.1` is the version this source tree declares, a fix release: line and line-center label text
-is laid out on one line, as Mapbox lays it out, instead of wrapping at `text-max-width` like point
-text. No public signature changes, so nothing recompiles, but the two label-candidate keys move. It
-publishes once the release workflow passes, and until `com.rohittp.rentile:kmp:0.12.1` resolves from
-the public repository, `0.12.0` is the newest version there. See the
-[0.12.1 migration guide](docs/migrations/0.12.1.md).
+`0.13.0` is the feature version this source tree declares. It adds opt-in host-owned extrusion
+polygons and style evaluation, with selective decoding and per-operation memory limits. Existing
+profiles retain their raster behavior. See the [0.13.0 migration guide](docs/migrations/0.13.0.md)
+and [ADR 0037](docs/adr/0037-hand-compact-extrusion-polygons-to-the-host.md). Publication is complete
+only when the release workflow passes and all eight public coordinates resolve.
+
+`0.12.1` fixes line and line-center label text: it is laid out on one line, as Mapbox lays it
+out, instead of wrapping at `text-max-width` like point text. No public signatures changed; the two
+label-candidate keys moved. See the [0.12.1 migration guide](docs/migrations/0.12.1.md).
 
 `0.12.0` is a deliberate breaking minor. It lets a host own every symbol layer, hands it the style's
 sprite sheet, and bounds the label glyph atlas; `RentileConfiguration`, `LabelCandidate` and

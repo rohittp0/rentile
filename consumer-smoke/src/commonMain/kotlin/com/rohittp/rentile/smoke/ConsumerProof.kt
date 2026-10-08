@@ -28,9 +28,36 @@ import com.rohittp.rentile.SymbolZOrder
 import com.rohittp.rentile.TerrainDemEncoding
 import com.rohittp.rentile.TileId
 import com.rohittp.rentile.ValidatedDemTile
+import com.rohittp.rentile.ExtrusionLimits
 
 fun proveAggregateDependency(): Pair<TileId, RenderOptions> =
     TileId(z = 0, x = 0, y = 0) to RenderOptions()
+
+/** Compile the host-extrusion contract from the published aggregate on every consumer target. */
+suspend fun proveHostExtrusionsApi(
+    rasterizer: BasemapRasterizer, input: StyleInput, tiles: List<TileId>, cameraZoom: Double,
+): Boolean {
+    val style = rasterizer.prepare(input, CompatibilityPolicy.RentileV1HostSymbolsAndExtrusions)
+    val descriptors = rasterizer.extrusionLayerDescriptors(style)
+    val requestKey = rasterizer.extrusionCandidateRequestKey(style, tiles)
+    val batch = rasterizer.acquireExtrusionCandidates(style, tiles, ExtrusionLimits())
+    return requestKey.isNotEmpty() && batch.contentKey.isNotEmpty() &&
+        batch.estimatedRetainedBytes >= 0 && descriptors.size == batch.layerStyles.size &&
+        batch.candidates.all { candidate ->
+            val layer = batch.layerStyles[candidate.layerStyleIndex]
+            val geometry = candidate.geometry
+            val paint = candidate.paintAtZoom(cameraZoom)
+            candidate.extent > 0 && candidate.sourceTile.z <= layer.descriptor.sourceMaximumZoom &&
+                candidate.sourceId == layer.descriptor.sourceId && candidate.featureIndex >= 0 &&
+                geometry.polygonCount > 0 && geometry.ringEnd(0) > geometry.ringStart(0) &&
+                geometry.polygonEnd(0) > geometry.polygonStart(0) &&
+                geometry.copyCoordinates().size == geometry.vertexCount * 2 &&
+                geometry.copyRingOffsets().size == geometry.ringCount + 1 &&
+                geometry.copyPolygonOffsets().size == geometry.polygonCount + 1 &&
+                geometry.primitiveByteCount > 0 && layer.opacityAtZoom(cameraZoom) in 0.0..1.0 &&
+                (paint == null || paint.heightMetres >= paint.baseMetres)
+        }
+}
 
 /** Compile-time proof that the published aggregate exposes the complete 0.6 label contract. */
 fun proveExpandedLabelApi(candidate: LabelCandidate, style: LabelLayerStyle): Boolean {

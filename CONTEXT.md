@@ -36,11 +36,18 @@ _Avoid_: Raw style, mutable renderer session
 
 **Compatibility Profile**:
 The closed choice, made at preparation, of what Rentile draws into Output Tiles and what it hands to
-the host as Label Candidates. `rentile-v1`, the default, draws icons that do not depend on text into
+the host as Label Candidates or Extrusion Candidates. `rentile-v1`, the default, draws icons that do not depend on text into
 the tile and makes only text-bearing symbol layers Label layers. `rentile-v1-host-symbols` draws no
 symbol layer into the tile and makes every symbol layer with text or an icon a Label layer. The
+Host-extrusion profiles omit extrusion footprints and hand their polygons to the host. The
 profile is part of the Prepared Style's identity, so every key derived from it differs between them.
 _Avoid_: Mode, flag, label option
+
+**Extrusion Candidate**:
+A feature/layer pairing carrying canonical source-tile polygons, its extent, feature identity and
+metre/color paint evaluated at camera zoom. Geometry uses compact immutable arrays and explicit
+exterior/hole grouping. The host owns its projection and mesh. An absent feature ID stays absent.
+_Avoid_: Building mesh, globe building, output-tile polygon, invented building height
 
 **Prepared Batch**:
 An immutable rendering input that freezes the resource closure and output content keys for a caller-defined set of output tiles before any drawing occurs.

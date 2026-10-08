@@ -197,6 +197,7 @@ internal class StyleCompiler(
         val layerIds = mutableSetOf<String>()
         val drawLayers = mutableListOf<CompiledDrawLayer>()
         val labelLayers = mutableListOf<CompiledLabelLayer>()
+        val extrusionLayers = mutableListOf<CompiledExtrusionLayer>()
 
         for ((index, element) in layers.withIndex()) {
             val layer = element as? JsonObject
@@ -434,6 +435,12 @@ internal class StyleCompiler(
                     continue
                 }
                 if (type == "fill-extrusion") {
+                    if (policy.hostOwnedExtrusions) {
+                        extrusionLayers += compileHostExtrusionLayer(
+                            layer, sources, compiledVectorSources, secretContext, baseUri, index, layerId,
+                        )
+                        continue
+                    }
                     diagnostics += diagnostic(
                         code = DiagnosticCode.EXTRUSION_FLATTENED,
                         severity = DiagnosticSeverity.WARNING,
@@ -547,7 +554,7 @@ internal class StyleCompiler(
                 is IconDrawLayer -> layer.source.metadataDigest
                 else -> null
             }
-        } + labelLayers.mapNotNull { it.source.metadataDigest } + listOfNotNull(terrainSource?.metadataDigest))
+        } + labelLayers.mapNotNull { it.source.metadataDigest } + extrusionLayers.mapNotNull { it.source.metadataDigest } + listOfNotNull(terrainSource?.metadataDigest))
             .distinct().sorted().joinToString("\n")
         val digest = (RENDERER_SEMANTIC_VERSION + "\n" + policy.id + "\n" +
             baseUri?.withRedactedAuthenticationQuery().orEmpty() + "\n" +
@@ -566,6 +573,7 @@ internal class StyleCompiler(
             glyphsTemplate = glyphsTemplate,
             secretContext = secretContext,
             spriteReference = spriteReferenceOf(root, baseUri, secretContext),
+            extrusionLayers = extrusionLayers.toList(),
         )
     }
 
@@ -785,6 +793,32 @@ internal class StyleCompiler(
             minZoom = layer["minzoom"]?.asPrimitive()?.doubleOrNull ?: 0.0,
             maxZoom = layer["maxzoom"]?.asPrimitive()?.doubleOrNull ?: 31.0,
         )
+    }
+
+    private suspend fun compileHostExtrusionLayer(
+        layer: JsonObject, sources: JsonObject,
+        compiledSources: MutableMap<String, CompiledVectorSource>, secretContext: SecretContext,
+        baseUri: String?, index: Int, layerId: String,
+    ): CompiledExtrusionLayer {
+        // Reuse the legacy profile's syntax gate and source/filter/color compilation.
+        val flat = compileFlattenedExtrusionLayer(layer, sources, compiledSources, secretContext, baseUri, index, layerId)
+        if (flat.source.geoJson != null) failRetained(index, layerId, "host extrusions require an MVT vector source")
+        val paint = objectOrEmpty(layer, "paint", index, layerId)
+        val opacity = paint["fill-extrusion-opacity"]
+        if (opacity != null && extrusionUsesFeature(opacity)) {
+            failRetained(index, layerId, "fill-extrusion-opacity cannot depend on features")
+        }
+        val base = compileProperty(paint["fill-extrusion-base"] ?: JsonPrimitive(0.0), StyleType.NUMBER, index, layerId, "fill-extrusion-base")
+        val height = compileProperty(paint["fill-extrusion-height"] ?: JsonPrimitive(0.0), StyleType.NUMBER, index, layerId, "fill-extrusion-height")
+        val descriptor = com.rohittp.rentile.ExtrusionLayerDescriptor(
+            layerId, index, flat.source.idDigest, flat.sourceLayer, flat.minZoom, flat.maxZoom,
+            flat.source.minZoom, flat.source.maxZoom,
+            paint["fill-extrusion-vertical-gradient"]?.asPrimitive()?.booleanOrNull ?: true,
+        )
+        return CompiledExtrusionLayer(flat.source, descriptor, ExtrusionProgram(
+            descriptor, flat.filter, base, height, flat.color, flat.opacity,
+            listOfNotNull(layer["filter"], paint["fill-extrusion-base"], paint["fill-extrusion-height"], paint["fill-extrusion-color"]).any(::extrusionUsesZoom),
+        ))
     }
 
     private suspend fun compileFlattenedExtrusionLayer(
