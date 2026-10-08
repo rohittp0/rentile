@@ -67,54 +67,73 @@ class MapCatalogCorpusSmokeTest {
                 rawResourceStore = SmokeRawResourceStore(),
             ),
         )
-        val results = try {
+        // Every profile the manifest covers, each over the same styles and cases: the manifest's
+        // own, and the host-owned-symbols profile derived from it (see corpusProfiles). One shared
+        // raw store means the second profile re-renders rather than re-downloads.
+        val profiles = corpusProfiles(coverage)
+        val profileResults = try {
             selectedStyles
                 .sortedBy { style -> style.id.toInt() }
-                .map { style -> renderStyle(rasterizer, style, transport, coverage, outputDirectory) }
+                .flatMap { style ->
+                    profiles.map { profile ->
+                        profile to renderStyle(rasterizer, style, transport, profile, outputDirectory)
+                    }
+                }
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
         }
+        val results = profileResults.map { it.second }
 
-        val declaredCapabilities = results.flatMapTo(mutableSetOf()) { it.declaredCapabilities }
-        val runtimeLabelCapabilities = results.flatMapTo(mutableSetOf()) { it.runtimeLabelCapabilities }
-        val nonLabelEvidence = declaredCapabilities +
-            transport.observedSpriteCapabilities
-        val observedCapabilities = coverage.requiredCapabilities.filterTo(mutableSetOf()) { capability ->
-            if (coverage.capabilityDispositions[capability] == LABEL_CANDIDATE_DISPOSITION) {
-                capability in runtimeLabelCapabilities
-            } else {
-                capability in nonLabelEvidence
-            }
-        }
-        val runtimeLabelEvidence = results
-            .flatMap { it.runtimeLabelEvidence.entries }
-            .groupBy({ it.key }, { it.value })
-            .mapValues { (_, values) -> values.flatten().toSet() }
-        val corpusFidelityErrors = if (selectedStyleId == null) {
-            (coverage.requiredCapabilities.toSet() - observedCapabilities).sorted().map { capability ->
-                if (coverage.capabilityDispositions[capability] == LABEL_CANDIDATE_DISPOSITION) {
-                    "LABEL_CAPABILITY_NOT_EMITTED: $capability was declared by the rolling corpus " +
-                        "but no sampled LabelCandidate provided its required semantic evidence"
+        val corpusFidelityErrors = mutableListOf<String>()
+        profiles.forEach { profile ->
+            val profileCoverage = profile.coverage
+            val ownResults = profileResults.filter { it.first == profile }.map { it.second }
+            val declaredCapabilities = ownResults.flatMapTo(mutableSetOf()) { it.declaredCapabilities }
+            val runtimeLabelCapabilities = ownResults.flatMapTo(mutableSetOf()) { it.runtimeLabelCapabilities }
+            val nonLabelEvidence = declaredCapabilities +
+                transport.observedSpriteCapabilities
+            val observedCapabilities = profileCoverage.requiredCapabilities.filterTo(mutableSetOf()) { capability ->
+                if (profileCoverage.capabilityDispositions[capability] == LABEL_CANDIDATE_DISPOSITION) {
+                    capability in runtimeLabelCapabilities
                 } else {
-                    "CAPABILITY_NOT_EXERCISED: $capability was required by the Coverage Manifest " +
-                        "but no live style or decoded sprite exercised it"
+                    capability in nonLabelEvidence
                 }
             }
-        } else {
-            // A single-style run is a debugging aid. It still enforces every per-style fidelity
-            // invariant, but cannot prove that the complete rolling corpus exercises every
-            // capability in the manifest.
-            emptyList()
+            val runtimeLabelEvidence = ownResults
+                .flatMap { it.runtimeLabelEvidence.entries }
+                .groupBy({ it.key }, { it.value })
+                .mapValues { (_, values) -> values.flatten().toSet() }
+            val profileErrors = if (selectedStyleId == null) {
+                (profileCoverage.requiredCapabilities.toSet() - observedCapabilities).sorted().map { capability ->
+                    if (profileCoverage.capabilityDispositions[capability] == LABEL_CANDIDATE_DISPOSITION) {
+                        "LABEL_CAPABILITY_NOT_EMITTED: ${profile.policy.id} $capability was declared by the " +
+                            "rolling corpus but no sampled LabelCandidate provided its required semantic evidence"
+                    } else {
+                        "CAPABILITY_NOT_EXERCISED: ${profile.policy.id} $capability was required by the " +
+                            "Coverage Manifest but no live style or decoded sprite exercised it"
+                    }
+                }
+            } else {
+                // A single-style run is a debugging aid. It still enforces every per-style fidelity
+                // invariant, but cannot prove that the complete rolling corpus exercises every
+                // capability in the manifest.
+                emptyList()
+            }
+            corpusFidelityErrors += profileErrors
+            writeCapabilityLedger(
+                outputDirectory.resolve(profile.capabilityLedgerName),
+                profileCoverage,
+                declaredCapabilities,
+                observedCapabilities,
+                runtimeLabelEvidence,
+            )
         }
 
         writeReports(
             outputDirectory,
             coverage,
             results,
-            declaredCapabilities,
-            observedCapabilities,
-            runtimeLabelEvidence,
             corpusFidelityErrors,
         )
         val completedStyles = results.count { result ->
@@ -162,11 +181,15 @@ class MapCatalogCorpusSmokeTest {
 
     private suspend fun renderStyle(
         rasterizer: BasemapRasterizer,
-        style: CatalogStyleEntry,
+        catalogStyle: CatalogStyleEntry,
         transport: GlyphClosureRecordingTransport,
-        coverage: CoverageManifest,
+        profile: CorpusProfile,
         outputDirectory: Path,
     ): StyleSmokeResult {
+        val coverage = profile.coverage
+        // Reported, and written to disk, under a per-profile id so two profiles of one style never
+        // share a row or overwrite each other's tiles. The URL and the name are the catalog's.
+        val style = catalogStyle.copy(id = catalogStyle.id + profile.reportSuffix)
         // RENTILE_CORPUS_OMIT_SOURCE renders a style as if one of its sources did not exist, so the
         // same coverage can be rendered with and without it and the two mosaics compared. A source
         // costs one fetch per tile however few layers read it, so "is this source worth its
@@ -174,7 +197,7 @@ class MapCatalogCorpusSmokeTest {
         val omitSource = System.getenv("RENTILE_CORPUS_OMIT_SOURCE")?.takeIf(String::isNotBlank)
         val prepared = try {
             if (omitSource == null) {
-                rasterizer.prepare(StyleInput.Remote(style.url))
+                rasterizer.prepare(StyleInput.Remote(style.url), profile.policy)
             } else {
                 // Fetched directly rather than via a first remote prepare: styleBody only returns a
                 // response the transport already recorded, and preparing twice on one rasterizer to
@@ -186,7 +209,7 @@ class MapCatalogCorpusSmokeTest {
                         maxResponseBytes = STYLE_BODY_LIMIT_BYTES,
                     ),
                 ).body.decodeToString()
-                rasterizer.prepare(StyleInput.InlineJson(styleWithoutSource(body, omitSource)))
+                rasterizer.prepare(StyleInput.InlineJson(styleWithoutSource(body, omitSource)), profile.policy)
             }
         } catch (error: RentileException) {
             return StyleSmokeResult(
@@ -223,7 +246,14 @@ class MapCatalogCorpusSmokeTest {
         val styleJson = catalogJson.parseToJsonElement(transport.styleBody(style.url).decodeToString()).jsonObject
         val inspection = inspectStyle(styleJson, coverage)
         val descriptorIds = rasterizer.labelLayerDescriptors(prepared).mapTo(mutableSetOf()) { it.id }
-        val missingDescriptors = inspection.textVectorSymbolLayerIds - descriptorIds
+        // Under the host-owned-symbols profile an icon-only vector symbol layer is a label layer
+        // too, so it must be represented the same way a text-bearing one must.
+        val labelLayerIds = if (profile.iconLayersAreLabelLayers) {
+            inspection.textVectorSymbolLayerIds + inspection.iconVectorSymbolLayerIds
+        } else {
+            inspection.textVectorSymbolLayerIds
+        }
+        val missingDescriptors = labelLayerIds - descriptorIds
         val forbiddenPreparationDiagnostics = prepared.diagnostics.filter { diagnostic ->
             diagnostic.code.name in coverage.fidelityPolicy.forbiddenPreparationDiagnosticCodes
         }
@@ -231,8 +261,13 @@ class MapCatalogCorpusSmokeTest {
             if (coverage.fidelityPolicy.requireAllVisibleTextVectorSymbolsHaveDescriptors) {
                 missingDescriptors.sorted().forEach { layerId ->
                     add(
-                        "TEXT_VECTOR_SYMBOL_WITHOUT_DESCRIPTOR: layerIdDigest=${layerId.sha256Hex()} " +
-                            "is a visible text-bearing vector symbol layer but has no LabelLayerDescriptor",
+                        if (profile.iconLayersAreLabelLayers) {
+                            "SYMBOL_LAYER_WITHOUT_DESCRIPTOR: layerIdDigest=${layerId.sha256Hex()} " +
+                                "is a visible vector symbol layer with text or an icon but has no LabelLayerDescriptor"
+                        } else {
+                            "TEXT_VECTOR_SYMBOL_WITHOUT_DESCRIPTOR: layerIdDigest=${layerId.sha256Hex()} " +
+                                "is a visible text-bearing vector symbol layer but has no LabelLayerDescriptor"
+                        },
                     )
                 }
             }
@@ -256,6 +291,15 @@ class MapCatalogCorpusSmokeTest {
         }
         val mosaics = createMosaics(style.id, coverage, outcomes, outputDirectory)
         val labelResults = acquireLabelSmoke(rasterizer, prepared, style, styleJson, transport, coverage)
+        // A symbol layer the host profile cannot represent at all is a loss the profile accepts by
+        // design (a GeoJSON-sourced symbol has no Label Tiles), so it is observed, not failed.
+        val unrepresentedSymbolLayers = prepared.diagnostics.count { diagnostic ->
+            diagnostic.code == DiagnosticCode.SYMBOL_LAYER_HOST_OWNED && diagnostic.details["labelLayer"] == "false"
+        }
+        val unrepresentedObservation = unrepresentedSymbolLayers.takeIf { it > 0 }?.let { count ->
+            "HOST_SYMBOL_LAYER_UNREPRESENTED: $count symbol layers are drawn neither into Output Tiles " +
+                "nor as label candidates under ${profile.policy.id}"
+        }
         val runtimeLabelObservation = observeLabelCandidateSemantics(
             inspection,
             labelResults.flatMap(LabelCaseSmokeResult::candidateEvidence),
@@ -286,7 +330,7 @@ class MapCatalogCorpusSmokeTest {
             runtimeLabelCapabilities = runtimeLabelObservation.capabilities,
             runtimeLabelEvidence = runtimeLabelObservation.evidence,
             fidelityErrors = fidelityErrors,
-            fidelityObservations = listOfNotNull(contributionObservation),
+            fidelityObservations = listOfNotNull(contributionObservation, unrepresentedObservation),
         )
     }
 
@@ -654,6 +698,7 @@ class MapCatalogCorpusSmokeTest {
         val layers = styleJson["layers"] as? JsonArray ?: JsonArray(emptyList())
         val capabilities = mutableSetOf<String>()
         val textVectorSymbolLayerIds = mutableSetOf<String>()
+        val iconVectorSymbolLayerIds = mutableSetOf<String>()
         val labelCandidateLayers = mutableMapOf<String, MutableSet<String>>()
 
         fun recordLabelCapability(capability: String, layerId: String) {
@@ -731,12 +776,19 @@ class MapCatalogCorpusSmokeTest {
                 (!meaningfulText || iconTextFitValue == null || iconTextFit == "none")
 
             if (iconIndependentOfText) {
-                capabilities += if (placement == "line" || placement == "line-center") {
-                    "independent-line-icon"
-                } else {
-                    "independent-point-icon"
-                }
+                // Rasterized under rentile-v1 and emitted as a label candidate under the host
+                // profile; recording the layer serves the latter and costs the former nothing,
+                // because only label-candidate dispositions read these layer sets.
+                recordLabelCapability(
+                    if (placement == "line" || placement == "line-center") {
+                        "independent-line-icon"
+                    } else {
+                        "independent-point-icon"
+                    },
+                    layerId,
+                )
             }
+            if (meaningfulIcon) iconVectorSymbolLayerIds += layerId
             if (!meaningfulText) return@forEach
 
             textVectorSymbolLayerIds += layerId
@@ -766,6 +818,7 @@ class MapCatalogCorpusSmokeTest {
             declaredCapabilities = capabilities,
             textVectorSymbolLayerIds = textVectorSymbolLayerIds,
             labelCandidateLayers = labelCandidateLayers.mapValues { it.value.toSet() },
+            iconVectorSymbolLayerIds = iconVectorSymbolLayerIds,
         )
     }
 
@@ -806,6 +859,20 @@ class MapCatalogCorpusSmokeTest {
             matching("symbol-icon-text-fit")
                 .filter { it.hasIcon && it.iconTextFit != IconTextFit.NONE }
                 .map { "text-fit:${it.iconTextFit.name}" },
+        )
+        // An icon emitted as a candidate - alone, or beside its text - is what the host profile
+        // promises for every icon the default profile bakes into the tile instead.
+        record(
+            "independent-point-icon",
+            matching("independent-point-icon").filter(LabelCandidateEvidence::hasIcon).map {
+                if (it.hasGlyphs) "icon-with-text" else "icon-only"
+            },
+        )
+        record(
+            "independent-line-icon",
+            matching("independent-line-icon")
+                .filter { it.hasIcon && it.hasLineGeometry && it.placement != LabelPlacement.POINT }
+                .map { "icon:placement:${it.placement.name},line-geometry" },
         )
         record(
             "symbol-line-placement",
@@ -1025,6 +1092,13 @@ class MapCatalogCorpusSmokeTest {
                   "layout": {"visibility": "none", "text-field": ["get", "name"]}
                 },
                 {
+                  "id": "poi-icons",
+                  "type": "symbol",
+                  "source": "vector",
+                  "source-layer": "poi",
+                  "layout": {"icon-image": "marker"}
+                },
+                {
                   "id": "raster-symbol",
                   "type": "symbol",
                   "source": "raster",
@@ -1070,6 +1144,10 @@ class MapCatalogCorpusSmokeTest {
         assertEquals(emptySet(), expected - inspection.declaredCapabilities)
         assertEquals(setOf("complete-symbol"), inspection.textVectorSymbolLayerIds)
         assertEquals(setOf("complete-symbol"), inspection.labelCandidateLayers.getValue("symbol-icon-text-fit"))
+        // Icon layers are recorded for the host-owned-symbols profile, which needs them represented.
+        assertEquals(setOf("complete-symbol", "poi-icons"), inspection.iconVectorSymbolLayerIds)
+        assertEquals(setOf("poi-icons"), inspection.labelCandidateLayers.getValue("independent-point-icon"))
+        assertTrue("independent-point-icon" in inspection.declaredCapabilities)
     }
 
     @Test
@@ -1124,6 +1202,97 @@ class MapCatalogCorpusSmokeTest {
         assertTrue("differing-values" in observation.evidence.getValue("symbol-functional-placement"))
         assertTrue("non-default:7.0" in observation.evidence.getValue("symbol-functional-text-padding"))
         assertTrue("resolved-text:UPPERCASE" in observation.evidence.getValue("symbol-functional-text-transform"))
+    }
+
+    @Test
+    fun theHostSymbolsProfileIsDerivedFromTheCommittedManifest() {
+        val coverage = CoverageManifest(
+            schemaVersion = 1,
+            profileId = "rentile-v1",
+            outputZoomRange = ZoomRange(0, 22),
+            styleRefs = listOf("17", "49"),
+            requiredCapabilities = listOf("fill", "independent-line-icon", "independent-point-icon", "symbol-text"),
+            capabilityDispositions = mapOf(
+                "fill" to "rasterized",
+                "independent-line-icon" to "rasterized",
+                "independent-point-icon" to "rasterized",
+                "symbol-text" to LABEL_CANDIDATE_DISPOSITION,
+            ),
+            fidelityPolicy = FidelityPolicy(
+                forbiddenPreparationDiagnosticCodes = listOf("TEXT_COUPLED_ICON_LAYER_EXCLUDED", "UNSUPPORTED_TEXT_CONSTRUCT"),
+                forbiddenLabelDiagnosticCodes = listOf("UNSUPPORTED_TEXT_CONSTRUCT"),
+                requireAllVisibleTextVectorSymbolsHaveDescriptors = true,
+                requireEveryDescriptorToContribute = false,
+            ),
+            cases = listOf(CoverageCase("z0", listOf("whole-mercator"), listOf(CoverageTile(0, 0, 0)))),
+        )
+
+        val (own, host) = corpusProfiles(coverage)
+
+        // The committed manifest is the default profile's, untouched.
+        assertEquals(CompatibilityPolicy.RentileV1, own.policy)
+        assertEquals(coverage, own.coverage)
+        assertEquals("capabilities.txt", own.capabilityLedgerName)
+        // The host profile shares every style, case and threshold, and differs only where it moves
+        // icons from the tile to the candidates.
+        assertEquals(CompatibilityPolicy.RentileV1HostSymbols, host.policy)
+        assertEquals("rentile-v1-host-symbols", host.coverage.profileId)
+        assertEquals(coverage.styleRefs, host.coverage.styleRefs)
+        assertEquals(coverage.cases, host.coverage.cases)
+        assertEquals(coverage.requiredCapabilities, host.coverage.requiredCapabilities)
+        assertEquals(
+            mapOf(
+                "fill" to "rasterized",
+                "independent-line-icon" to LABEL_CANDIDATE_DISPOSITION,
+                "independent-point-icon" to LABEL_CANDIDATE_DISPOSITION,
+                "symbol-text" to LABEL_CANDIDATE_DISPOSITION,
+            ),
+            host.coverage.capabilityDispositions,
+        )
+        assertEquals(
+            listOf("TEXT_COMPONENT_REMOVED_ICON_RETAINED", "TEXT_COUPLED_ICON_LAYER_EXCLUDED", "UNSUPPORTED_TEXT_CONSTRUCT"),
+            host.coverage.fidelityPolicy.forbiddenPreparationDiagnosticCodes,
+        )
+        assertTrue(host.iconLayersAreLabelLayers)
+        assertTrue(host.reportSuffix.isNotEmpty() && host.capabilityLedgerName != own.capabilityLedgerName)
+    }
+
+    @Test
+    fun hostOwnedIconEvidenceComesFromEmittedIcons() {
+        val inspection = StyleInspection(
+            declaredCapabilities = setOf("independent-point-icon", "independent-line-icon"),
+            textVectorSymbolLayerIds = emptySet(),
+            labelCandidateLayers = mapOf(
+                "independent-point-icon" to setOf("poi-icons"),
+                "independent-line-icon" to setOf("road-shields"),
+            ),
+            iconVectorSymbolLayerIds = setOf("poi-icons", "road-shields"),
+        )
+        fun evidence(layerId: String, placement: LabelPlacement, hasIcon: Boolean) = LabelCandidateEvidence(
+            layerId = layerId,
+            hasGlyphs = false,
+            hasResolvedGeometry = false,
+            placement = placement,
+            hasLineGeometry = placement != LabelPlacement.POINT,
+            hasIcon = hasIcon,
+            iconTextFit = IconTextFit.NONE,
+            padding = 0.0,
+            resolvedTextCase = ResolvedTextCase.UNCASED,
+        )
+
+        val emitted = observeLabelCandidateSemantics(
+            inspection,
+            listOf(evidence("poi-icons", LabelPlacement.POINT, true), evidence("road-shields", LabelPlacement.LINE, true)),
+        )
+        val withoutIcons = observeLabelCandidateSemantics(
+            inspection,
+            listOf(evidence("poi-icons", LabelPlacement.POINT, false), evidence("road-shields", LabelPlacement.LINE, false)),
+        )
+
+        assertEquals(setOf("independent-point-icon", "independent-line-icon"), emitted.capabilities)
+        assertEquals(setOf("icon-only"), emitted.evidence.getValue("independent-point-icon"))
+        assertEquals(setOf("icon:placement:LINE,line-geometry"), emitted.evidence.getValue("independent-line-icon"))
+        assertTrue(withoutIcons.capabilities.isEmpty())
     }
 
     @Test
@@ -1374,13 +1543,39 @@ class MapCatalogCorpusSmokeTest {
         }
     }
 
+    /**
+     * One profile's capability ledger: `capabilities.txt` for the manifest's own profile, exactly as
+     * before, and `capabilities-<profile id>.txt` for each derived one.
+     */
+    private fun writeCapabilityLedger(
+        path: Path,
+        coverage: CoverageManifest,
+        declaredCapabilities: Set<String>,
+        observedCapabilities: Set<String>,
+        runtimeLabelEvidence: Map<String, Set<String>>,
+    ) {
+        Files.writeString(
+            path,
+            coverage.requiredCapabilities.joinToString(separator = "\n", postfix = "\n") { capability ->
+                val disposition = coverage.capabilityDispositions.getValue(capability)
+                val status = when {
+                    capability in observedCapabilities && disposition == LABEL_CANDIDATE_DISPOSITION -> "EMITTED"
+                    capability in observedCapabilities -> "EXERCISED"
+                    capability in declaredCapabilities -> "DECLARED_ONLY"
+                    else -> "MISSING"
+                }
+                val evidence = runtimeLabelEvidence[capability].orEmpty().sorted().joinToString(",")
+                "$capability\t$disposition\t$status\t$evidence"
+            },
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+        )
+    }
+
     private fun writeReports(
         outputDirectory: Path,
         coverage: CoverageManifest,
         results: List<StyleSmokeResult>,
-        declaredCapabilities: Set<String>,
-        observedCapabilities: Set<String>,
-        runtimeLabelEvidence: Map<String, Set<String>>,
         corpusFidelityErrors: List<String>,
     ) {
         val rows = buildList {
@@ -1461,23 +1656,6 @@ class MapCatalogCorpusSmokeTest {
             StandardOpenOption.CREATE,
             StandardOpenOption.TRUNCATE_EXISTING,
         )
-        Files.writeString(
-            outputDirectory.resolve("capabilities.txt"),
-            coverage.requiredCapabilities.joinToString(separator = "\n", postfix = "\n") { capability ->
-                val disposition = coverage.capabilityDispositions.getValue(capability)
-                val status = when {
-                    capability in observedCapabilities && disposition == LABEL_CANDIDATE_DISPOSITION -> "EMITTED"
-                    capability in observedCapabilities -> "EXERCISED"
-                    capability in declaredCapabilities -> "DECLARED_ONLY"
-                    else -> "MISSING"
-                }
-                val evidence = runtimeLabelEvidence[capability].orEmpty().sorted().joinToString(",")
-                "$capability\t$disposition\t$status\t$evidence"
-            },
-            StandardOpenOption.CREATE,
-            StandardOpenOption.TRUNCATE_EXISTING,
-        )
-
         val z0 = TileId(0, 0, 0)
         val z0Rendered = results.count { it.tiles[z0]?.status == SmokeStatus.RENDERED }
         val complete = results.count { result ->
@@ -1711,6 +1889,58 @@ class MapCatalogCorpusSmokeTest {
         val url: String,
     )
 
+    /**
+     * One compatibility profile the gate renders the corpus under. [coverage] is the manifest as
+     * that profile reads it; [reportSuffix] keeps its report rows and files apart from the others.
+     */
+    private data class CorpusProfile(
+        val policy: CompatibilityPolicy,
+        val coverage: CoverageManifest,
+        val reportSuffix: String,
+        val capabilityLedgerName: String,
+        val iconLayersAreLabelLayers: Boolean,
+    )
+
+    /**
+     * The profiles the committed manifest covers: its own, and [CompatibilityPolicy.RentileV1HostSymbols]
+     * derived from it rather than committed beside it. The derived profile shares every style
+     * reference, case and threshold, so the rolling catalog cannot drift between two files; it
+     * differs only where the profile changes what is drawn where:
+     *
+     * - independent point and line icons are emitted as label candidates rather than rasterized, so
+     *   their disposition becomes `label-candidate` and they need runtime candidate evidence and a
+     *   descriptor for every declaring layer;
+     * - every visible vector symbol layer with text or an icon must have a descriptor;
+     * - the default profile's icon repair can never happen, so its diagnostics are forbidden.
+     */
+    private fun corpusProfiles(coverage: CoverageManifest): List<CorpusProfile> = listOf(
+        CorpusProfile(
+            policy = CompatibilityPolicy.RentileV1,
+            coverage = coverage,
+            reportSuffix = "",
+            capabilityLedgerName = "capabilities.txt",
+            iconLayersAreLabelLayers = false,
+        ),
+        CorpusProfile(
+            policy = CompatibilityPolicy.RentileV1HostSymbols,
+            coverage = coverage.copy(
+                profileId = CompatibilityPolicy.RentileV1HostSymbols.id,
+                capabilityDispositions = coverage.capabilityDispositions.mapValues { (capability, disposition) ->
+                    if (capability in HOST_OWNED_ICON_CAPABILITIES) LABEL_CANDIDATE_DISPOSITION else disposition
+                },
+                fidelityPolicy = coverage.fidelityPolicy.copy(
+                    forbiddenPreparationDiagnosticCodes = (
+                        coverage.fidelityPolicy.forbiddenPreparationDiagnosticCodes +
+                            HOST_FORBIDDEN_PREPARATION_DIAGNOSTICS
+                        ).distinct().sorted(),
+                ),
+            ),
+            reportSuffix = "-host-symbols",
+            capabilityLedgerName = "capabilities-${CompatibilityPolicy.RentileV1HostSymbols.id}.txt",
+            iconLayersAreLabelLayers = true,
+        ),
+    )
+
     @Serializable
     private data class CoverageManifest(
         val schemaVersion: Int,
@@ -1772,6 +2002,8 @@ class MapCatalogCorpusSmokeTest {
         val declaredCapabilities: Set<String>,
         val textVectorSymbolLayerIds: Set<String>,
         val labelCandidateLayers: Map<String, Set<String>>,
+        /** Visible vector symbol layers with a meaningful `icon-image`, with or without text. */
+        val iconVectorSymbolLayerIds: Set<String> = emptySet(),
     )
 
     private data class TileSmokeResult(
@@ -1884,6 +2116,15 @@ class MapCatalogCorpusSmokeTest {
         val REQUIRED_FORBIDDEN_LABEL_DIAGNOSTICS: Set<String> = setOf(
             DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT.name,
             DiagnosticCode.LINE_PLACEMENT_LABEL_EXCLUDED.name,
+        )
+
+        /** Capabilities the host-owned-symbols profile emits as label candidates instead of rasterizing. */
+        val HOST_OWNED_ICON_CAPABILITIES: Set<String> = setOf("independent-line-icon", "independent-point-icon")
+
+        /** The default profile's icon repair, which the host-owned-symbols profile never performs. */
+        val HOST_FORBIDDEN_PREPARATION_DIAGNOSTICS: Set<String> = setOf(
+            DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED.name,
+            DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED.name,
         )
         val EXPRESSION_CAPABILITIES: Map<String, String> = mapOf(
             "!=" to "expression-not-equal",

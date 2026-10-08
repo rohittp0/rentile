@@ -81,8 +81,9 @@ The rolling corpus is discovered from the public paginated map catalog and check
 
 ## Label candidates
 
-Rentile does not bake text into Output Tiles. It admits every visible text-bearing vector symbol
-layer to descriptor and candidate compilation, including point, line, and line-center labels, and
+Rentile does not bake text into Output Tiles. Under the default profile it admits every visible
+text-bearing vector symbol layer to descriptor and candidate compilation (the host-owned-symbols
+profile below admits icon-only layers too), including point, line, and line-center labels, and
 carries each successfully resolved paired icon so the viewport-owning consumer can place and
 collide the complete symbol. Unsupported scripts, constructs, sources, and feature values are
 excluded with stable diagnostics instead of being represented as plausible but incorrect labels.
@@ -95,6 +96,19 @@ cross-tile collision, depth, and final drawing. Rentile does not publish a secon
 through the label batch.
 See [ADR 0024](docs/adr/0024-label-placement-belongs-to-the-consumer.md) and the
 [0.6.0 migration guide](docs/migrations/0.6.0.md).
+
+That is the default profile, `CompatibilityPolicy.RentileV1`, which still draws icons that do not
+depend on text into the Output Tile. A host that draws every symbol itself prepares the style with
+`CompatibilityPolicy.RentileV1HostSymbols` instead: its Output Tiles carry no symbol layer at all,
+every visible vector symbol layer with text **or** an icon becomes a label layer, an icon with no
+text - or whose text is lost - becomes an icon-only candidate, and icon-only candidates survive a
+style without glyphs. Each candidate also carries its feature id and evaluated text, so a host can
+de-duplicate a feature anchored in several tiles, and its `text-size` and `icon-size` as functions
+of the camera's fractional zoom that reproduce Mapbox GL exactly. A `LabelCandidateOptions`
+`textFieldOverride` applies one `text-field` to every label layer at acquisition - a label-language
+setting - without changing the prepared style or any Output Tile key. See
+[ADR 0035](docs/adr/0035-the-host-can-own-every-symbol-layer.md) and the
+[0.12.0 host-symbols notes](docs/migrations/0.12.0-host-symbols.md).
 
 ## Terrain tiles
 

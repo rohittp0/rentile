@@ -2,6 +2,7 @@ package com.rohittp.rentile.internal.glyph
 
 import com.rohittp.rentile.DiagnosticCode
 import com.rohittp.rentile.DiagnosticSeverity
+import com.rohittp.rentile.LabelBox
 import com.rohittp.rentile.LabelCandidate
 import com.rohittp.rentile.LabelCandidateBatch
 import com.rohittp.rentile.LabelGlyphAtlas
@@ -10,6 +11,7 @@ import com.rohittp.rentile.LabelIconAnchor
 import com.rohittp.rentile.LabelLinePoint
 import com.rohittp.rentile.LabelPlacement
 import com.rohittp.rentile.LabelLayerStyle
+import com.rohittp.rentile.LabelSymbolSize
 import com.rohittp.rentile.IconTextFit
 import com.rohittp.rentile.PipelineStage
 import com.rohittp.rentile.RasterizationException
@@ -27,8 +29,10 @@ import com.rohittp.rentile.internal.mvt.VectorCoordinate
 import com.rohittp.rentile.internal.mvt.VectorRing
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.style.CompiledColor
+import com.rohittp.rentile.internal.style.CompiledLabelLayer
 import com.rohittp.rentile.internal.style.CompiledLabelTextProgram
 import com.rohittp.rentile.internal.style.CompiledPreparedStyle
+import com.rohittp.rentile.internal.style.CompiledStyleProperty
 import com.rohittp.rentile.internal.style.IconAnchor
 import com.rohittp.rentile.internal.style.StyleEvaluationContext
 import com.rohittp.rentile.internal.style.StyleValue
@@ -59,30 +63,43 @@ import kotlin.math.sqrt
  *
  * Every count is in the same unit - one label, meaning one anchor of one feature on one requested
  * tile - so the three are strict subsets of [candidates] and comparable to each other.
+ *
+ * Under [com.rohittp.rentile.CompatibilityPolicy.RentileV1HostSymbols] ([hostSymbols]) a label can
+ * also lose only its text and still be emitted as its icon: [textLost] counts those. It is not a
+ * fourth loss - the candidate survived - but it is reported, because a layer whose text silently
+ * stopped drawing would otherwise look exactly like one that never had any.
  */
-internal class LabelFeatureSkips(val layerId: String) {
+internal class LabelFeatureSkips(val layerId: String, val hostSymbols: Boolean = false) {
     var candidates: Int = 0
     var skipped: Int = 0
     var noGlyphs: Int = 0
     var nonPointGeometry: Int = 0
+    var textLost: Int = 0
     val tiles: MutableSet<TileId> = mutableSetOf()
 
     /** Nothing to report when the layer lost nothing, however many labels it produced. */
-    val reportable: Boolean get() = skipped > 0 || noGlyphs > 0 || nonPointGeometry > 0
+    val reportable: Boolean get() = skipped > 0 || noGlyphs > 0 || nonPointGeometry > 0 || textLost > 0
 
     fun toDiagnostic(layerOrder: Int): RenderDiagnostic = RenderDiagnostic(
         code = DiagnosticCode.LABEL_FEATURE_SKIPPED,
         severity = DiagnosticSeverity.INFO,
         stage = PipelineStage.RESOURCE_DECODING,
-        message = "A text-bearing symbol layer produced no candidate for one or more of its features",
-        details = mapOf(
-            "layerIndex" to layerOrder.toString(),
-            "layerIdDigest" to layerId.sha256Hex(),
-            "candidateFeatures" to candidates.toString(),
-            "skippedFeatures" to skipped.toString(),
-            "skippedNoGlyphs" to noGlyphs.toString(),
-            "skippedNonPointGeometry" to nonPointGeometry.toString(),
-        ),
+        // Under the default profile only text-bearing layers are label layers, and its message is
+        // unchanged; under the host profile any symbol layer is, and a label can lose only its text.
+        message = if (hostSymbols) {
+            "A symbol layer produced no candidate, or a candidate without its text, for one or more of its features"
+        } else {
+            "A text-bearing symbol layer produced no candidate for one or more of its features"
+        },
+        details = buildMap {
+            put("layerIndex", layerOrder.toString())
+            put("layerIdDigest", layerId.sha256Hex())
+            put("candidateFeatures", candidates.toString())
+            put("skippedFeatures", skipped.toString())
+            put("skippedNoGlyphs", noGlyphs.toString())
+            put("skippedNonPointGeometry", nonPointGeometry.toString())
+            if (hostSymbols) put("textLostIconRetained", textLost.toString())
+        },
         affectedTiles = tiles.sortedWith(LABEL_TILE_ORDER),
     )
 }
@@ -90,10 +107,17 @@ internal class LabelFeatureSkips(val layerId: String) {
 /** One layer's layout-time losses for a single assembly, kept out of the shared tallies. */
 private class LayoutLoss {
     var noGlyphs: Int = 0
+    var textLost: Int = 0
     val tiles: MutableSet<TileId> = mutableSetOf()
 
     fun record(tile: TileId) {
         noGlyphs += 1
+        tiles += tile
+    }
+
+    /** A label whose text laid out to nothing but whose icon was emitted alone. */
+    fun recordTextLost(tile: TileId) {
+        textLost += 1
         tiles += tile
     }
 }
@@ -105,11 +129,12 @@ private class LayoutLoss {
 /** A copy carrying [loss] folded in, so the receiver is never mutated by an assembly. */
 private fun LabelFeatureSkips.mergedWith(loss: LayoutLoss?): LabelFeatureSkips {
     if (loss == null) return this
-    val merged = LabelFeatureSkips(layerId)
+    val merged = LabelFeatureSkips(layerId, hostSymbols)
     merged.candidates = candidates
     merged.skipped = skipped
     merged.nonPointGeometry = nonPointGeometry
     merged.noGlyphs = noGlyphs + loss.noGlyphs
+    merged.textLost = textLost + loss.textLost
     merged.tiles += tiles
     merged.tiles += loss.tiles
     return merged
@@ -162,11 +187,24 @@ internal class LabelIconSkips(val layerId: String) {
 internal val LABEL_TILE_ORDER: Comparator<TileId> = compareBy(TileId::z, TileId::x, TileId::y)
 
 /**
+ * Folds a `text-field` override into a label key, and folds nothing at all without one, so every
+ * key computed without an override is exactly the key computed before overrides existed.
+ */
+internal fun StringBuilder.appendTextFieldIdentity(identity: String?) {
+    if (identity == null) return
+    append("\ntext-field:")
+    append(identity.sha256Hex())
+}
+
+/**
  * Check for cancellation every 1024 items rather than every one. Both loops below are pure CPU
  * work over untrusted, unbounded input, so they need a cancellation point; making it periodic
  * keeps the check off the hot path of a tile with half a million features.
  */
 private const val CANCELLATION_CHECK_MASK = 0x3FF
+
+/** The widest `text-max-angle` the specification permits: an inert text half constrains no bend. */
+private const val INERT_MAX_ANGLE_DEGREES = 180.0
 
 internal data class GeometryAnchor(
     val point: VectorCoordinate,
@@ -182,6 +220,9 @@ internal data class GlyphRangeRequest(val fontStack: String, val rangeStart: Int
  * where on the globe it sits, the exact text to lay out, and every per-feature scalar the public
  * candidate carries. Held rather than emitted because layout cannot run until the atlas the text
  * needs has been acquired and packed.
+ *
+ * [text] is null for a candidate that is an icon alone, which only
+ * [com.rohittp.rentile.CompatibilityPolicy.RentileV1HostSymbols] produces; [icon] is then non-null.
  */
 internal data class PendingLabel(
     val program: CompiledLabelTextProgram,
@@ -191,27 +232,40 @@ internal data class PendingLabel(
     val sourceTile: TileId,
     val featureIndex: Int,
     val anchorIndex: Int,
+    /** The MVT feature id as its 64 bits, or null when the feature declared none. */
+    val featureId: Long?,
     val longitude: Double,
     val latitude: Double,
     val placement: LabelPlacement,
     val line: List<LabelLinePoint>,
     val rotationDegrees: Double,
+    val symbol: SymbolScalars,
+    val text: PendingText?,
+    val icon: LabelIconRef?,
+)
+
+/** The symbol-level properties a candidate carries whether or not it has text. */
+internal data class SymbolScalars(
+    val sortKey: Double,
     val symbolSpacing: Double,
-    val keepUpright: Boolean,
     val avoidEdges: Boolean,
     val zOrder: SymbolZOrder,
+)
+
+/** The text half of a [PendingLabel]: the string to lay out and every text property. */
+internal data class PendingText(
+    val text: String,
+    val textStyle: LabelTextStyle,
+    val textSize: LabelSymbolSize,
+    val keepUpright: Boolean,
     val textRotationDegrees: Double,
     val maxAngleDegrees: Double,
     val rotationAlignment: SymbolAlignment,
     val pitchAlignment: SymbolAlignment,
     val textOptional: Boolean,
-    val text: String,
-    val textStyle: LabelTextStyle,
-    val icon: LabelIconRef?,
     val overlap: SymbolOverlap,
     val ignorePlacement: Boolean,
     val padding: Double,
-    val sortKey: Double,
     val color: Int,
     val haloColor: Int,
     val opacity: Double,
@@ -235,6 +289,16 @@ internal class LabelAssembly internal constructor(
     private val contentDigests: List<String>,
     private val requestedTiles: List<TileId>,
     private val limits: ResourceLimits,
+    /**
+     * Diagnostics the plan itself decided, carried into every batch it assembles after the
+     * prepared style's own: [LabelCandidateAssembler.glyphRangeUnavailable] when a host-owned-
+     * symbols style has icons but no glyphs template.
+     */
+    private val planDiagnostics: List<RenderDiagnostic> = emptyList(),
+    /** The prepared style's diagnostics as a batch reports them, recompiled ones replacing its own under an override. */
+    private val styleDiagnostics: List<RenderDiagnostic> = style.diagnostics,
+    /** The `text-field` override's identity, folded into [contentKey]; null without one. */
+    private val textFieldIdentity: String? = null,
 ) {
     /**
      * Packs [ranges] into one atlas, lays every surviving label out against it, and assembles the
@@ -265,17 +329,22 @@ internal class LabelAssembly internal constructor(
 
         for ((index, label) in pending.withIndex()) {
             if (index and CANCELLATION_CHECK_MASK == 0) currentCoroutineContext().ensureActive()
-            val laidOut = LabelLayout.layOut(label.text, atlas, whitespace, label.textStyle)
-            if (laidOut == null) {
+            val text = label.text
+            val laidOut = text?.let { LabelLayout.layOut(it.text, atlas, whitespace, it.textStyle) }
+            if (text != null && laidOut == null) {
                 // The label wanted glyphs the acquired atlas does not cover, so it lays out to
                 // nothing. Counted rather than dropped in silence: 0.2.0 shipped an icon layer
                 // that emitted nothing at all when every feature named a sprite the atlas lacked,
                 // and a whole-layer loss reported as no signal whatsoever was a real defect.
+                //
+                // Under the host-owned-symbols profile the icon still stands alone, and only the
+                // text is counted as lost.
+                val iconRetained = style.policy.hostOwnedSymbols && label.icon != null
                 if (featureSkips.containsKey(label.program.layerOrder)) {
-                    layoutLosses.getOrPut(label.program.layerOrder) { LayoutLoss() }
-                        .record(label.requestedTile)
+                    val loss = layoutLosses.getOrPut(label.program.layerOrder) { LayoutLoss() }
+                    if (iconRetained) loss.recordTextLost(label.requestedTile) else loss.record(label.requestedTile)
                 }
-                continue
+                if (!iconRetained) continue
             }
             // Appended only when a candidate actually survives layout, so the list holds one entry
             // per (layer, zoom) genuinely present in the batch and never an orphan.
@@ -283,40 +352,11 @@ internal class LabelAssembly internal constructor(
                 layerStyles += label.layerStyle
                 layerStyles.lastIndex
             }
-            candidates += LabelCandidate(
-                layerStyleIndex = styleIndex,
-                requestedTile = label.requestedTile,
-                sourceTile = label.sourceTile,
-                longitude = label.longitude,
-                latitude = label.latitude,
-                placement = label.placement,
-                line = label.line,
-                rotationDegrees = label.rotationDegrees,
-                symbolSpacing = label.symbolSpacing,
-                keepUpright = label.keepUpright,
-                avoidEdges = label.avoidEdges,
-                zOrder = label.zOrder,
-                textRotationDegrees = label.textRotationDegrees,
-                maxAngleDegrees = label.maxAngleDegrees,
-                rotationAlignment = label.rotationAlignment,
-                pitchAlignment = label.pitchAlignment,
-                textOptional = label.textOptional,
-                glyphs = laidOut.quads,
-                boundingBox = laidOut.box,
-                icon = label.icon,
-                overlap = label.overlap,
-                ignorePlacement = label.ignorePlacement,
-                padding = label.padding,
-                sortKey = label.sortKey,
-                color = label.color,
-                haloColor = label.haloColor,
-                opacity = label.opacity,
-                haloWidth = label.haloWidth,
-                haloBlur = label.haloBlur,
-                translateX = label.translate.first,
-                translateY = label.translate.second,
-                translateAlignment = label.translateAlignment,
-            )
+            candidates += if (text != null && laidOut != null) {
+                textCandidate(label, styleIndex, text, laidOut)
+            } else {
+                iconOnlyCandidate(label, styleIndex)
+            }
         }
 
         return LabelCandidateBatch(
@@ -339,9 +379,101 @@ internal class LabelAssembly internal constructor(
             // LINE_PLACEMENT_LABEL_EXCLUDED diagnostic explain why a layer visible through
             // labelLayerDescriptors contributed no candidates. Without these, a caller reading
             // only this batch could not distinguish an excluded layer from an empty one.
-            diagnostics = style.diagnostics + labelDiagnostics(layoutLosses).onEach(record),
+            diagnostics = styleDiagnostics + planDiagnostics + labelDiagnostics(layoutLosses).onEach(record),
         )
     }
+
+    private fun textCandidate(
+        label: PendingLabel,
+        styleIndex: Int,
+        text: PendingText,
+        laidOut: LaidOutLabel,
+    ): LabelCandidate = LabelCandidate(
+        layerStyleIndex = styleIndex,
+        requestedTile = label.requestedTile,
+        sourceTile = label.sourceTile,
+        longitude = label.longitude,
+        latitude = label.latitude,
+        placement = label.placement,
+        line = label.line,
+        rotationDegrees = label.rotationDegrees,
+        symbolSpacing = label.symbol.symbolSpacing,
+        keepUpright = text.keepUpright,
+        avoidEdges = label.symbol.avoidEdges,
+        zOrder = label.symbol.zOrder,
+        textRotationDegrees = text.textRotationDegrees,
+        maxAngleDegrees = text.maxAngleDegrees,
+        rotationAlignment = text.rotationAlignment,
+        pitchAlignment = text.pitchAlignment,
+        textOptional = text.textOptional,
+        glyphs = laidOut.quads,
+        boundingBox = laidOut.box,
+        icon = label.icon,
+        overlap = text.overlap,
+        ignorePlacement = text.ignorePlacement,
+        padding = text.padding,
+        sortKey = label.symbol.sortKey,
+        color = text.color,
+        haloColor = text.haloColor,
+        opacity = text.opacity,
+        haloWidth = text.haloWidth,
+        haloBlur = text.haloBlur,
+        translateX = text.translate.first,
+        translateY = text.translate.second,
+        translateAlignment = text.translateAlignment,
+        featureId = label.featureId,
+        text = text.text,
+        textSize = text.textSize,
+    )
+
+    /**
+     * A candidate that is its icon alone. Its text half is inert, and inert in the direction that
+     * is harmless to a host that does not check [LabelCandidate.glyphs] first: a zero-area box at
+     * the anchor with no padding, permission to overlap and to be ignored by placement, so it can
+     * neither block nor be blocked, and transparent zero-opacity paint, so it draws nothing.
+     * [LabelCandidate.textOptional] is true because the icon is meant to stand without text.
+     *
+     * Its icon is never fitted to text: Mapbox fits an icon only to shaped text (`fitIconToText`
+     * runs only when the feature has a horizontal shaping) and otherwise draws it at sprite size,
+     * so an `icon-text-fit` with no text to fit becomes [IconTextFit.NONE] here.
+     */
+    private fun iconOnlyCandidate(label: PendingLabel, styleIndex: Int): LabelCandidate = LabelCandidate(
+        layerStyleIndex = styleIndex,
+        requestedTile = label.requestedTile,
+        sourceTile = label.sourceTile,
+        longitude = label.longitude,
+        latitude = label.latitude,
+        placement = label.placement,
+        line = label.line,
+        rotationDegrees = label.rotationDegrees,
+        symbolSpacing = label.symbol.symbolSpacing,
+        keepUpright = false,
+        avoidEdges = label.symbol.avoidEdges,
+        zOrder = label.symbol.zOrder,
+        textRotationDegrees = 0.0,
+        maxAngleDegrees = INERT_MAX_ANGLE_DEGREES,
+        rotationAlignment = SymbolAlignment.AUTO,
+        pitchAlignment = SymbolAlignment.AUTO,
+        textOptional = true,
+        glyphs = emptyList(),
+        boundingBox = LabelBox(0.0, 0.0, 0.0, 0.0),
+        icon = label.icon?.let { icon -> if (icon.textFit == IconTextFit.NONE) icon else icon.copy(textFit = IconTextFit.NONE) },
+        overlap = SymbolOverlap.ALWAYS,
+        ignorePlacement = true,
+        padding = 0.0,
+        sortKey = label.symbol.sortKey,
+        color = 0,
+        haloColor = 0,
+        opacity = 0.0,
+        haloWidth = 0.0,
+        haloBlur = 0.0,
+        translateX = 0.0,
+        translateY = 0.0,
+        translateAlignment = SymbolAlignment.MAP,
+        featureId = label.featureId,
+        text = null,
+        textSize = null,
+    )
 
     /** One entry per layer per code, in layer order, so the list is identical between runs. */
     private fun labelDiagnostics(layoutLosses: Map<Int, LayoutLoss>): List<RenderDiagnostic> =
@@ -365,7 +497,7 @@ internal class LabelAssembly internal constructor(
      * consumer another style's cached candidates.
      */
     private fun contentKey(ranges: List<AcquiredGlyphRange>): String = buildString {
-        append("rentile-label-candidates-2\n")
+        append("rentile-label-candidates-3\n")
         append(style.digest)
         append('\n')
         append(contentDigests.joinToString(","))
@@ -376,6 +508,7 @@ internal class LabelAssembly internal constructor(
         // Two different tile sets can share every MVT and glyph digest - overzoomed siblings of
         // one source tile do exactly that - and would otherwise alias onto one content key.
         append(requestedTiles.joinToString(",") { "${it.z}/${it.x}/${it.y}" })
+        appendTextFieldIdentity(textFieldIdentity)
     }.sha256Hex()
 }
 
@@ -398,6 +531,10 @@ internal object LabelCandidateAssembler {
      * [resources] is keyed by (source id digest, requested tile) - the same identity
      * `acquireLabelTiles` acquires by - and [iconImageNameOf] is the rasterizer's own
      * `icon-image` evaluator, passed in rather than reimplemented.
+     *
+     * [textAvailable] is false when the style resolves no glyphs template: no text can be laid
+     * out, so every feature is treated as having none, which under the host-owned-symbols profile
+     * still leaves its icon. [planDiagnostics] ride into every batch the plan assembles.
      */
     suspend fun plan(
         style: CompiledPreparedStyle,
@@ -405,7 +542,13 @@ internal object LabelCandidateAssembler {
         resources: Map<Pair<String, TileId>, VectorResource>,
         limits: ResourceLimits,
         iconImageNameOf: (StyleValue, DecodedVectorFeature) -> String?,
+        textAvailable: Boolean = true,
+        planDiagnostics: List<RenderDiagnostic> = emptyList(),
+        labelLayers: List<CompiledLabelLayer> = style.labelLayers,
+        styleDiagnostics: List<RenderDiagnostic> = style.diagnostics,
+        textFieldIdentity: String? = null,
     ): LabelAssembly {
+        val hostSymbols = style.policy.hostOwnedSymbols
         val pending = mutableListOf<PendingLabel>()
         val ranges = mutableSetOf<GlyphRangeRequest>()
         val complexScript = mutableMapOf<Int, ComplexScriptExclusion>()
@@ -420,7 +563,7 @@ internal object LabelCandidateAssembler {
         // Style layer order, then requested tile, then feature index: iterating in the contract's
         // own order means the emitted list is already sorted, and the explicit sort below only has
         // to prove it rather than establish it.
-        for (layer in style.labelLayers.sortedBy { it.textProgram?.layerOrder ?: Int.MAX_VALUE }) {
+        for (layer in labelLayers.sortedBy { it.textProgram?.layerOrder ?: Int.MAX_VALUE }) {
             val program = layer.textProgram ?: continue
             for (tile in tiles.sortedWith(TILE_ORDER)) {
                 currentCoroutineContext().ensureActive()
@@ -446,10 +589,15 @@ internal object LabelCandidateAssembler {
                     // Evaluation strictly precedes the script gate. Eleven corpus layers wrap
                     // text-field in is-supported-script and select a Latin fallback themselves, so
                     // gating on the raw property would exclude labels the style already healed.
-                    val text = evaluateText(program, context, feature) ?: continue
+                    val text = program.text?.takeIf { textAvailable }?.let { evaluateText(program, it, context, feature) }
+                    // Under the host-owned-symbols profile a feature whose layer has an icon is a
+                    // candidate even without text, because nothing else will draw that icon. Under
+                    // the default profile a feature without text is not a label at all.
+                    val iconFallback = hostSymbols && (program.icon != null || program.iconRequestedButUnsupported)
+                    if (text == null && !iconFallback) continue
 
                     val skips = featureSkips.getOrPut(program.layerOrder) {
-                        LabelFeatureSkips(layer.descriptor.id)
+                        LabelFeatureSkips(layer.descriptor.id, hostSymbols)
                     }
 
                     val placement = try {
@@ -503,7 +651,13 @@ internal object LabelCandidateAssembler {
                     // Every later loss is counted against this denominator and in this same unit.
                     skips.candidates += inside.size
 
-                    if (ScriptSupport.requiresComplexShaping(text)) {
+                    // Set when this feature's text is lost but its icon may still carry it, which
+                    // only the host-owned-symbols profile allows; [textLossIsSkip] then says
+                    // whether that loss, had there been no icon, would have been a skipped label.
+                    var textLost = false
+                    var textLossIsSkip = false
+                    var resolved: ResolvedLabel? = null
+                    if (text != null && ScriptSupport.requiresComplexShaping(text)) {
                         // Counted per layer, never per feature: a dense tile carries thousands of
                         // features in one script, and one diagnostic per feature would be a
                         // stream of identical entries carrying no extra information.
@@ -512,43 +666,65 @@ internal object LabelCandidateAssembler {
                         }
                         exclusion.features += inside.size
                         exclusion.tiles += tile
-                        continue
+                        if (!iconFallback) continue
+                        textLost = true
+                    } else if (text != null) {
+                        // Everything left is property evaluation against this feature's own data. A
+                        // single feature carrying a value no text property can use must not take the
+                        // batch down with it: 0.2.0 spent two rounds removing exactly that failure for
+                        // icons, and ADR 0026's reasoning is unchanged here. The feature is skipped,
+                        // counted, and reported once for its layer.
+                        resolved = try {
+                            val fontStack = fontStackOf(program, context, tile)
+                            val size = program.size.evaluate(context).asNumber("text-size", tile)
+                            // Not a failure and not a loss: a style that resolves text-size to zero
+                            // is asking for no visible text at this zoom, exactly as placeIcons reads
+                            // an icon-size of zero. It leaves the denominator rather than sitting in
+                            // it uncounted, so the reported counts still account for every label the
+                            // layer wanted - and a layer that deliberately hides its text does not
+                            // start reporting a loss for doing so. Under the host-owned-symbols
+                            // profile the icon is then drawn alone, as Mapbox draws it.
+                            if (size <= 0.0) {
+                                if (!iconFallback) skips.candidates -= inside.size
+                                null
+                            } else ResolvedLabel(
+                                fontStack = fontStack,
+                                textStyle = textStyleFor(program, context, fontStack, size, tile),
+                                textSize = program.sizeCurve.resolve(
+                                    property = program.size,
+                                    context = context,
+                                    tileZoom = tile.z,
+                                    tileZoomSize = size,
+                                    specificationDefault = TEXT_SIZE_DEFAULT,
+                                ),
+                                scalars = evaluateScalars(program, context, tile),
+                                layerStyle = layerStyles.getOrPut(program.layerOrder to tile.z) {
+                                    resolveLayerStyle(program.layerOrder, layer.descriptor.id, tile.z)
+                                },
+                            )
+                        } catch (error: RasterizationException) {
+                            if (!iconFallback) {
+                                skips.skipped += inside.size
+                                skips.tiles += tile
+                                continue
+                            }
+                            textLost = true
+                            textLossIsSkip = true
+                            null
+                        }
+                        if (resolved == null && !iconFallback) continue
                     }
 
-                    // Everything left is property evaluation against this feature's own data. A
-                    // single feature carrying a value no text property can use must not take the
-                    // batch down with it: 0.2.0 spent two rounds removing exactly that failure for
-                    // icons, and ADR 0026's reasoning is unchanged here. The feature is skipped,
-                    // counted, and reported once for its layer.
-                    val resolved = try {
-                        val fontStack = fontStackOf(program, context, tile)
-                        val size = program.size.evaluate(context).asNumber("text-size", tile)
-                        // Not a failure and not a loss: a style that resolves text-size to zero
-                        // is asking for no visible text at this zoom, exactly as placeIcons reads
-                        // an icon-size of zero. It leaves the denominator rather than sitting in
-                        // it uncounted, so the reported counts still account for every label the
-                        // layer wanted - and a layer that deliberately hides its text does not
-                        // start reporting a loss for doing so.
-                        if (size <= 0.0) {
-                            skips.candidates -= inside.size
-                            null
-                        } else ResolvedLabel(
-                            fontStack = fontStack,
-                            textStyle = textStyleFor(program, context, fontStack, size, tile),
-                            scalars = evaluateScalars(program, context, tile),
-                            layerStyle = layerStyles.getOrPut(program.layerOrder to tile.z) {
-                                resolveLayerStyle(program.layerOrder, layer.descriptor.id, tile.z)
-                            },
-                        )
-                    } catch (error: RasterizationException) {
+                    // A candidate without text still needs the symbol-level properties its text
+                    // half would otherwise have supplied.
+                    val symbol = resolved?.scalars?.symbol ?: try {
+                        evaluateSymbolScalars(program, context, tile)
+                    } catch (_: RasterizationException) {
                         skips.skipped += inside.size
                         skips.tiles += tile
                         continue
-                    } ?: continue
-                    val fontStack = resolved.fontStack
-                    val textStyle = resolved.textStyle
-                    val scalars = resolved.scalars
-                    val resolvedIcon = iconRefFor(style, program.layerOrder, tile, feature, context, iconImageNameOf)
+                    }
+                    val resolvedIcon = iconRefFor(program, tile, feature, context, iconImageNameOf, style)
                     if (resolvedIcon.requested) {
                         val tally = iconSkips.getOrPut(program.layerOrder) {
                             LabelIconSkips(layer.descriptor.id)
@@ -560,6 +736,58 @@ internal object LabelCandidateAssembler {
                             tally.tiles += tile
                         }
                     }
+
+                    val dimension = (1L shl sourceTile.z).toDouble()
+                    fun longitudeOf(point: VectorCoordinate) = (sourceTile.x + point.x.toDouble() / extent) / dimension * 360.0 - 180.0
+                    fun latitudeOf(point: VectorCoordinate) = mercatorLatitude(sourceTile.y + point.y.toDouble() / extent, dimension)
+                    fun pendingAt(anchorIndex: Int, anchor: GeometryAnchor, pendingText: PendingText?) = PendingLabel(
+                        program = program,
+                        layerId = layer.descriptor.id,
+                        layerStyle = resolved?.layerStyle ?: layerStyles.getOrPut(program.layerOrder to tile.z) {
+                            resolveLayerStyle(program.layerOrder, layer.descriptor.id, tile.z)
+                        },
+                        requestedTile = tile,
+                        sourceTile = sourceTile,
+                        featureIndex = featureIndex,
+                        anchorIndex = anchorIndex,
+                        featureId = feature.id?.toLong(),
+                        longitude = longitudeOf(anchor.point),
+                        latitude = latitudeOf(anchor.point),
+                        placement = placement,
+                        line = anchor.line.map { point -> LabelLinePoint(longitudeOf(point), latitudeOf(point)) },
+                        rotationDegrees = anchor.rotationDegrees,
+                        symbol = symbol,
+                        text = pendingText,
+                        icon = resolvedIcon.ref,
+                    )
+
+                    if (resolved == null || text == null) {
+                        // Only the host-owned-symbols profile reaches here: the icon carries the
+                        // candidate alone.
+                        if (resolvedIcon.ref == null) {
+                            when {
+                                // The icon was wanted and could not be emitted: the label is lost.
+                                resolvedIcon.skipped || textLossIsSkip -> {
+                                    skips.skipped += inside.size
+                                    skips.tiles += tile
+                                }
+                                // A lost text stays counted where it already is, by script.
+                                textLost -> Unit
+                                // icon-size resolved to zero: nothing visible was asked for.
+                                else -> skips.candidates -= inside.size
+                            }
+                            continue
+                        }
+                        if (textLost) {
+                            skips.textLost += inside.size
+                            skips.tiles += tile
+                        }
+                        for ((anchorIndex, anchor) in inside) pending += pendingAt(anchorIndex, anchor, null)
+                        continue
+                    }
+                    val fontStack = resolved.fontStack
+                    val textStyle = resolved.textStyle
+                    val scalars = resolved.scalars
 
                     var index = 0
                     while (index < text.length) {
@@ -583,52 +811,28 @@ internal object LabelCandidateAssembler {
                         ranges += GlyphRangeRequest(fontStack, GlyphResourceAcquirer.rangeStartFor(codepoint))
                     }
 
-                    val dimension = (1L shl sourceTile.z).toDouble()
-                    for ((anchorIndex, anchor) in inside) {
-                        pending += PendingLabel(
-                            program = program,
-                            layerId = layer.descriptor.id,
-                            layerStyle = resolved.layerStyle,
-                            requestedTile = tile,
-                            sourceTile = sourceTile,
-                            featureIndex = featureIndex,
-                            anchorIndex = anchorIndex,
-                            longitude = (sourceTile.x + anchor.point.x.toDouble() / extent) /
-                                dimension * 360.0 - 180.0,
-                            latitude = mercatorLatitude(sourceTile.y + anchor.point.y.toDouble() / extent, dimension),
-                            placement = placement,
-                            line = anchor.line.map { point ->
-                                LabelLinePoint(
-                                    longitude = (sourceTile.x + point.x.toDouble() / extent) / dimension * 360.0 - 180.0,
-                                    latitude = mercatorLatitude(sourceTile.y + point.y.toDouble() / extent, dimension),
-                                )
-                            },
-                            rotationDegrees = anchor.rotationDegrees,
-                            symbolSpacing = scalars.symbolSpacing,
-                            keepUpright = scalars.keepUpright,
-                            avoidEdges = scalars.avoidEdges,
-                            zOrder = scalars.zOrder,
-                            textRotationDegrees = scalars.textRotationDegrees,
-                            maxAngleDegrees = scalars.maxAngleDegrees,
-                            rotationAlignment = scalars.rotationAlignment,
-                            pitchAlignment = scalars.pitchAlignment,
-                            textOptional = scalars.textOptional,
-                            text = text,
-                            textStyle = textStyle,
-                            icon = resolvedIcon.ref,
-                            overlap = scalars.overlap,
-                            ignorePlacement = scalars.ignorePlacement,
-                            padding = scalars.padding,
-                            sortKey = scalars.sortKey,
-                            color = scalars.color,
-                            haloColor = scalars.haloColor,
-                            opacity = scalars.opacity,
-                            haloWidth = scalars.haloWidth,
-                            haloBlur = scalars.haloBlur,
-                            translate = scalars.translate,
-                            translateAlignment = scalars.translateAlignment,
-                        )
-                    }
+                    val pendingText = PendingText(
+                        text = text,
+                        textStyle = textStyle,
+                        textSize = resolved.textSize,
+                        keepUpright = scalars.keepUpright,
+                        textRotationDegrees = scalars.textRotationDegrees,
+                        maxAngleDegrees = scalars.maxAngleDegrees,
+                        rotationAlignment = scalars.rotationAlignment,
+                        pitchAlignment = scalars.pitchAlignment,
+                        textOptional = scalars.textOptional,
+                        overlap = scalars.overlap,
+                        ignorePlacement = scalars.ignorePlacement,
+                        padding = scalars.padding,
+                        color = scalars.color,
+                        haloColor = scalars.haloColor,
+                        opacity = scalars.opacity,
+                        haloWidth = scalars.haloWidth,
+                        haloBlur = scalars.haloBlur,
+                        translate = scalars.translate,
+                        translateAlignment = scalars.translateAlignment,
+                    )
+                    for ((anchorIndex, anchor) in inside) pending += pendingAt(anchorIndex, anchor, pendingText)
                 }
             }
         }
@@ -655,6 +859,9 @@ internal object LabelCandidateAssembler {
             contentDigests = resources.values.map { it.contentDigest }.distinct().sorted(),
             requestedTiles = tiles.sortedWith(TILE_ORDER),
             limits = limits,
+            planDiagnostics = planDiagnostics,
+            styleDiagnostics = styleDiagnostics,
+            textFieldIdentity = textFieldIdentity,
         )
     }
 
@@ -667,6 +874,8 @@ internal object LabelCandidateAssembler {
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
         limits: ResourceLimits,
+        styleDiagnostics: List<RenderDiagnostic> = style.diagnostics,
+        textFieldIdentity: String? = null,
     ): LabelCandidateBatch {
         val atlas = GlyphAtlasPacker.pack(emptyList(), limits)
         return LabelCandidateBatch(
@@ -683,8 +892,11 @@ internal object LabelCandidateAssembler {
                 contentKey = atlas.contentKey,
                 entries = atlas.entries,
             ),
-            contentKey = "rentile-label-candidates-2\n${style.digest}\n\n".sha256Hex(),
-            diagnostics = style.diagnostics + glyphRangeUnavailable(tiles),
+            contentKey = buildString {
+                append("rentile-label-candidates-3\n${style.digest}\n\n")
+                appendTextFieldIdentity(textFieldIdentity)
+            }.sha256Hex(),
+            diagnostics = styleDiagnostics + glyphRangeUnavailable(tiles),
         )
     }
 
@@ -700,6 +912,7 @@ internal object LabelCandidateAssembler {
     private class ResolvedLabel(
         val fontStack: String,
         val textStyle: LabelTextStyle,
+        val textSize: LabelSymbolSize,
         val scalars: LabelScalars,
         val layerStyle: LabelLayerStyle,
     )
@@ -717,14 +930,11 @@ internal object LabelCandidateAssembler {
     }
 
     private data class LabelScalars(
-        val sortKey: Double,
-        val symbolSpacing: Double,
+        val symbol: SymbolScalars,
         val padding: Double,
         val overlap: SymbolOverlap,
         val ignorePlacement: Boolean,
         val keepUpright: Boolean,
-        val avoidEdges: Boolean,
-        val zOrder: SymbolZOrder,
         val textRotationDegrees: Double,
         val maxAngleDegrees: Double,
         val rotationAlignment: SymbolAlignment,
@@ -766,18 +976,21 @@ internal object LabelCandidateAssembler {
                 affectedTiles = listOf(tile),
             )
         }
+        val sortKey = sortKeyOf(program, context, tile)
+        val overlap = overlapOf(program.overlap.evaluate(context), "text-overlap", tile)
+        val ignorePlacement = program.ignorePlacement.evaluate(context).asBoolean("text-ignore-placement", tile)
+        val keepUpright = program.keepUpright.evaluate(context).asBoolean("text-keep-upright", tile)
         return LabelScalars(
-            sortKey = when (val value = program.sortKey?.evaluate(context)) {
-                null, StyleValue.Null -> 0.0
-                else -> value.asNumber("symbol-sort-key", tile)
-            },
-            symbolSpacing = symbolSpacing,
+            symbol = SymbolScalars(
+                sortKey = sortKey,
+                symbolSpacing = symbolSpacing,
+                avoidEdges = program.avoidEdges.evaluate(context).asBoolean("symbol-avoid-edges", tile),
+                zOrder = zOrderOf(program.zOrder.evaluate(context), tile),
+            ),
             padding = padding,
-            overlap = overlapOf(program.overlap.evaluate(context), "text-overlap", tile),
-            ignorePlacement = program.ignorePlacement.evaluate(context).asBoolean("text-ignore-placement", tile),
-            keepUpright = program.keepUpright.evaluate(context).asBoolean("text-keep-upright", tile),
-            avoidEdges = program.avoidEdges.evaluate(context).asBoolean("symbol-avoid-edges", tile),
-            zOrder = zOrderOf(program.zOrder.evaluate(context), tile),
+            overlap = overlap,
+            ignorePlacement = ignorePlacement,
+            keepUpright = keepUpright,
             textRotationDegrees = textRotationDegrees,
             maxAngleDegrees = maxAngleDegrees,
             rotationAlignment = alignmentOf(
@@ -798,6 +1011,36 @@ internal object LabelCandidateAssembler {
             ),
         )
     }
+
+    /**
+     * The symbol-level properties of a candidate with no text half, validated as the text path
+     * validates them: an unusable value skips the feature.
+     */
+    private fun evaluateSymbolScalars(
+        program: CompiledLabelTextProgram,
+        context: StyleEvaluationContext,
+        tile: TileId,
+    ): SymbolScalars {
+        val symbolSpacing = program.spacing.evaluate(context).asNumber("symbol-spacing", tile)
+        if (symbolSpacing <= 0.0) {
+            throw RasterizationException(
+                message = "symbol-spacing did not evaluate to a positive number",
+                affectedTiles = listOf(tile),
+            )
+        }
+        return SymbolScalars(
+            sortKey = sortKeyOf(program, context, tile),
+            symbolSpacing = symbolSpacing,
+            avoidEdges = program.avoidEdges.evaluate(context).asBoolean("symbol-avoid-edges", tile),
+            zOrder = zOrderOf(program.zOrder.evaluate(context), tile),
+        )
+    }
+
+    private fun sortKeyOf(program: CompiledLabelTextProgram, context: StyleEvaluationContext, tile: TileId): Double =
+        when (val value = program.sortKey?.evaluate(context)) {
+            null, StyleValue.Null -> 0.0
+            else -> value.asNumber("symbol-sort-key", tile)
+        }
 
     private fun textStyleFor(
         program: CompiledLabelTextProgram,
@@ -862,10 +1105,11 @@ internal object LabelCandidateAssembler {
      */
     private fun evaluateText(
         program: CompiledLabelTextProgram,
+        textField: CompiledStyleProperty,
         context: StyleEvaluationContext,
         feature: DecodedVectorFeature,
     ): String? {
-        val raw = when (val value = program.text.evaluate(context)) {
+        val raw = when (val value = textField.evaluate(context)) {
             is StyleValue.StringValue -> value.value
             is StyleValue.NumberValue -> value.value.toString().removeSuffix(".0")
             is StyleValue.BooleanValue -> value.value.toString()
@@ -919,15 +1163,13 @@ internal object LabelCandidateAssembler {
     )
 
     private fun iconRefFor(
-        style: CompiledPreparedStyle,
-        layerOrder: Int,
+        textProgram: CompiledLabelTextProgram,
         tile: TileId,
         feature: DecodedVectorFeature,
         context: StyleEvaluationContext,
         iconImageNameOf: (StyleValue, DecodedVectorFeature) -> String?,
+        style: CompiledPreparedStyle,
     ): IconResolution {
-        val labelLayer = style.labelLayers.firstOrNull { it.textProgram?.layerOrder == layerOrder }
-        val textProgram = labelLayer?.textProgram ?: return IconResolution()
         if (textProgram.iconRequestedButUnsupported) {
             return IconResolution(requested = true, skipped = true)
         }
@@ -990,6 +1232,13 @@ internal object LabelCandidateAssembler {
                 avoidEdges = iconLayer.avoidEdges.evaluate(iconContext).asBoolean("symbol-avoid-edges", tile),
                 textFit = textFitOf(iconLayer.textFit.evaluate(iconContext), tile),
                 textFitPadding = iconLayer.textFitPadding.evaluate(iconContext).asNumberList("icon-text-fit-padding", tile, 4),
+                size = iconLayer.sizeCurve.resolve(
+                    property = iconLayer.size,
+                    context = iconContext,
+                    tileZoom = tile.z,
+                    tileZoomSize = size,
+                    specificationDefault = ICON_SIZE_DEFAULT,
+                ),
             ), requested = true)
         } catch (_: RasterizationException) {
             IconResolution(requested = true, skipped = true)
@@ -997,6 +1246,10 @@ internal object LabelCandidateAssembler {
     }
 
     private val TILE_ORDER: Comparator<TileId> = LABEL_TILE_ORDER
+
+    /** The style specification defaults Mapbox falls back to when a size does not evaluate. */
+    private const val TEXT_SIZE_DEFAULT = 16.0
+    private const val ICON_SIZE_DEFAULT = 1.0
 
     private val PENDING_ORDER: Comparator<PendingLabel> = compareBy(
         { it.program.layerOrder },

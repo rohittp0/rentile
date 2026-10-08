@@ -1,5 +1,12 @@
 # Repaired layers degrade and author-intended layers fail
 
+> The last paragraph is superseded in part by
+> [ADR 0035](0035-the-host-can-own-every-symbol-layer.md) for the opt-in `rentile-v1-host-symbols`
+> profile only. That profile repairs nothing in the Output Tile, because it draws no symbol layer
+> there; every icon reaches the host as a Label Candidate, alone when its text is lost, and a
+> failure to emit one degrades with a diagnostic rather than failing. Under `rentile-v1`, the
+> default, this ADR holds as written.
+
 In the Output Tile path, Rentile's compatibility profile retains the icon of a symbol layer whose text it removes whenever that icon's geometry does not depend on the text. Such a layer is retained by repair rather than by the style author's intent, and it is treated differently from a layer the author declared as an icon layer: when a repaired layer cannot be compiled, cannot resolve its sprite, cannot acquire its vector source, or cannot evaluate a per-feature property, it is excluded or skipped with a diagnostic, while an author-intended icon layer keeps failing loudly exactly as it always has.
 
 The asymmetry exists because repair changes what gets fetched and compiled. Before it, these layers were excluded before their properties were ever validated and before their sprite, source, or tiles were ever requested, so a style could prepare and render successfully while carrying constructs the profile cannot support and resources the renderer never touched. Retaining them makes all of that reachable for the first time, and a strict contract applied to newly reachable work converts "an icon is missing" into "the style does not prepare" or "the batch does not render" — a strictly worse outcome than the bug being fixed, and one measured against the rolling corpus rather than imagined. A layer carrying `text-optional: true` is the author declaring that the icon stands alone, so it is author-intended and stays strict.

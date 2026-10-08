@@ -53,6 +53,12 @@ private class SpriteAtlasResolution(
     val causeCode: String? = null,
 )
 
+/** One label layer's compiled program, or none, with the diagnostic that explains a loss. */
+private class LabelProgramCompilation(
+    val program: CompiledLabelTextProgram?,
+    val diagnostic: RenderDiagnostic? = null,
+)
+
 /** The paired-icon half of a label program, including a requested loss that must be reported. */
 private data class LabelIconCompilation(
     val program: CompiledLabelIconProgram? = null,
@@ -68,6 +74,28 @@ internal class StyleCompiler(
     private val json = Json {
         isLenient = false
         allowTrailingComma = false
+    }
+
+    /**
+     * [style]'s label layers with every `text-field` replaced by [textField], compiled exactly as
+     * preparation compiles them - the same admission, the same degradation, the same diagnostics -
+     * so an override behaves like a style that declared it, and nothing else about [style] moves.
+     */
+    fun compileLabelLayersWithTextField(style: CompiledPreparedStyle, textField: JsonElement): LabelLayersWithTextField {
+        val diagnostics = mutableListOf<RenderDiagnostic>()
+        val layers = style.labelLayers.map { labelLayer ->
+            val layout = (labelLayer.layerJson["layout"] as? JsonObject).orEmpty()
+            val compilation = compileLabelProgram(
+                layer = labelLayer.layerJson,
+                layout = JsonObject(layout + ("text-field" to textField)),
+                index = labelLayer.layerIndex,
+                layerId = labelLayer.descriptor.id,
+                hostSymbols = style.policy.hostOwnedSymbols,
+            )
+            compilation.diagnostic?.let(diagnostics::add)
+            labelLayer.copy(textProgram = compilation.program)
+        }
+        return LabelLayersWithTextField(layers, diagnostics)
     }
 
     suspend fun compile(bytes: ByteArray, policy: CompatibilityPolicy, baseUri: String?): CompiledPreparedStyle {
@@ -129,10 +157,15 @@ internal class StyleCompiler(
         // compatibility profile grew this feature, so a style that omits, array-forms, or cannot
         // resolve its sprite reference must keep preparing exactly as it did before - those layers
         // simply fall back to a text-coupled exclusion instead (handled per-layer below).
+        //
+        // Under the host-owned-symbols profile no symbol layer draws into an Output Tile, so none
+        // requires a sprite: every icon-bearing symbol layer only hopes for one, for its label
+        // candidates, and an unresolvable reference skips those icons instead of failing.
+        val hostSymbols = policy.hostOwnedSymbols
         val spriteResolution = when {
-            layers.any(::layerRequiresSpriteUnconditionally) ->
+            layers.any { layerRequiresSpriteUnconditionally(it, hostSymbols) } ->
                 SpriteAtlasResolution(resolveRequiredSpriteAtlas(root, baseUri, secretContext))
-            layers.any(::layerDesiresSpriteForLabel) ->
+            layers.any { layerDesiresSpriteForLabel(it, hostSymbols) } ->
                 resolveOptionalSpriteAtlas(root, baseUri, secretContext)
             else -> SpriteAtlasResolution()
         }
@@ -191,7 +224,8 @@ internal class StyleCompiler(
 
             try {
                 if (type == "symbol") {
-                    if (isAuxiliaryLabelLayer(layer, layout, hidden, sources)) {
+                    var labelLayerAdmitted = false
+                    if (isAuxiliaryLabelLayer(layer, layout, hidden, sources, hostSymbols)) {
                         val source = try {
                             compileLayerVectorSource(
                                 layer = layer,
@@ -214,7 +248,11 @@ internal class StyleCompiler(
                             diagnostics += diagnostic(
                                 code = DiagnosticCode.LABEL_SOURCE_UNAVAILABLE,
                                 severity = DiagnosticSeverity.INFO,
-                                message = "A newly admitted text-bearing symbol layer could not resolve its vector source and is excluded",
+                                message = if (hostSymbols) {
+                                    "A symbol layer could not resolve its vector source and is excluded"
+                                } else {
+                                    "A newly admitted text-bearing symbol layer could not resolve its vector source and is excluded"
+                                },
                                 details = identity + ("causeCode" to error.code.name),
                             )
                             null
@@ -234,37 +272,33 @@ internal class StyleCompiler(
                                 sourceMaximumZoom = source.maxZoom,
                                 layerJson = sanitizedLabelLayerJson(layer),
                             )
-                            val textProgram = try {
-                                compileLabelTextProgram(layer, layout, index, layerId)
-                            } catch (error: CancellationException) {
-                                    // Cancellation is control flow, not a Rentile failure (ADR
-                                    // 0011): it propagates unwrapped and must never be degraded
-                                    // into an exclusion.
-                                    throw error
-                            } catch (error: StylePreparationException) {
-                                    // The filter and every text-field/layout/paint construct
-                                    // compiled here are newly reachable: this layer never held a
-                                    // compiled text program before this compatibility profile grew
-                                    // this feature. ADR 0026's governing rule applies exactly as it
-                                    // does to a text-coupled icon layer - no style which prepared
-                                    // successfully before may fail to prepare after - so a rejected
-                                    // construct degrades only the new text program to null. It must
-                                    // never remove the descriptor above, which every consumer
-                                    // already relied on for raw MVT before this profile existed.
-                                    diagnostics += diagnostic(
-                                        code = DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT,
-                                        severity = DiagnosticSeverity.INFO,
-                                        message = "A text-bearing symbol layer uses an unsupported text construct and is excluded",
-                                        details = identity,
-                                    )
-                                null
-                            }
+                            // The filter and every text-field/layout/paint construct compiled
+                            // here are newly reachable: this layer never held a compiled text
+                            // program before this compatibility profile grew this feature. ADR
+                            // 0026's governing rule applies exactly as it does to a text-coupled
+                            // icon layer - no style which prepared successfully before may fail to
+                            // prepare after - so a rejected construct degrades only the new text
+                            // program to null. It must never remove the descriptor above, which
+                            // every consumer already relied on for raw MVT before this profile
+                            // existed.
+                            val compilation = compileLabelProgram(layer, layout, index, layerId, hostSymbols)
+                            compilation.diagnostic?.let(diagnostics::add)
                             labelLayers += CompiledLabelLayer(
                                 descriptor = descriptor,
                                 source = source,
-                                textProgram = textProgram,
+                                textProgram = compilation.program,
+                                layerJson = layer,
+                                layerIndex = index,
                             )
+                            labelLayerAdmitted = true
                         }
+                    }
+                    if (hostSymbols) {
+                        // The host draws every symbol layer from label candidates, so none reaches
+                        // the Output Tile and none is compiled for it: no icon draw layer, no
+                        // sprite requirement, no vector source fetched for it alone.
+                        hostOwnedSymbolDiagnostic(layout, hidden, identity, labelLayerAdmitted)?.let(diagnostics::add)
+                        continue
                     }
                     val classification = classifySymbol(layout, hidden, identity)
                     // Reuse the label program's already compatibility-gated text collision
@@ -543,19 +577,114 @@ internal class StyleCompiler(
             .toMap(),
     ).canonicalJson()
 
+    /**
+     * Whether a symbol layer is a label layer. Under [CompatibilityPolicy.RentileV1] that takes
+     * meaningful text; under [CompatibilityPolicy.RentileV1HostSymbols] meaningful text or a
+     * meaningful `icon-image`, because there the host draws every icon too.
+     */
     private fun isAuxiliaryLabelLayer(
         layer: JsonObject,
         layout: JsonObject,
         hidden: Boolean,
         sources: JsonObject,
+        hostSymbols: Boolean,
     ): Boolean {
-        if (hidden || !hasMeaningfulText(layout)) return false
+        val symbolic = hasMeaningfulText(layout) || (hostSymbols && meaningfulLayoutValue(layout, "icon-image"))
+        if (hidden || !symbolic) return false
         val sourceLayer = layer["source-layer"]?.asPrimitive()?.takeIf { it.isString }?.content
         if (sourceLayer == null) return false
         val sourceId = layer["source"]?.asPrimitive()?.takeIf { it.isString }?.content ?: return false
         val source = sources[sourceId] as? JsonObject ?: return false
         return source["type"]?.asPrimitive()?.takeIf { it.isString }?.content == "vector"
     }
+
+    /**
+     * One label layer's compiled program, or null with the diagnostic explaining why it has none.
+     *
+     * Under [CompatibilityPolicy.RentileV1] a text construct the profile cannot compile excludes
+     * the layer's candidates. Under [CompatibilityPolicy.RentileV1HostSymbols] it excludes only the
+     * text when the layer also has an icon: the icon is compiled alone, because the Output Tile no
+     * longer carries it and nothing else would. An icon-only layer compiles with no text half.
+     */
+    private fun compileLabelProgram(
+        layer: JsonObject,
+        layout: JsonObject,
+        index: Int,
+        layerId: String,
+        hostSymbols: Boolean,
+    ): LabelProgramCompilation {
+        val identity = mapOf("layerIndex" to index.toString(), "layerIdDigest" to layerId.sha256Hex())
+        val iconFallback = hostSymbols && meaningfulLayoutValue(layout, "icon-image")
+        val textField = layout["text-field"]?.takeIf { hasMeaningfulText(layout) }
+        if (textField != null) {
+            try {
+                return LabelProgramCompilation(compileLabelTextProgram(layer, layout, index, layerId, textField))
+            } catch (_: StylePreparationException) {
+                if (!iconFallback) {
+                    return LabelProgramCompilation(
+                        program = null,
+                        diagnostic = diagnostic(
+                            code = DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT,
+                            severity = DiagnosticSeverity.INFO,
+                            message = "A text-bearing symbol layer uses an unsupported text construct and is excluded",
+                            details = identity,
+                        ),
+                    )
+                }
+            }
+        }
+        val iconOnly = try {
+            compileLabelTextProgram(layer, layout, index, layerId, textField = null)
+        } catch (_: StylePreparationException) {
+            null
+        }
+        val message = when {
+            textField == null && iconOnly == null ->
+                "A symbol layer uses an unsupported construct and is excluded"
+            textField == null -> return LabelProgramCompilation(iconOnly)
+            iconOnly == null ->
+                "A symbol layer uses an unsupported text construct and is excluded, its icon included"
+            else -> "A symbol layer uses an unsupported text construct; only its icon remains a label candidate"
+        }
+        return LabelProgramCompilation(
+            program = iconOnly,
+            diagnostic = diagnostic(
+                code = DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT,
+                severity = DiagnosticSeverity.INFO,
+                message = message,
+                details = identity,
+            ),
+        )
+    }
+
+    /**
+     * What a symbol layer reports under [CompatibilityPolicy.RentileV1HostSymbols], where none of
+     * them draws into an Output Tile. A layer with neither text nor an icon reports exactly what it
+     * does under [CompatibilityPolicy.RentileV1], because it draws nothing under either.
+     */
+    private fun hostOwnedSymbolDiagnostic(
+        layout: JsonObject,
+        hidden: Boolean,
+        identity: Map<String, String>,
+        labelLayer: Boolean,
+    ): RenderDiagnostic? = when {
+        !hasMeaningfulText(layout) && !meaningfulLayoutValue(layout, "icon-image") ->
+            classifySymbol(layout, hidden, identity).diagnostic
+        hidden -> diagnostic(
+            code = DiagnosticCode.HIDDEN_LAYER_NO_DRAW,
+            severity = DiagnosticSeverity.INFO,
+            message = "A hidden symbol layer is not drawn",
+            details = identity,
+        )
+        else -> diagnostic(
+            code = DiagnosticCode.SYMBOL_LAYER_HOST_OWNED,
+            severity = DiagnosticSeverity.INFO,
+            message = "A symbol layer is drawn by the host from label candidates, not into the Output Tile",
+            details = identity + ("labelLayer" to labelLayer.toString()),
+        )
+    }
+
+    private fun JsonObject.withoutTextProperties(): JsonObject = JsonObject(filterKeys { !it.startsWith("text-") })
 
     private fun isLegacyPlaceNameLabel(layer: JsonObject): Boolean =
         layer["source-layer"]?.asPrimitive()?.takeIf { it.isString }?.content in
@@ -1019,12 +1148,19 @@ internal class StyleCompiler(
      */
     private fun compileLabelTextProgram(
         layer: JsonObject,
-        layout: JsonObject,
+        styleLayout: JsonObject,
         index: Int,
         layerId: String,
+        textField: JsonElement?,
     ): CompiledLabelTextProgram {
         validateVectorLayerKeys(layer, index, layerId)
-        val paint = objectOrEmpty(layer, "paint", index, layerId)
+        // With no text-field there is no text half to compile: the text properties are inert, so
+        // they are dropped and every text property below takes its specification default. That is
+        // what keeps an icon-only program from failing over a text construct it would never use.
+        val layout = if (textField == null) styleLayout.withoutTextProperties() else styleLayout
+        val paint = objectOrEmpty(layer, "paint", index, layerId).let { declared ->
+            if (textField == null) declared.withoutTextProperties() else declared
+        }
         validateLabelTextKeys(layout, paint, index, layerId)
         // text-overlap is the modern spelling and wins when both are present, per the style
         // specification. Preserve "cooperative" as its own value so the viewport-owning consumer
@@ -1044,11 +1180,12 @@ internal class StyleCompiler(
         return CompiledLabelTextProgram(
             layerOrder = index,
             filter = compileFilter(layer["filter"], index, layerId),
-            text = compileProperty(layout.getValue("text-field"), StyleType.VALUE, index, layerId, "text-field"),
+            text = textField?.let { compileProperty(it, StyleType.VALUE, index, layerId, "text-field") },
             font = compileFontProperty(layout["text-font"], index, layerId),
             size = compilePropertyWithDefault(
                 layout["text-size"], JsonPrimitive(16.0), StyleType.NUMBER, index, layerId, "text-size",
             ),
+            sizeCurve = SymbolSizeCurve.of(layout["text-size"]),
             placement = compilePropertyWithDefault(
                 layout["symbol-placement"], JsonPrimitive("point"), StyleType.STRING, index, layerId, "symbol-placement",
             ),
@@ -1180,6 +1317,7 @@ internal class StyleCompiler(
         return CompiledLabelIconProgram(
             image = compileProperty(image, StyleType.VALUE, index, layerId, "icon-image"),
             size = compilePropertyWithDefault(layout["icon-size"], JsonPrimitive(1.0), StyleType.NUMBER, index, layerId, "icon-size"),
+            sizeCurve = SymbolSizeCurve.of(layout["icon-size"]),
             opacity = compilePropertyWithDefault(paint["icon-opacity"], JsonPrimitive(1.0), StyleType.NUMBER, index, layerId, "icon-opacity"),
             color = compileColorPropertyWithDefault(paint["icon-color"], JsonPrimitive("#000000"), index, layerId, "icon-color"),
             haloColor = compileColorPropertyWithDefault(paint["icon-halo-color"], JsonPrimitive("rgba(0,0,0,0)"), index, layerId, "icon-halo-color"),
@@ -2004,7 +2142,7 @@ internal class StyleCompiler(
      * unresolvable sprite reference must still fail preparation loudly for all of these, exactly
      * as it did before this profile retained any icon coupled to required text.
      */
-    private fun layerRequiresSpriteUnconditionally(element: JsonElement): Boolean {
+    private fun layerRequiresSpriteUnconditionally(element: JsonElement, hostSymbols: Boolean): Boolean {
         val layer = element as? JsonObject ?: return false
         val layout = layer["layout"] as? JsonObject ?: JsonObject(emptyMap())
         if (layout["visibility"]?.asPrimitive()?.content == "none") return false
@@ -2018,7 +2156,8 @@ internal class StyleCompiler(
             // retained, so it never needed an atlas either, and demanding one would fail a style
             // that used to prepare. Together the two clauses reproduce exactly the set of symbol
             // layers this profile was already drawing icons for.
-            "symbol" -> meaningfulLayoutValue(layout, "icon-image") &&
+            // Under the host-owned-symbols profile no symbol layer draws into an Output Tile.
+            "symbol" -> !hostSymbols && meaningfulLayoutValue(layout, "icon-image") &&
                 (
                     !meaningfulLayoutValue(layout, "text-field") ||
                         (authorDeclaredTextOptional(layout) && retainsIconIndependentOfText(layout))
@@ -2058,12 +2197,13 @@ internal class StyleCompiler(
         return meaningfulLayoutValue(layout, "text-field") && retainsIconIndependentOfText(layout)
     }
 
-    private fun layerDesiresSpriteForLabel(element: JsonElement): Boolean {
+    private fun layerDesiresSpriteForLabel(element: JsonElement, hostSymbols: Boolean): Boolean {
         val layer = element as? JsonObject ?: return false
         if (layer["type"]?.asPrimitive()?.content != "symbol") return false
         val layout = layer["layout"] as? JsonObject ?: JsonObject(emptyMap())
         if (layout["visibility"]?.asPrimitive()?.content == "none") return false
-        return meaningfulLayoutValue(layout, "text-field") && meaningfulLayoutValue(layout, "icon-image")
+        // Every icon is a label icon under the host-owned-symbols profile, text or not.
+        return (hostSymbols || meaningfulLayoutValue(layout, "text-field")) && meaningfulLayoutValue(layout, "icon-image")
     }
 
     private fun resolveAbsoluteSpriteUrl(spriteReference: String, baseUri: String?): String? = when {

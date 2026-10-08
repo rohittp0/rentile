@@ -1,6 +1,13 @@
 package com.rohittp.rentile
 
+import com.rohittp.rentile.internal.canonicalJson
 import com.rohittp.rentile.internal.createBasemapRasterizer
+import com.rohittp.rentile.internal.style.StylePropertyCompiler
+import com.rohittp.rentile.internal.style.StyleType
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlin.math.pow
 
 /** North-up XYZ output-tile identity. */
 public data class TileId(
@@ -45,12 +52,53 @@ public class CompatibilityPolicy private constructor(
     public val id: String,
     public val minimumOutputZoom: Int,
     public val maximumOutputZoom: Int,
+    /** Whether every symbol layer belongs to the host; see [RentileV1HostSymbols]. */
+    internal val hostOwnedSymbols: Boolean = false,
 ) {
     public companion object {
+        /**
+         * The default profile. Output Tiles carry the icons of symbol layers whose icon does not
+         * depend on text - icon-only layers, and text-and-icon layers whose icon is independent of
+         * the text, with that text removed - and only visible text-bearing vector symbol layers
+         * become label layers. See ADR 0024 and ADR 0026.
+         */
         public val RentileV1: CompatibilityPolicy = CompatibilityPolicy(
             id = "rentile-v1",
             minimumOutputZoom = 0,
             maximumOutputZoom = 22,
+        )
+
+        /**
+         * [RentileV1] with every symbol layer handed to the host, for a host that draws icons and
+         * text in screen space the way Mapbox GL does.
+         *
+         * - Output Tiles carry no symbol layer at all: no icon is drawn into them, and a vector
+         *   source only symbol layers read is never fetched for them. Patterns on background, fill
+         *   and line layers are unaffected. Each visible symbol layer reports
+         *   [DiagnosticCode.SYMBOL_LAYER_HOST_OWNED].
+         * - Every visible vector symbol layer with a meaningful `text-field` **or** a meaningful
+         *   `icon-image` is a label layer. A feature with an icon and no text yields a candidate
+         *   whose [LabelCandidate.glyphs] are empty, whose [LabelCandidate.text] and
+         *   [LabelCandidate.textSize] are null, whose [LabelCandidate.boundingBox] is the
+         *   zero-area box at the anchor and whose [LabelCandidate.textOptional] is true; the rest
+         *   of its text half is inert (see [LabelCandidate]).
+         * - A feature with both whose text is lost - empty after evaluation, a script this profile
+         *   cannot lay out, an unusable text property, glyphs the atlas cannot cover, or a text
+         *   construct the profile cannot compile - still yields its icon alone, and
+         *   [DiagnosticCode.LABEL_FEATURE_SKIPPED] counts it as `textLostIconRetained`.
+         * - Icon-only candidates need no glyphs, so they survive a style with no `glyphs` template.
+         * - An unresolvable sprite never fails preparation for a symbol layer's sake; the icons it
+         *   would have supplied are skipped and reported through [DiagnosticCode.ICON_FEATURE_SKIPPED].
+         *
+         * Text candidates themselves are laid out exactly as under [RentileV1]. Because [id] is
+         * part of [PreparedStyle.digest], every key derived from a style prepared under this
+         * profile differs from the same style's keys under [RentileV1]. See ADR 0035.
+         */
+        public val RentileV1HostSymbols: CompatibilityPolicy = CompatibilityPolicy(
+            id = "rentile-v1-host-symbols",
+            minimumOutputZoom = 0,
+            maximumOutputZoom = 22,
+            hostOwnedSymbols = true,
         )
         public val Default: CompatibilityPolicy = RentileV1
     }
@@ -420,6 +468,116 @@ public data class LabelLinePoint(
 )
 
 /**
+ * How a `text-size` or `icon-size` value depends on zoom and on the feature, in Mapbox GL's own
+ * four-way classification (`createPropertyExpression` in the style specification, which names
+ * them constant, source, camera and composite).
+ */
+public enum class SymbolSizeKind {
+    /** Depends on neither zoom nor the feature. */
+    CONSTANT,
+
+    /** Depends on the feature but not on zoom. */
+    SOURCE,
+
+    /** Depends on zoom, through one top-level zoom curve, but not on the feature. */
+    CAMERA,
+
+    /** Depends on both, through one top-level zoom curve whose stop values read the feature. */
+    COMPOSITE,
+}
+
+/**
+ * Everything a host needs to draw a symbol at the size Mapbox GL draws it at the camera's
+ * fractional zoom, rather than at the integer zoom of the tile the candidate came from.
+ *
+ * Rentile evaluates a size, and lays out every geometry that depends on it, at the requested
+ * tile's own integer zoom: that value is [tileZoomSize]. Mapbox GL does not draw at that size.
+ * Between integer zooms it computes the size in its renderer, and [sizeAt] reproduces that
+ * computation exactly as Mapbox GL JS `src/symbol/symbol_size.ts` (`getSizeData`,
+ * `evaluateSizeForZoom`, `evaluateSizeForFeature`) and the gl-native `SymbolSizeBinder`s in
+ * `src/mbgl/programs/symbol_program.hpp` both define it:
+ *
+ * - [SymbolSizeKind.CONSTANT] and [SymbolSizeKind.SOURCE]: the size is fixed for the feature,
+ *   so [sizeAt] is [tileZoomSize] at every zoom.
+ * - [SymbolSizeKind.CAMERA] and [SymbolSizeKind.COMPOSITE]: the size is **not** evaluated at the
+ *   camera zoom. Mapbox takes the pair of the curve's zoom stops covering `[z, z + 1]` - the
+ *   last stop at or below `z` ([lowerZoom]) and the first at or above `z + 1` ([upperZoom]) -
+ *   evaluates the size at both ([lowerSize], [upperSize]; per feature for composite), and
+ *   interpolates between them with the curve's own interpolation, clamping the factor to
+ *   `[0, 1]`. Mapbox's comment on this reads: "Even though we could get the exact value of the
+ *   camera function at z = tr.zoom, we intentionally do not". A stop lying strictly inside
+ *   `(z, z + 1)` is therefore skipped, and [sizeAt] at `z` itself can differ from
+ *   [tileZoomSize]; the host must draw [sizeAt].
+ *
+ * MapLibre GL JS diverged from this in August 2026 (maplibre-gl-js #8175) and now samples a
+ * camera curve at every stop and caps it; this follows Mapbox, whose renderer the host replaces.
+ *
+ * [interpolationBase] is null for a curve that never interpolates - a `step`, or a legacy
+ * `interval` function - so [sizeAt] returns [lowerSize]. A `step`'s first stop is its default
+ * output at negative infinity, exactly as Mapbox labels it, so [lowerZoom] can be
+ * [Double.NEGATIVE_INFINITY]; it is never used for arithmetic.
+ *
+ * Mapbox packs a source or composite size into a vertex attribute at 1/128 px (`SIZE_PACK_FACTOR`;
+ * GL JS rounds, gl-native truncates, and both cap it at 255 px). These values are not quantized,
+ * so they can differ from Mapbox's by less than 1/128 px.
+ *
+ * A size the style resolves to something other than a finite number at a covering stop is
+ * replaced there by the property's specification default (16 for `text-size`, 1 for `icon-size`),
+ * which is what Mapbox's own evaluation falls back to. A size that uses `zoom` anywhere other than
+ * as the input of one top-level `step` or `interpolate` (optionally inside `coalesce`) is a style
+ * Mapbox refuses to load, so there is no Mapbox answer to reproduce; it is reported as
+ * [SymbolSizeKind.CONSTANT] or [SymbolSizeKind.SOURCE] at [tileZoomSize], which is what it has
+ * always been drawn at.
+ *
+ * **Applying it.** Let `k = sizeAt(cameraZoom) / tileZoomSize`.
+ *
+ * - For [LabelCandidate.textSize], multiply every [LabelGlyphQuad]'s `x`, `y` and `scale` by `k`.
+ *   Label layout is linear in `text-size` - every offset, spacing, line height and wrap width is in
+ *   ems - so this is exactly the layout Rentile produces at that size. [LabelCandidate.boundingBox]
+ *   scales the same way except for its `text-padding` margin ([LabelCandidate.padding]), which is
+ *   in pixels: `left' = (left + padding) * k - padding`, and likewise for the other three edges.
+ *   [LabelCandidate.translateX] and [LabelCandidate.translateY] do not scale.
+ * - For [LabelIconRef.size], multiply [LabelIconRef.width], [LabelIconRef.height],
+ *   [LabelIconRef.offsetX] and [LabelIconRef.offsetY] by `k`; [LabelIconRef.translateX] and
+ *   [LabelIconRef.translateY] do not scale. A text-fitted icon is fitted to the label box as
+ *   already scaled.
+ *
+ * Mapbox sizes collision boxes, and fits `icon-text-fit` icons, against `text-size` evaluated
+ * exactly at `z + 1` (its `layoutTextSize`) rather than at the camera zoom. `sizeAt(z + 1.0)` equals
+ * that for a constant or source size and for a zoom curve with no stop strictly inside
+ * `(z, z + 1)`, except a `step` or legacy `interval` curve with a stop at exactly `z + 1`, which
+ * `sizeAt` holds at the value below that stop.
+ * Like every other pixel quantity on a candidate, all of these are Style Pixels; see
+ * [LabelCandidate].
+ */
+public data class LabelSymbolSize(
+    public val kind: SymbolSizeKind,
+    /** The size at the requested tile's own integer zoom: what every laid-out geometry used. */
+    public val tileZoomSize: Double,
+    public val lowerZoom: Double,
+    public val upperZoom: Double,
+    public val lowerSize: Double,
+    public val upperSize: Double,
+    /** 1 for linear interpolation, the base for exponential, null for none (`step`/`interval`). */
+    public val interpolationBase: Double?,
+) {
+    /** The size Mapbox GL draws at the fractional camera [zoom]; see the class documentation. */
+    public fun sizeAt(zoom: Double): Double {
+        val base = interpolationBase ?: return lowerSize
+        val difference = upperZoom - lowerZoom
+        val progress = zoom - lowerZoom
+        val factor = when {
+            difference == 0.0 -> 0.0
+            base == 1.0 -> progress / difference
+            else -> (base.pow(progress) - 1.0) / (base.pow(difference) - 1.0)
+        }
+        val t = factor.coerceIn(0.0, 1.0)
+        // Mapbox's `interpolate.number`: a * (1 - t) + b * t, in that form, so both ends are exact.
+        return lowerSize * (1.0 - t) + upperSize * t
+    }
+}
+
+/**
  * The sprite the style pairs with this label. [imageName] is an opaque lookup key into sprite
  * resources owned and resolved by the consumer; Rentile does not expose a public sprite atlas.
  *
@@ -459,6 +617,14 @@ public data class LabelIconRef(
     public val textFit: IconTextFit,
     /** `icon-text-fit-padding` in top, right, bottom, left order. */
     public val textFitPadding: List<Double>,
+    /**
+     * `icon-size` as a function of the camera's fractional zoom. [width], [height], [offsetX] and
+     * [offsetY] are at [LabelSymbolSize.tileZoomSize]; see [LabelSymbolSize] for how a host scales
+     * them to the size Mapbox GL draws.
+     *
+     * Appended, not inserted, for the reason recorded on [ResourceLimits.maxGlyphRangeBytes].
+     */
+    public val size: LabelSymbolSize,
 )
 
 /**
@@ -470,6 +636,17 @@ public data class LabelIconRef(
  * nevertheless in pixels — [padding], [haloWidth], [haloBlur] and [translateX] — because that is
  * the unit the style specification gives them. They are inputs to the consumer's screen-space
  * placement, not results of it.
+ *
+ * Under [CompatibilityPolicy.RentileV1HostSymbols] a candidate can be an icon alone: [icon] is
+ * non-null, [glyphs] is empty, [text] and [textSize] are null, [boundingBox] is the zero-area box
+ * at the anchor and [textOptional] is true. Its placement, [line], [rotationDegrees],
+ * [symbolSpacing], [avoidEdges], [zOrder], [sortKey] and identity are the symbol's own; every other
+ * text property is inert and fixed - permission to overlap and to be ignored by placement, no
+ * padding, transparent zero-opacity paint, no translation - so a host that forgets to skip the
+ * empty text half neither blocks nor is blocked by it and draws nothing for it. The icon is placed
+ * and collided by its own [LabelIconRef] fields, and its [LabelIconRef.textFit] is
+ * [IconTextFit.NONE] whatever the style declares: with no text to fit to, Mapbox draws the icon at
+ * its sprite size.
  *
  * Those pixels are *style* pixels, at the ratio of one, and label acquisition takes no
  * [RenderOptions] at all: the same candidates serve a tile drawn at any [RenderOptions.outputSizePx].
@@ -546,7 +723,96 @@ public data class LabelCandidate(
     /** See [translateX]. */
     public val translateY: Double,
     public val translateAlignment: SymbolAlignment,
+    /**
+     * The id the Label Tile declared for the feature this candidate came from, or null when the
+     * feature declared none.
+     *
+     * Appended, not inserted, for the reason recorded on [ResourceLimits.maxGlyphRangeBytes].
+     *
+     * The Mapbox Vector Tile specification makes the id an unsigned 64-bit integer; it is carried
+     * here as the same 64 bits in a [Long], so `featureId?.toULong()` recovers an id above
+     * [Long.MAX_VALUE] exactly. An absent id is null rather than the specification's default of
+     * zero, because zero would make every id-less feature look like the same feature.
+     *
+     * Together with [text] and the layer ([LabelLayerStyle.layerId]) this is what a host uses to
+     * recognise one line or polygon feature anchored separately in several tiles - each tile's
+     * candidate has its own anchor, so position cannot identify it. Ids are only as unique as the
+     * provider makes them: features without one, and providers that reuse ids across source
+     * layers, still need [text] to tell them apart.
+     */
+    public val featureId: Long?,
+    /**
+     * The text this candidate's [glyphs] were laid out from: the evaluated `text-field` after
+     * `{token}` expansion, `text-transform` and trimming. Null exactly when [glyphs] is empty
+     * because the candidate carries an icon and no text - see
+     * [CompatibilityPolicy.RentileV1HostSymbols].
+     *
+     * Appended, not inserted, for the reason recorded on [ResourceLimits.maxGlyphRangeBytes].
+     *
+     * A codepoint the glyph endpoints cannot serve (an astral-plane character) is still present
+     * here though it has no quad, so a host comparing this with what it draws must not expect a
+     * one-to-one correspondence between characters and [glyphs].
+     */
+    public val text: String?,
+    /**
+     * `text-size` as a function of the camera's fractional zoom. Every [LabelGlyphQuad] and the
+     * [boundingBox] are laid out at [LabelSymbolSize.tileZoomSize]; see [LabelSymbolSize] for how a
+     * host scales them to the size Mapbox GL draws. Null exactly when [text] is null.
+     *
+     * Appended, not inserted, for the reason recorded on [ResourceLimits.maxGlyphRangeBytes].
+     */
+    public val textSize: LabelSymbolSize?,
 )
+
+/**
+ * Label-side choices a host makes per acquisition, without re-preparing the style.
+ *
+ * [textFieldOverride] is one style-specification `text-field` value, as JSON - for example
+ * `["get","name"]` for native names, or `["coalesce",["get","name:en"],["get","name"]]` for English
+ * ones that fall back to the local name where the tiles omit `name:en` - applied to **every** label
+ * layer in place of its own `text-field`. Any expression this profile can compile is accepted. It is what a Mapbox host's label-language setting
+ * does when it sets `text-field` on every symbol layer, and it behaves the same way: under
+ * [CompatibilityPolicy.RentileV1HostSymbols] an icon-only label layer gains that text, in the
+ * specification's default font stack and size unless the layer declares its own; under
+ * [CompatibilityPolicy.RentileV1] the label layers are the text-bearing ones, so every one of them
+ * changes text and nothing else does. Null keeps each layer's own `text-field`.
+ *
+ * Nothing about the [PreparedStyle] changes. Its [PreparedStyle.digest], every Output Tile key and
+ * every Output Tile stay exactly as they are; only the label keys
+ * ([BasemapRasterizer.labelCandidateRequestKey] and [LabelCandidateBatch.contentKey]) fold the
+ * override in, so caches of both coexist. Two spellings of one expression - differing only in
+ * whitespace or object-key order - are one override. The label programs it produces are compiled
+ * once per prepared style and override, on first use, and reused after that.
+ *
+ * A layer whose own `text-field` the profile could not compile is compiled again with the override,
+ * so the [DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT] its preparation reported is replaced, in a
+ * batch acquired with an override, by whatever compiling the override reports.
+ *
+ * Construction throws [IllegalArgumentException] when [textFieldOverride] is not JSON or is not an
+ * expression this profile can compile.
+ */
+public data class LabelCandidateOptions(
+    public val textFieldOverride: String? = null,
+) {
+    /** The parsed override, already proven to compile; null without one. */
+    internal val textFieldElement: JsonElement? = textFieldOverride?.let { json ->
+        val element = try {
+            Json.parseToJsonElement(json)
+        } catch (_: SerializationException) {
+            throw IllegalArgumentException("textFieldOverride must be JSON")
+        }
+        StylePropertyCompiler.compile(element)
+        element
+    }
+
+    /** The override's canonical JSON, which is its identity in every label key; null without one. */
+    internal val textFieldIdentity: String? = textFieldElement?.canonicalJson()
+
+    public companion object {
+        /** Each label layer's own `text-field`: the behaviour of every overload without options. */
+        public val Default: LabelCandidateOptions = LabelCandidateOptions()
+    }
+}
 
 /** The immutable result of one Label acquisition. Not a Prepared Batch; see CONTEXT.md. */
 public data class LabelCandidateBatch(
@@ -931,7 +1197,13 @@ public interface BasemapRasterizer : AutoCloseable {
      */
     public suspend fun retryExact(batch: PreparedBatch): ExactRecoveryResult
 
-    /** Resolved visible text-bearing vector symbol layers in style order. URL templates remain private. */
+    /**
+     * Resolved label layers in style order. URL templates remain private.
+     *
+     * Under [CompatibilityPolicy.RentileV1] a label layer is a visible text-bearing vector symbol
+     * layer. Under [CompatibilityPolicy.RentileV1HostSymbols] it is any visible vector symbol layer
+     * with a meaningful `text-field` or a meaningful `icon-image`.
+     */
     public fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor>
 
     /** All-or-error validated MVT acquisition. Tile substitution is deliberately not applied. */
@@ -995,6 +1267,24 @@ public interface BasemapRasterizer : AutoCloseable {
     public fun labelCandidateRequestKey(style: PreparedStyle, tiles: List<TileId>): String
 
     /**
+     * [labelCandidateRequestKey] for an acquisition made with [options]: equal to it for
+     * [LabelCandidateOptions.Default], and distinct for every distinct
+     * [LabelCandidateOptions.textFieldOverride].
+     *
+     * The body here serves implementations written before options existed: it answers for the
+     * default options and throws [UnsupportedOperationException] for any other. Rentile's own
+     * rasterizer overrides it.
+     */
+    public fun labelCandidateRequestKey(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        options: LabelCandidateOptions,
+    ): String {
+        if (options.textFieldOverride != null) throw UnsupportedOperationException(OPTIONS_UNSUPPORTED)
+        return labelCandidateRequestKey(style, tiles)
+    }
+
+    /**
      * Acquires this tile set's Label Tiles, decodes and evaluates them, and freezes the Glyph
      * Ranges the batch will need - without acquiring any of them.
      *
@@ -1007,6 +1297,24 @@ public interface BasemapRasterizer : AutoCloseable {
     ): LabelCandidatePlan
 
     /**
+     * [planLabelCandidates] with [options]; the returned plan carries them, so
+     * [acquireLabelCandidates] of it applies them too. See [LabelCandidateOptions].
+     *
+     * The body here serves implementations written before options existed: it answers for the
+     * default options and throws [UnsupportedOperationException] for any other. Rentile's own
+     * rasterizer overrides it.
+     */
+    public suspend fun planLabelCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        options: LabelCandidateOptions,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): LabelCandidatePlan {
+        if (options.textFieldOverride != null) throw UnsupportedOperationException(OPTIONS_UNSUPPORTED)
+        return planLabelCandidates(style, tiles, resourceAccess)
+    }
+
+    /**
      * Acquires [LabelCandidatePlan.glyphClosure] and assembles the batch, reusing the access mode
      * the plan was made with so one batch cannot disagree with itself about what caching meant.
      */
@@ -1017,13 +1325,32 @@ public interface BasemapRasterizer : AutoCloseable {
      *
      * A style declaring no `glyphs` template yields an empty batch carrying
      * [DiagnosticCode.GLYPH_RANGE_UNAVAILABLE] rather than failing: label preparation is opt-in,
-     * and a style without glyphs is legitimate.
+     * and a style without glyphs is legitimate. Under [CompatibilityPolicy.RentileV1HostSymbols]
+     * the batch still carries every icon-only candidate, since an icon needs no glyphs; only text
+     * is absent.
      */
     public suspend fun acquireLabelCandidates(
         style: PreparedStyle,
         tiles: List<TileId>,
         resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
     ): LabelCandidateBatch
+
+    /**
+     * [acquireLabelCandidates] with [options]. See [LabelCandidateOptions].
+     *
+     * The body here serves implementations written before options existed: it answers for the
+     * default options and throws [UnsupportedOperationException] for any other. Rentile's own
+     * rasterizer overrides it.
+     */
+    public suspend fun acquireLabelCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        options: LabelCandidateOptions,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): LabelCandidateBatch {
+        if (options.textFieldOverride != null) throw UnsupportedOperationException(OPTIONS_UNSUPPORTED)
+        return acquireLabelCandidates(style, tiles, resourceAccess)
+    }
 
     /** Returns null when the prepared style does not select a raster-dem terrain source. */
     public fun terrainSourceDescriptor(style: PreparedStyle): TerrainSourceDescriptor?
@@ -1073,6 +1400,8 @@ public interface BasemapRasterizer : AutoCloseable {
     /** Suspends until workers, leases, native objects, and secret state are released. */
     public suspend fun awaitClosed()
 }
+
+private const val OPTIONS_UNSUPPORTED = "This BasemapRasterizer does not implement LabelCandidateOptions"
 
 /** Factory for the process-local deep rendering module. */
 public object Rentile {

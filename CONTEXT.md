@@ -34,6 +34,14 @@ _Avoid_: Decoded source data, output tile
 An immutable, validated rendering program and its resolved resource identities under a specific compatibility profile.
 _Avoid_: Raw style, mutable renderer session
 
+**Compatibility Profile**:
+The closed choice, made at preparation, of what Rentile draws into Output Tiles and what it hands to
+the host as Label Candidates. `rentile-v1`, the default, draws icons that do not depend on text into
+the tile and makes only text-bearing symbol layers Label layers. `rentile-v1-host-symbols` draws no
+symbol layer into the tile and makes every symbol layer with text or an icon a Label layer. The
+profile is part of the Prepared Style's identity, so every key derived from it differs between them.
+_Avoid_: Mode, flag, label option
+
 **Prepared Batch**:
 An immutable rendering input that freezes the resource closure and output content keys for a caller-defined set of output tiles before any drawing occurs.
 _Avoid_: Render result, mutable request queue
@@ -59,15 +67,19 @@ Rendering an output tile above a vector source's maximum data zoom by reusing th
 _Avoid_: Missing high-zoom data, vector upscaling
 
 **Label**:
-Text produced by a visible text-bearing vector symbol layer and prepared for a host-owned renderer rather than drawn into an Output Tile. It includes place, road, point-of-interest, water, terrain, protected-area, and other style-authored symbol text.
+A symbol produced by a Label layer and prepared for a host-owned renderer rather than drawn into an
+Output Tile. Under `rentile-v1` a Label layer is a visible text-bearing vector symbol layer and a
+Label is its text, with any Paired Icon; under `rentile-v1-host-symbols` it is any visible vector
+symbol layer with text or an icon, and a Label can be an icon with no text. It includes place, road,
+point-of-interest, water, terrain, protected-area, and other style-authored symbols.
 _Avoid_: Place name, annotation, caption, raster text
 
 **Label Candidate**:
-A Label decoded, style-evaluated and laid out into glyph geometry, with its point or source-line geometry and any successfully resolved paired icon, but not positioned on screen and not resolved against any other Label. The consumer places and collides the text and icon as one symbol; a failed paired icon leaves the text plus an `ICON_FEATURE_SKIPPED` diagnostic.
+A Label decoded, style-evaluated and laid out into glyph geometry, with its point or source-line geometry, its feature identity, its size as a function of camera zoom, and any successfully resolved paired icon, but not positioned on screen and not resolved against any other Label. The consumer places and collides the text and icon as one symbol; a failed paired icon leaves the text plus an `ICON_FEATURE_SKIPPED` diagnostic. Under `rentile-v1-host-symbols` a candidate can be an **icon-only candidate**: no glyphs, null text, an inert text half, and the icon placed by its own fields - what an icon-only layer yields, and what a text-and-icon feature yields when its text is lost.
 _Avoid_: Label primitive, prepared label, placed label, label descriptor
 
 **Paired Icon**:
-An icon authored on the same symbol layer as a Label. Rentile carries its resolved style intent and final-box anchor; the viewport-owning consumer places and collides it with the Label as one symbol, and sprite imagery remains consumer-owned.
+An icon authored on the same symbol layer as a Label. Rentile carries its resolved style intent and final-box anchor; the viewport-owning consumer places and collides it with the Label as one symbol, and sprite imagery remains consumer-owned. Under `rentile-v1-host-symbols` every icon a symbol layer draws reaches the host this way, including one with no text beside it.
 _Avoid_: Label icon layer, public sprite atlas, pre-fit anchor shift
 
 **Label Tile**:
@@ -99,11 +111,11 @@ The frozen Glyph Closure and evaluated label content for one tile set, held betw
 _Avoid_: Prepared Batch, Label Candidate Batch, resource closure
 
 **Repaired Layer**:
-A symbol layer retained in the Output Tile path only because the compatibility profile removed its text and its icon's geometry does not depend on that text, as opposed to one the style author declared as an icon layer. The Label Candidate path does not repair away that text: it can emit the Label and a successfully resolved paired icon, including icon text-fit inputs; a failed icon leaves the text and a diagnostic.
+A symbol layer retained in the Output Tile path only because the compatibility profile removed its text and its icon's geometry does not depend on that text, as opposed to one the style author declared as an icon layer. The Label Candidate path does not repair away that text: it can emit the Label and a successfully resolved paired icon, including icon text-fit inputs; a failed icon leaves the text and a diagnostic. Only `rentile-v1` repairs layers; `rentile-v1-host-symbols` draws no symbol layer into the Output Tile, so it has none.
 _Avoid_: Retained layer, text-coupled layer, degraded layer
 
 **Profile-Complete Rendering**:
-Successful rendering of every current rolling-corpus style at every supported output zoom, plus successful Label preparation for every visible text-bearing vector symbol layer in the corpus geographies chosen to exercise script and geometry coverage, after applying the compatibility profile's deliberate transformations and exclusions.
+Successful rendering of every current rolling-corpus style at every supported output zoom, plus successful Label preparation for every Label layer the compatibility profile admits in the corpus geographies chosen to exercise script and geometry coverage, after applying the compatibility profile's deliberate transformations and exclusions. It is proved per profile: `rentile-v1` from the committed Coverage Manifest, and `rentile-v1-host-symbols` from the same manifest with icons moved from the Output Tile to the Label Candidates.
 _Avoid_: Unmodified style parity, zoom-zero smoke success
 
 **Coverage Manifest**:
@@ -150,11 +162,12 @@ Public documentation and the Maven POM project URL use `https://rohittp.com/rent
 
 ## Flagged ambiguities
 
-- "Label" was used to mean a place name specifically. Resolved for `0.6.0`: **Label** is every visible text-bearing vector symbol layer admitted by the compatibility profile. Place, road, point-of-interest, water, terrain, protected-area, and other symbol text all belong to the same public closure; raster-baked text and non-vector annotations do not.
+- "Label" was used to mean a place name specifically. Resolved for `0.6.0`: **Label** is every visible text-bearing vector symbol layer admitted by the compatibility profile. Place, road, point-of-interest, water, terrain, protected-area, and other symbol text all belong to the same public closure; raster-baked text and non-vector annotations do not. Widened for `rentile-v1-host-symbols` only: there a Label layer is any visible vector symbol layer with text or an icon, so an icon with no text is a Label too. See [ADR 0035](docs/adr/0035-the-host-can-own-every-symbol-layer.md).
+- "Text size" was read as one number per candidate. A Label Candidate is laid out at its tile's integer zoom, but Mapbox GL draws a symbol at a size it computes for the camera's fractional zoom from the size curve's stops covering that tile's zoom - not at the curve's own value there. The candidate therefore carries the size as a function (`LabelSymbolSize`), and its laid-out geometry is at the integer-zoom size only.
 - Point placement is not assumed. A **Label Candidate** says whether it is point, line, or line-center placed, carries the geographic source line for line modes, and carries the selected tangent and repeat spacing. The consumer projects that geometry and owns final screen-space placement.
 - A **Paired Icon** is part of the same candidate rather than a second, disconnected icon layer. Its sprite geometry, paint, collision intent, alignment, text-fit inputs, and anchor on the final fitted box travel with the Label so one consumer decision can fold both together. The consumer resolves its sprite imagery by name; Rentile does not add a public sprite atlas.
 - A **Label Candidate Batch** is not a **Prepared Batch**, and labels still cannot be folded into `prepareBatch`. The reason was once stated too strongly: which Glyph Ranges a tile set needs depends on decoded feature properties, so a **Glyph Closure** cannot be frozen before **Label Tile** acquisition — but it can be frozen after it, which is what a **Label Candidate Plan** holds. The closure is therefore frozen in two stages rather than not at all. A Glyph Closure is still not a **Resource Closure**: it is complete and immutable in the same way, but it is what one Label Candidate Batch needs, not what a batch of Output Tiles needs. See [ADR 0028](docs/adr/0028-freeze-the-glyph-closure-in-a-label-candidate-plan.md).
-- Three label keys serve three distinct questions and none substitutes for another: a request key answers "must I fetch?" before any network, a **Label Candidate Batch** content key answers "are my cached candidates still valid?" after acquisition, and the glyph atlas content key answers "must I re-upload the texture?". Candidate layout or public-field changes bump both candidate request and content semantics; glyph pixels alone govern the atlas key.
+- Three label keys serve three distinct questions and none substitutes for another: a request key answers "must I fetch?" before any network, a **Label Candidate Batch** content key answers "are my cached candidates still valid?" after acquisition, and the glyph atlas content key answers "must I re-upload the texture?". Candidate layout or public-field changes bump both candidate request and content semantics; glyph pixels alone govern the atlas key. A label-side `text-field` override joins the two candidate keys and nothing else: it changes no Prepared Style digest and no Output Tile key.
 - Output Tile request and content keys have their own renderer-semantics markers. Any change that can alter PNG pixels for identical style, tile, options, and resources must bump both markers so caller-owned caches cannot serve output from the previous renderer.
 - A **Repaired Layer** and an author-declared icon layer look alike in a style document but do not fail alike: the first degrades with a diagnostic, the second fails loudly. `text-optional: true` marks the author's intent and therefore selects the strict path. See [ADR 0026](docs/adr/0026-repaired-layers-degrade-and-author-intended-layers-fail.md).
 - "Output pixels" and "Style Pixels" were used interchangeably, and the code had it both ways: MVT

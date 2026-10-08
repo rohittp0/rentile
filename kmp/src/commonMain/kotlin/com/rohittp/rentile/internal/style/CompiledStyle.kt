@@ -10,6 +10,9 @@ import com.rohittp.rentile.internal.ProtectedResourceUrl
 import com.rohittp.rentile.internal.SecretContext
 import com.rohittp.rentile.internal.sprite.CompiledSpriteAtlas
 import com.rohittp.rentile.internal.sprite.SpriteAtlasEntry
+import kotlinx.serialization.json.JsonObject
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.math.PI
 import kotlin.math.atan
 import kotlin.math.sinh
@@ -405,6 +408,8 @@ internal data class IconDrawLayer(
 internal data class CompiledLabelIconProgram(
     val image: CompiledStyleProperty,
     val size: CompiledStyleProperty,
+    /** How [size] behaves between integer zooms, for [com.rohittp.rentile.LabelIconRef.size]. */
+    val sizeCurve: SymbolSizeCurve,
     val opacity: CompiledStyleProperty,
     val color: CompiledStyleProperty,
     val haloColor: CompiledStyleProperty,
@@ -441,9 +446,17 @@ internal data class CompiledLabelIconProgram(
 internal data class CompiledLabelTextProgram(
     val layerOrder: Int,
     val filter: CompiledStyleFilter,
-    val text: CompiledStyleProperty,
+    /**
+     * Null for a program with no text half: an icon-only layer under
+     * [com.rohittp.rentile.CompatibilityPolicy.RentileV1HostSymbols], or a text-and-icon layer
+     * whose text half that profile could not compile. Every other text property then holds its
+     * specification default and is never read.
+     */
+    val text: CompiledStyleProperty?,
     val font: CompiledStyleProperty,
     val size: CompiledStyleProperty,
+    /** How [size] behaves between integer zooms, for [com.rohittp.rentile.LabelCandidate.textSize]. */
+    val sizeCurve: SymbolSizeCurve,
     val placement: CompiledStyleProperty,
     val spacing: CompiledStyleProperty,
     val keepUpright: CompiledStyleProperty,
@@ -498,6 +511,20 @@ internal data class CompiledLabelLayer(
      * `CompiledPreparedStyle.diagnostics`.
      */
     val textProgram: CompiledLabelTextProgram?,
+    /** The style layer this was compiled from, kept so a `text-field` override can recompile it. */
+    val layerJson: JsonObject,
+    /** The layer's position in the style, which [textProgram] carries too when it exists. */
+    val layerIndex: Int,
+)
+
+/**
+ * A prepared style's label layers recompiled with one `text-field` override, and the
+ * [com.rohittp.rentile.DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT] diagnostics that recompiling
+ * produced, which stand in for the prepared style's own in a batch acquired with that override.
+ */
+internal class LabelLayersWithTextField(
+    val layers: List<CompiledLabelLayer>,
+    val diagnostics: List<RenderDiagnostic>,
 )
 
 internal class CompiledPreparedStyle(
@@ -524,4 +551,40 @@ internal class CompiledPreparedStyle(
      */
     val glyphsTemplate: ProtectedResourceUrl?,
     val secretContext: SecretContext,
-) : PreparedStyle
+) : PreparedStyle {
+    /**
+     * Label layers recompiled per `text-field` override, keyed by the override's canonical JSON.
+     * Published by compare-and-set, so two first uses racing each other may both compile and the
+     * loser's result is dropped; either way every later use reads the one published entry.
+     */
+    @OptIn(ExperimentalAtomicApi::class)
+    private val textFieldOverrides = AtomicReference<Map<String, LabelLayersWithTextField>>(emptyMap())
+
+    /** The label layers for [identity], compiling them with [compile] on first use only. */
+    @OptIn(ExperimentalAtomicApi::class)
+    fun labelLayersWithTextField(identity: String, compile: () -> LabelLayersWithTextField): LabelLayersWithTextField {
+        textFieldOverrides.load()[identity]?.let { return it }
+        val compiled = compile()
+        while (true) {
+            val current = textFieldOverrides.load()
+            current[identity]?.let { return it }
+            // Bounded, because the identities are the caller's strings: a host that cycles through
+            // more overrides than any label-language setting needs keeps working, recompiling.
+            if (current.size >= MAX_TEXT_FIELD_OVERRIDES) return compiled
+            if (textFieldOverrides.compareAndSet(current, current + (identity to compiled))) return compiled
+        }
+    }
+
+    /** The already-compiled label layers for [identity], or null; for tests. */
+    @OptIn(ExperimentalAtomicApi::class)
+    fun labelLayersForTextField(identity: String): LabelLayersWithTextField? = textFieldOverrides.load()[identity]
+
+    /** How many distinct overrides this style has compiled; for tests. */
+    @OptIn(ExperimentalAtomicApi::class)
+    val textFieldOverrideCount: Int get() = textFieldOverrides.load().size
+
+    private companion object {
+        /** Far more than a label-language setting has values; see [labelLayersWithTextField]. */
+        const val MAX_TEXT_FIELD_OVERRIDES = 16
+    }
+}
