@@ -6,12 +6,17 @@ Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a
 
 Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
-`0.12.0` is the version this source tree declares, a deliberate breaking minor: it publishes once
-the release workflow passes, and until `com.rohittp.rentile:kmp:0.12.0` resolves from the public
-repository, `0.11.4` is the newest version there. `0.12.0` lets a host own every symbol layer, hands
-it the style's sprite sheet, and bounds the label glyph atlas; `RentileConfiguration`,
-`LabelCandidate` and `LabelIconRef` gain appended fields, so every consumer recompiles, and the two
-label-candidate keys move. See the [0.12.0 migration guide](docs/migrations/0.12.0.md).
+`0.12.1` is the version this source tree declares, a fix release: line and line-center label text
+is laid out on one line, as Mapbox lays it out, instead of wrapping at `text-max-width` like point
+text. No public signature changes, so nothing recompiles, but the two label-candidate keys move. It
+publishes once the release workflow passes, and until `com.rohittp.rentile:kmp:0.12.1` resolves from
+the public repository, `0.12.0` is the newest version there. See the
+[0.12.1 migration guide](docs/migrations/0.12.1.md).
+
+`0.12.0` is a deliberate breaking minor. It lets a host own every symbol layer, hands it the style's
+sprite sheet, and bounds the label glyph atlas; `RentileConfiguration`, `LabelCandidate` and
+`LabelIconRef` gain appended fields, so every consumer recompiles, and the two label-candidate keys
+move. See the [0.12.0 migration guide](docs/migrations/0.12.0.md).
 
 `0.11.4` is whole on all eight coordinates and a drop-in for `0.11.3`: a `filter` on a raster,
 hillshade or background layer is ignored instead of failing the style. See the
