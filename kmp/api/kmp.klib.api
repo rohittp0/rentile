@@ -63,6 +63,17 @@ final enum class com.rohittp.rentile/IconTextFit : kotlin/Enum<com.rohittp.renti
     final fun values(): kotlin/Array<com.rohittp.rentile/IconTextFit> // com.rohittp.rentile/IconTextFit.values|values#static(){}[0]
 }
 
+final enum class com.rohittp.rentile/LabelGlyphPacking : kotlin/Enum<com.rohittp.rentile/LabelGlyphPacking> { // com.rohittp.rentile/LabelGlyphPacking|null[0]
+    enum entry ACQUIRED_RANGES // com.rohittp.rentile/LabelGlyphPacking.ACQUIRED_RANGES|null[0]
+    enum entry REFERENCED_GLYPHS // com.rohittp.rentile/LabelGlyphPacking.REFERENCED_GLYPHS|null[0]
+
+    final val entries // com.rohittp.rentile/LabelGlyphPacking.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/LabelGlyphPacking> // com.rohittp.rentile/LabelGlyphPacking.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): com.rohittp.rentile/LabelGlyphPacking // com.rohittp.rentile/LabelGlyphPacking.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<com.rohittp.rentile/LabelGlyphPacking> // com.rohittp.rentile/LabelGlyphPacking.values|values#static(){}[0]
+}
+
 final enum class com.rohittp.rentile/LabelIconAnchor : kotlin/Enum<com.rohittp.rentile/LabelIconAnchor> { // com.rohittp.rentile/LabelIconAnchor|null[0]
     enum entry BOTTOM // com.rohittp.rentile/LabelIconAnchor.BOTTOM|null[0]
     enum entry BOTTOM_LEFT // com.rohittp.rentile/LabelIconAnchor.BOTTOM_LEFT|null[0]
@@ -348,6 +359,7 @@ abstract interface com.rohittp.rentile/BasemapRasterizer : kotlin/AutoCloseable 
     abstract suspend fun warmRawResources(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/RawWarmSummary // com.rohittp.rentile/BasemapRasterizer.warmRawResources|warmRawResources(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ResourceAccessMode){}[0]
     open fun labelCandidateRequestKey(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions): kotlin/String // com.rohittp.rentile/BasemapRasterizer.labelCandidateRequestKey|labelCandidateRequestKey(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions){}[0]
     open suspend fun acquireLabelCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/LabelCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireLabelCandidates|acquireLabelCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions;com.rohittp.rentile.ResourceAccessMode){}[0]
+    open suspend fun acquireSpriteAtlas(com.rohittp.rentile/PreparedStyle, kotlin/Int = ..., com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/SpriteAtlas? // com.rohittp.rentile/BasemapRasterizer.acquireSpriteAtlas|acquireSpriteAtlas(com.rohittp.rentile.PreparedStyle;kotlin.Int;com.rohittp.rentile.ResourceAccessMode){}[0]
     open suspend fun planLabelCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/LabelCandidatePlan // com.rohittp.rentile/BasemapRasterizer.planLabelCandidates|planLabelCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions;com.rohittp.rentile.ResourceAccessMode){}[0]
 }
 
@@ -988,6 +1000,22 @@ final class com.rohittp.rentile/LabelGlyphAtlas { // com.rohittp.rentile/LabelGl
     final fun toString(): kotlin/String // com.rohittp.rentile/LabelGlyphAtlas.toString|toString(){}[0]
 }
 
+final class com.rohittp.rentile/LabelGlyphAtlasPolicy { // com.rohittp.rentile/LabelGlyphAtlasPolicy|null[0]
+    constructor <init>(com.rohittp.rentile/LabelGlyphPacking = ..., kotlin/Int? = ...) // com.rohittp.rentile/LabelGlyphAtlasPolicy.<init>|<init>(com.rohittp.rentile.LabelGlyphPacking;kotlin.Int?){}[0]
+
+    final val maxDimensionPx // com.rohittp.rentile/LabelGlyphAtlasPolicy.maxDimensionPx|{}maxDimensionPx[0]
+        final fun <get-maxDimensionPx>(): kotlin/Int? // com.rohittp.rentile/LabelGlyphAtlasPolicy.maxDimensionPx.<get-maxDimensionPx>|<get-maxDimensionPx>(){}[0]
+    final val packing // com.rohittp.rentile/LabelGlyphAtlasPolicy.packing|{}packing[0]
+        final fun <get-packing>(): com.rohittp.rentile/LabelGlyphPacking // com.rohittp.rentile/LabelGlyphAtlasPolicy.packing.<get-packing>|<get-packing>(){}[0]
+
+    final fun component1(): com.rohittp.rentile/LabelGlyphPacking // com.rohittp.rentile/LabelGlyphAtlasPolicy.component1|component1(){}[0]
+    final fun component2(): kotlin/Int? // com.rohittp.rentile/LabelGlyphAtlasPolicy.component2|component2(){}[0]
+    final fun copy(com.rohittp.rentile/LabelGlyphPacking = ..., kotlin/Int? = ...): com.rohittp.rentile/LabelGlyphAtlasPolicy // com.rohittp.rentile/LabelGlyphAtlasPolicy.copy|copy(com.rohittp.rentile.LabelGlyphPacking;kotlin.Int?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelGlyphAtlasPolicy.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelGlyphAtlasPolicy.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/LabelGlyphAtlasPolicy.toString|toString(){}[0]
+}
+
 final class com.rohittp.rentile/LabelGlyphEntry { // com.rohittp.rentile/LabelGlyphEntry|null[0]
     constructor <init>(kotlin/String, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int) // com.rohittp.rentile/LabelGlyphEntry.<init>|<init>(kotlin.String;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int){}[0]
 
@@ -1473,7 +1501,7 @@ final class com.rohittp.rentile/RenderedTile { // com.rohittp.rentile/RenderedTi
 }
 
 final class com.rohittp.rentile/RentileConfiguration { // com.rohittp.rentile/RentileConfiguration|null[0]
-    constructor <init>(com.rohittp.rentile/ResourceTransport, com.rohittp.rentile/RawResourceStore, com.rohittp.rentile/MapSessionProvider = ..., com.rohittp.rentile/CredentialProvider = ..., com.rohittp.rentile/RentileClock = ..., com.rohittp.rentile/MetricsSink = ..., com.rohittp.rentile/DiagnosticSink = ..., com.rohittp.rentile/ExecutionPolicy = ..., com.rohittp.rentile/ResourceLimits = ...) // com.rohittp.rentile/RentileConfiguration.<init>|<init>(com.rohittp.rentile.ResourceTransport;com.rohittp.rentile.RawResourceStore;com.rohittp.rentile.MapSessionProvider;com.rohittp.rentile.CredentialProvider;com.rohittp.rentile.RentileClock;com.rohittp.rentile.MetricsSink;com.rohittp.rentile.DiagnosticSink;com.rohittp.rentile.ExecutionPolicy;com.rohittp.rentile.ResourceLimits){}[0]
+    constructor <init>(com.rohittp.rentile/ResourceTransport, com.rohittp.rentile/RawResourceStore, com.rohittp.rentile/MapSessionProvider = ..., com.rohittp.rentile/CredentialProvider = ..., com.rohittp.rentile/RentileClock = ..., com.rohittp.rentile/MetricsSink = ..., com.rohittp.rentile/DiagnosticSink = ..., com.rohittp.rentile/ExecutionPolicy = ..., com.rohittp.rentile/ResourceLimits = ..., com.rohittp.rentile/LabelGlyphAtlasPolicy = ...) // com.rohittp.rentile/RentileConfiguration.<init>|<init>(com.rohittp.rentile.ResourceTransport;com.rohittp.rentile.RawResourceStore;com.rohittp.rentile.MapSessionProvider;com.rohittp.rentile.CredentialProvider;com.rohittp.rentile.RentileClock;com.rohittp.rentile.MetricsSink;com.rohittp.rentile.DiagnosticSink;com.rohittp.rentile.ExecutionPolicy;com.rohittp.rentile.ResourceLimits;com.rohittp.rentile.LabelGlyphAtlasPolicy){}[0]
 
     final val clock // com.rohittp.rentile/RentileConfiguration.clock|{}clock[0]
         final fun <get-clock>(): com.rohittp.rentile/RentileClock // com.rohittp.rentile/RentileConfiguration.clock.<get-clock>|<get-clock>(){}[0]
@@ -1483,6 +1511,8 @@ final class com.rohittp.rentile/RentileConfiguration { // com.rohittp.rentile/Re
         final fun <get-diagnosticSink>(): com.rohittp.rentile/DiagnosticSink // com.rohittp.rentile/RentileConfiguration.diagnosticSink.<get-diagnosticSink>|<get-diagnosticSink>(){}[0]
     final val executionPolicy // com.rohittp.rentile/RentileConfiguration.executionPolicy|{}executionPolicy[0]
         final fun <get-executionPolicy>(): com.rohittp.rentile/ExecutionPolicy // com.rohittp.rentile/RentileConfiguration.executionPolicy.<get-executionPolicy>|<get-executionPolicy>(){}[0]
+    final val labelGlyphAtlas // com.rohittp.rentile/RentileConfiguration.labelGlyphAtlas|{}labelGlyphAtlas[0]
+        final fun <get-labelGlyphAtlas>(): com.rohittp.rentile/LabelGlyphAtlasPolicy // com.rohittp.rentile/RentileConfiguration.labelGlyphAtlas.<get-labelGlyphAtlas>|<get-labelGlyphAtlas>(){}[0]
     final val metricsSink // com.rohittp.rentile/RentileConfiguration.metricsSink|{}metricsSink[0]
         final fun <get-metricsSink>(): com.rohittp.rentile/MetricsSink // com.rohittp.rentile/RentileConfiguration.metricsSink.<get-metricsSink>|<get-metricsSink>(){}[0]
     final val rawResourceStore // com.rohittp.rentile/RentileConfiguration.rawResourceStore|{}rawResourceStore[0]
@@ -1495,6 +1525,7 @@ final class com.rohittp.rentile/RentileConfiguration { // com.rohittp.rentile/Re
         final fun <get-transport>(): com.rohittp.rentile/ResourceTransport // com.rohittp.rentile/RentileConfiguration.transport.<get-transport>|<get-transport>(){}[0]
 
     final fun component1(): com.rohittp.rentile/ResourceTransport // com.rohittp.rentile/RentileConfiguration.component1|component1(){}[0]
+    final fun component10(): com.rohittp.rentile/LabelGlyphAtlasPolicy // com.rohittp.rentile/RentileConfiguration.component10|component10(){}[0]
     final fun component2(): com.rohittp.rentile/RawResourceStore // com.rohittp.rentile/RentileConfiguration.component2|component2(){}[0]
     final fun component3(): com.rohittp.rentile/MapSessionProvider // com.rohittp.rentile/RentileConfiguration.component3|component3(){}[0]
     final fun component4(): com.rohittp.rentile/CredentialProvider // com.rohittp.rentile/RentileConfiguration.component4|component4(){}[0]
@@ -1503,7 +1534,7 @@ final class com.rohittp.rentile/RentileConfiguration { // com.rohittp.rentile/Re
     final fun component7(): com.rohittp.rentile/DiagnosticSink // com.rohittp.rentile/RentileConfiguration.component7|component7(){}[0]
     final fun component8(): com.rohittp.rentile/ExecutionPolicy // com.rohittp.rentile/RentileConfiguration.component8|component8(){}[0]
     final fun component9(): com.rohittp.rentile/ResourceLimits // com.rohittp.rentile/RentileConfiguration.component9|component9(){}[0]
-    final fun copy(com.rohittp.rentile/ResourceTransport = ..., com.rohittp.rentile/RawResourceStore = ..., com.rohittp.rentile/MapSessionProvider = ..., com.rohittp.rentile/CredentialProvider = ..., com.rohittp.rentile/RentileClock = ..., com.rohittp.rentile/MetricsSink = ..., com.rohittp.rentile/DiagnosticSink = ..., com.rohittp.rentile/ExecutionPolicy = ..., com.rohittp.rentile/ResourceLimits = ...): com.rohittp.rentile/RentileConfiguration // com.rohittp.rentile/RentileConfiguration.copy|copy(com.rohittp.rentile.ResourceTransport;com.rohittp.rentile.RawResourceStore;com.rohittp.rentile.MapSessionProvider;com.rohittp.rentile.CredentialProvider;com.rohittp.rentile.RentileClock;com.rohittp.rentile.MetricsSink;com.rohittp.rentile.DiagnosticSink;com.rohittp.rentile.ExecutionPolicy;com.rohittp.rentile.ResourceLimits){}[0]
+    final fun copy(com.rohittp.rentile/ResourceTransport = ..., com.rohittp.rentile/RawResourceStore = ..., com.rohittp.rentile/MapSessionProvider = ..., com.rohittp.rentile/CredentialProvider = ..., com.rohittp.rentile/RentileClock = ..., com.rohittp.rentile/MetricsSink = ..., com.rohittp.rentile/DiagnosticSink = ..., com.rohittp.rentile/ExecutionPolicy = ..., com.rohittp.rentile/ResourceLimits = ..., com.rohittp.rentile/LabelGlyphAtlasPolicy = ...): com.rohittp.rentile/RentileConfiguration // com.rohittp.rentile/RentileConfiguration.copy|copy(com.rohittp.rentile.ResourceTransport;com.rohittp.rentile.RawResourceStore;com.rohittp.rentile.MapSessionProvider;com.rohittp.rentile.CredentialProvider;com.rohittp.rentile.RentileClock;com.rohittp.rentile.MetricsSink;com.rohittp.rentile.DiagnosticSink;com.rohittp.rentile.ExecutionPolicy;com.rohittp.rentile.ResourceLimits;com.rohittp.rentile.LabelGlyphAtlasPolicy){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RentileConfiguration.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/RentileConfiguration.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/RentileConfiguration.toString|toString(){}[0]
@@ -1649,6 +1680,112 @@ final class com.rohittp.rentile/SafetyLimitException : com.rohittp.rentile/Renti
         final fun <get-limitName>(): kotlin/String // com.rohittp.rentile/SafetyLimitException.limitName.<get-limitName>|<get-limitName>(){}[0]
     final val observed // com.rohittp.rentile/SafetyLimitException.observed|{}observed[0]
         final fun <get-observed>(): kotlin/Long // com.rohittp.rentile/SafetyLimitException.observed.<get-observed>|<get-observed>(){}[0]
+}
+
+final class com.rohittp.rentile/SpriteAtlas { // com.rohittp.rentile/SpriteAtlas|null[0]
+    constructor <init>(kotlin/ByteArray, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/String, kotlin.collections/Map<kotlin/String, com.rohittp.rentile/SpriteImageEntry>) // com.rohittp.rentile/SpriteAtlas.<init>|<init>(kotlin.ByteArray;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.String;kotlin.collections.Map<kotlin.String,com.rohittp.rentile.SpriteImageEntry>){}[0]
+
+    final val contentKey // com.rohittp.rentile/SpriteAtlas.contentKey|{}contentKey[0]
+        final fun <get-contentKey>(): kotlin/String // com.rohittp.rentile/SpriteAtlas.contentKey.<get-contentKey>|<get-contentKey>(){}[0]
+    final val entries // com.rohittp.rentile/SpriteAtlas.entries|{}entries[0]
+        final fun <get-entries>(): kotlin.collections/Map<kotlin/String, com.rohittp.rentile/SpriteImageEntry> // com.rohittp.rentile/SpriteAtlas.entries.<get-entries>|<get-entries>(){}[0]
+    final val height // com.rohittp.rentile/SpriteAtlas.height|{}height[0]
+        final fun <get-height>(): kotlin/Int // com.rohittp.rentile/SpriteAtlas.height.<get-height>|<get-height>(){}[0]
+    final val pixelRatio // com.rohittp.rentile/SpriteAtlas.pixelRatio|{}pixelRatio[0]
+        final fun <get-pixelRatio>(): kotlin/Int // com.rohittp.rentile/SpriteAtlas.pixelRatio.<get-pixelRatio>|<get-pixelRatio>(){}[0]
+    final val pngBytes // com.rohittp.rentile/SpriteAtlas.pngBytes|{}pngBytes[0]
+        final fun <get-pngBytes>(): kotlin/ByteArray // com.rohittp.rentile/SpriteAtlas.pngBytes.<get-pngBytes>|<get-pngBytes>(){}[0]
+    final val width // com.rohittp.rentile/SpriteAtlas.width|{}width[0]
+        final fun <get-width>(): kotlin/Int // com.rohittp.rentile/SpriteAtlas.width.<get-width>|<get-width>(){}[0]
+
+    final fun component1(): kotlin/ByteArray // com.rohittp.rentile/SpriteAtlas.component1|component1(){}[0]
+    final fun component2(): kotlin/Int // com.rohittp.rentile/SpriteAtlas.component2|component2(){}[0]
+    final fun component3(): kotlin/Int // com.rohittp.rentile/SpriteAtlas.component3|component3(){}[0]
+    final fun component4(): kotlin/Int // com.rohittp.rentile/SpriteAtlas.component4|component4(){}[0]
+    final fun component5(): kotlin/String // com.rohittp.rentile/SpriteAtlas.component5|component5(){}[0]
+    final fun component6(): kotlin.collections/Map<kotlin/String, com.rohittp.rentile/SpriteImageEntry> // com.rohittp.rentile/SpriteAtlas.component6|component6(){}[0]
+    final fun copy(kotlin/ByteArray = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/String = ..., kotlin.collections/Map<kotlin/String, com.rohittp.rentile/SpriteImageEntry> = ...): com.rohittp.rentile/SpriteAtlas // com.rohittp.rentile/SpriteAtlas.copy|copy(kotlin.ByteArray;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.String;kotlin.collections.Map<kotlin.String,com.rohittp.rentile.SpriteImageEntry>){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/SpriteAtlas.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/SpriteAtlas.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/SpriteAtlas.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/SpriteContentBox { // com.rohittp.rentile/SpriteContentBox|null[0]
+    constructor <init>(kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double) // com.rohittp.rentile/SpriteContentBox.<init>|<init>(kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
+
+    final val bottom // com.rohittp.rentile/SpriteContentBox.bottom|{}bottom[0]
+        final fun <get-bottom>(): kotlin/Double // com.rohittp.rentile/SpriteContentBox.bottom.<get-bottom>|<get-bottom>(){}[0]
+    final val left // com.rohittp.rentile/SpriteContentBox.left|{}left[0]
+        final fun <get-left>(): kotlin/Double // com.rohittp.rentile/SpriteContentBox.left.<get-left>|<get-left>(){}[0]
+    final val right // com.rohittp.rentile/SpriteContentBox.right|{}right[0]
+        final fun <get-right>(): kotlin/Double // com.rohittp.rentile/SpriteContentBox.right.<get-right>|<get-right>(){}[0]
+    final val top // com.rohittp.rentile/SpriteContentBox.top|{}top[0]
+        final fun <get-top>(): kotlin/Double // com.rohittp.rentile/SpriteContentBox.top.<get-top>|<get-top>(){}[0]
+
+    final fun component1(): kotlin/Double // com.rohittp.rentile/SpriteContentBox.component1|component1(){}[0]
+    final fun component2(): kotlin/Double // com.rohittp.rentile/SpriteContentBox.component2|component2(){}[0]
+    final fun component3(): kotlin/Double // com.rohittp.rentile/SpriteContentBox.component3|component3(){}[0]
+    final fun component4(): kotlin/Double // com.rohittp.rentile/SpriteContentBox.component4|component4(){}[0]
+    final fun copy(kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ...): com.rohittp.rentile/SpriteContentBox // com.rohittp.rentile/SpriteContentBox.copy|copy(kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/SpriteContentBox.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/SpriteContentBox.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/SpriteContentBox.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/SpriteImageEntry { // com.rohittp.rentile/SpriteImageEntry|null[0]
+    constructor <init>(kotlin/String, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Double, kotlin/Boolean, kotlin.collections/List<com.rohittp.rentile/SpriteStretchRange>?, kotlin.collections/List<com.rohittp.rentile/SpriteStretchRange>?, com.rohittp.rentile/SpriteContentBox?) // com.rohittp.rentile/SpriteImageEntry.<init>|<init>(kotlin.String;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Double;kotlin.Boolean;kotlin.collections.List<com.rohittp.rentile.SpriteStretchRange>?;kotlin.collections.List<com.rohittp.rentile.SpriteStretchRange>?;com.rohittp.rentile.SpriteContentBox?){}[0]
+
+    final val content // com.rohittp.rentile/SpriteImageEntry.content|{}content[0]
+        final fun <get-content>(): com.rohittp.rentile/SpriteContentBox? // com.rohittp.rentile/SpriteImageEntry.content.<get-content>|<get-content>(){}[0]
+    final val height // com.rohittp.rentile/SpriteImageEntry.height|{}height[0]
+        final fun <get-height>(): kotlin/Int // com.rohittp.rentile/SpriteImageEntry.height.<get-height>|<get-height>(){}[0]
+    final val name // com.rohittp.rentile/SpriteImageEntry.name|{}name[0]
+        final fun <get-name>(): kotlin/String // com.rohittp.rentile/SpriteImageEntry.name.<get-name>|<get-name>(){}[0]
+    final val pixelRatio // com.rohittp.rentile/SpriteImageEntry.pixelRatio|{}pixelRatio[0]
+        final fun <get-pixelRatio>(): kotlin/Double // com.rohittp.rentile/SpriteImageEntry.pixelRatio.<get-pixelRatio>|<get-pixelRatio>(){}[0]
+    final val sdf // com.rohittp.rentile/SpriteImageEntry.sdf|{}sdf[0]
+        final fun <get-sdf>(): kotlin/Boolean // com.rohittp.rentile/SpriteImageEntry.sdf.<get-sdf>|<get-sdf>(){}[0]
+    final val stretchX // com.rohittp.rentile/SpriteImageEntry.stretchX|{}stretchX[0]
+        final fun <get-stretchX>(): kotlin.collections/List<com.rohittp.rentile/SpriteStretchRange>? // com.rohittp.rentile/SpriteImageEntry.stretchX.<get-stretchX>|<get-stretchX>(){}[0]
+    final val stretchY // com.rohittp.rentile/SpriteImageEntry.stretchY|{}stretchY[0]
+        final fun <get-stretchY>(): kotlin.collections/List<com.rohittp.rentile/SpriteStretchRange>? // com.rohittp.rentile/SpriteImageEntry.stretchY.<get-stretchY>|<get-stretchY>(){}[0]
+    final val width // com.rohittp.rentile/SpriteImageEntry.width|{}width[0]
+        final fun <get-width>(): kotlin/Int // com.rohittp.rentile/SpriteImageEntry.width.<get-width>|<get-width>(){}[0]
+    final val x // com.rohittp.rentile/SpriteImageEntry.x|{}x[0]
+        final fun <get-x>(): kotlin/Int // com.rohittp.rentile/SpriteImageEntry.x.<get-x>|<get-x>(){}[0]
+    final val y // com.rohittp.rentile/SpriteImageEntry.y|{}y[0]
+        final fun <get-y>(): kotlin/Int // com.rohittp.rentile/SpriteImageEntry.y.<get-y>|<get-y>(){}[0]
+
+    final fun component1(): kotlin/String // com.rohittp.rentile/SpriteImageEntry.component1|component1(){}[0]
+    final fun component10(): com.rohittp.rentile/SpriteContentBox? // com.rohittp.rentile/SpriteImageEntry.component10|component10(){}[0]
+    final fun component2(): kotlin/Int // com.rohittp.rentile/SpriteImageEntry.component2|component2(){}[0]
+    final fun component3(): kotlin/Int // com.rohittp.rentile/SpriteImageEntry.component3|component3(){}[0]
+    final fun component4(): kotlin/Int // com.rohittp.rentile/SpriteImageEntry.component4|component4(){}[0]
+    final fun component5(): kotlin/Int // com.rohittp.rentile/SpriteImageEntry.component5|component5(){}[0]
+    final fun component6(): kotlin/Double // com.rohittp.rentile/SpriteImageEntry.component6|component6(){}[0]
+    final fun component7(): kotlin/Boolean // com.rohittp.rentile/SpriteImageEntry.component7|component7(){}[0]
+    final fun component8(): kotlin.collections/List<com.rohittp.rentile/SpriteStretchRange>? // com.rohittp.rentile/SpriteImageEntry.component8|component8(){}[0]
+    final fun component9(): kotlin.collections/List<com.rohittp.rentile/SpriteStretchRange>? // com.rohittp.rentile/SpriteImageEntry.component9|component9(){}[0]
+    final fun copy(kotlin/String = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Double = ..., kotlin/Boolean = ..., kotlin.collections/List<com.rohittp.rentile/SpriteStretchRange>? = ..., kotlin.collections/List<com.rohittp.rentile/SpriteStretchRange>? = ..., com.rohittp.rentile/SpriteContentBox? = ...): com.rohittp.rentile/SpriteImageEntry // com.rohittp.rentile/SpriteImageEntry.copy|copy(kotlin.String;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Double;kotlin.Boolean;kotlin.collections.List<com.rohittp.rentile.SpriteStretchRange>?;kotlin.collections.List<com.rohittp.rentile.SpriteStretchRange>?;com.rohittp.rentile.SpriteContentBox?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/SpriteImageEntry.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/SpriteImageEntry.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/SpriteImageEntry.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/SpriteStretchRange { // com.rohittp.rentile/SpriteStretchRange|null[0]
+    constructor <init>(kotlin/Double, kotlin/Double) // com.rohittp.rentile/SpriteStretchRange.<init>|<init>(kotlin.Double;kotlin.Double){}[0]
+
+    final val from // com.rohittp.rentile/SpriteStretchRange.from|{}from[0]
+        final fun <get-from>(): kotlin/Double // com.rohittp.rentile/SpriteStretchRange.from.<get-from>|<get-from>(){}[0]
+    final val to // com.rohittp.rentile/SpriteStretchRange.to|{}to[0]
+        final fun <get-to>(): kotlin/Double // com.rohittp.rentile/SpriteStretchRange.to.<get-to>|<get-to>(){}[0]
+
+    final fun component1(): kotlin/Double // com.rohittp.rentile/SpriteStretchRange.component1|component1(){}[0]
+    final fun component2(): kotlin/Double // com.rohittp.rentile/SpriteStretchRange.component2|component2(){}[0]
+    final fun copy(kotlin/Double = ..., kotlin/Double = ...): com.rohittp.rentile/SpriteStretchRange // com.rohittp.rentile/SpriteStretchRange.copy|copy(kotlin.Double;kotlin.Double){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/SpriteStretchRange.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/SpriteStretchRange.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/SpriteStretchRange.toString|toString(){}[0]
 }
 
 final class com.rohittp.rentile/StoredRawResource { // com.rohittp.rentile/StoredRawResource|null[0]
