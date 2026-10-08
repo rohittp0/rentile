@@ -105,4 +105,14 @@ class CompactExtrusionDecoderTest {
         }
         assertEquals(3, calls)
     }
+
+    @Test fun largeConfiguredExtentsCannotWrapCoordinatesIntoSignedIntArrays() {
+        val extent = 1 shl 29
+        val feature = Tile.Feature(type = Tile.GeomType.POLYGON,
+            geometry = listOf(9, 0, 0, 26, -2, 0, -2, 20, -3, 20, 15))
+        val bytes = Tile.ADAPTER.encode(Tile(layers = listOf(Tile.Layer(
+            version = 2, name = "building", extent = extent, features = listOf(feature),
+        ))))
+        assertFailsWith<MvtDecodingException> { decode(bytes, resources = ResourceLimits(maxMvtExtent = extent)) }
+    }
 }

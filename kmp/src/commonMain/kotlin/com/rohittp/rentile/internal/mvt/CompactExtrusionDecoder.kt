@@ -194,6 +194,8 @@ internal class CompactExtrusionDecoder(
                         val dy = zigzag(word() ?: malformed())
                         val nextX = x + dx; val nextY = y + dy
                         if (abs(nextX) > coordinateBound || abs(nextY) > coordinateBound) malformed()
+                        if (nextX !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong() ||
+                            nextY !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) malformed()
                         if (ringVertices == 0) { firstX = nextX; firstY = nextY }
                         else area += x.toDouble() * nextY - nextX.toDouble() * y
                         x = nextX; y = nextY
