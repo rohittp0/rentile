@@ -64,7 +64,8 @@ public class ExtrusionGeometry internal constructor(
  * their bit pattern in a signed Long, as LabelCandidate does.
  *
  * paintAtZoom uses fractional zoom for paint and floor(zoom) for filters. Null means inactive,
- * filtered, or unusable paint; missing height defaults to zero and never fabricates a building.
+ * or filtered; missing or unusable properties use their style defaults (height/base zero, color
+ * black). Legacy explicit defaults are respected. A missing height never fabricates a building.
  * Negative heights/bases are clamped to zero; base greater than height is clamped to height.
  * Constant paint is cached. Zoom-dependent paint retains only its feature properties/program,
  * never the encoded tile or a graph of coordinate objects.

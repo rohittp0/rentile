@@ -23,11 +23,15 @@ internal class ExtrusionProgram(
     private val color: CompiledStyleProperty,
     private val opacity: CompiledStyleProperty,
     val zoomDependent: Boolean,
+    private val defaultBase: Double,
+    private val defaultHeight: Double,
+    private val defaultColor: CompiledColor,
+    private val defaultOpacity: Double,
 ) {
     fun layerStyle(): ExtrusionLayerStyle = ExtrusionLayerStyle(descriptor) { zoom ->
         if (!active(zoom)) 0.0 else {
             val value = (opacity.evaluate(StyleEvaluationContext(zoom)) as? StyleValue.NumberValue)?.value
-            if (value != null && value.isFinite()) value.coerceIn(0.0, 1.0) else 0.0
+            (value?.takeIf { it.isFinite() } ?: defaultOpacity).coerceIn(0.0, 1.0)
         }
     }
 
@@ -43,14 +47,13 @@ internal class ExtrusionProgram(
 
     private fun evaluate(context: StyleEvaluationContext): ExtrusionPaint? {
         if (!filter.matches(context.copy(zoom = floor(context.zoom)))) return null
-        val h = (height.evaluate(context) as? StyleValue.NumberValue)?.value ?: return null
-        val b = (base.evaluate(context) as? StyleValue.NumberValue)?.value ?: return null
-        if (!h.isFinite() || !b.isFinite()) return null
+        val h = (height.evaluate(context) as? StyleValue.NumberValue)?.value?.takeIf { it.isFinite() } ?: defaultHeight
+        val b = (base.evaluate(context) as? StyleValue.NumberValue)?.value?.takeIf { it.isFinite() } ?: defaultBase
         val c = when (val value = color.evaluate(context)) {
             is StyleValue.StringValue -> parseCssColor(value.value)
             is StyleValue.ColorValue -> value.value
             else -> null
-        } ?: return null
+        } ?: defaultColor
         val nonnegativeHeight = h.coerceAtLeast(0.0)
         return ExtrusionPaint(b.coerceIn(0.0, nonnegativeHeight), nonnegativeHeight,
             (0xff shl 24) or (c.red shl 16) or (c.green shl 8) or c.blue)

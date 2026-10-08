@@ -120,7 +120,7 @@ class HostExtrusionsTest {
             assertEquals(ExtrusionPaint(0.0, 0.0, 0xff000000.toInt()), r.acquireExtrusionCandidates(p, listOf(tile)).candidates.single().paintAtZoom(16.0))
             val missing = ExtrusionFixtures.layer(paint = ",\"fill-extrusion-height\":[\"get\",\"missing\"]")
             val m = r.prepare(StyleInput.InlineJson(ExtrusionFixtures.style(missing)), host)
-            assertNull(r.acquireExtrusionCandidates(m, listOf(tile)).candidates.single().paintAtZoom(16.0))
+            assertEquals(0.0, r.acquireExtrusionCandidates(m, listOf(tile)).candidates.single().paintAtZoom(16.0)?.heightMetres)
         }
     }
 
@@ -135,9 +135,36 @@ class HostExtrusionsTest {
         }
     }
 
+    @Test fun missingAndWrongTypedPropertiesUseMapLibreDefaults() = runTest {
+        val original = Tile.ADAPTER.decode(ExtrusionFixtures.tile()).layers.single()
+        val missingBase = Tile.ADAPTER.encode(Tile(layers = listOf(original.copy(features = listOf(
+            original.features.single().copy(tags = listOf(0, 0)),
+        )))))
+        withRasterizer(missingBase) { r, _ ->
+            val s = r.prepare(StyleInput.InlineJson(ExtrusionFixtures.style(ExtrusionFixtures.layer())), host)
+            assertEquals(ExtrusionPaint(0.0, 80.0, 0xff0a141e.toInt()),
+                r.acquireExtrusionCandidates(s, listOf(tile)).candidates.single().paintAtZoom(16.0))
+        }
+        val wrongTypes = Tile.ADAPTER.encode(Tile(layers = listOf(original.copy(values = listOf(
+            Tile.Value(string_value = "wrong"), Tile.Value(bool_value = true),
+        )))))
+        withRasterizer(wrongTypes) { r, _ ->
+            val layer = ExtrusionFixtures.layer(paint = ",\"fill-extrusion-height\":{\"type\":\"identity\",\"property\":\"height\",\"default\":25},\"fill-extrusion-base\":{\"type\":\"identity\",\"property\":\"height_min\",\"default\":2},\"fill-extrusion-color\":{\"type\":\"identity\",\"property\":\"missing-color\",\"default\":\"#ff0000\"},\"fill-extrusion-opacity\":[\"case\",[\"<\",[\"zoom\"],16],null,0.4]")
+            val s = r.prepare(StyleInput.InlineJson(ExtrusionFixtures.style(layer)), host)
+            val b = r.acquireExtrusionCandidates(s, listOf(tile))
+            assertEquals(ExtrusionPaint(2.0, 25.0, 0xffff0000.toInt()), b.candidates.single().paintAtZoom(15.5))
+            assertEquals(1.0, b.layerStyles.single().opacityAtZoom(15.5))
+            assertEquals(0.4, b.layerStyles.single().opacityAtZoom(16.0))
+            val black = ExtrusionFixtures.layer(paint = ",\"fill-extrusion-color\":[\"get\",\"missing-color\"]")
+            val sb = r.prepare(StyleInput.InlineJson(ExtrusionFixtures.style(black)), host)
+            assertEquals(0xff000000.toInt(), r.acquireExtrusionCandidates(sb, listOf(tile)).candidates.single().paintAtZoom(16.0)?.color)
+        }
+    }
+
     @Test fun unsupportedPaintAndFeatureOpacityFailPreparation() = runTest {
         withRasterizer { r, _ ->
-            for (paint in listOf(",\"fill-extrusion-pattern\":\"brick\"", ",\"fill-extrusion-opacity\":[\"get\",\"opacity\"]")) {
+            for (paint in listOf(",\"fill-extrusion-pattern\":\"brick\"", ",\"fill-extrusion-opacity\":[\"get\",\"opacity\"]",
+                ",\"fill-extrusion-color\":{\"type\":\"identity\",\"property\":\"color\",\"default\":\"unsupported-color\"}")) {
                 assertFailsWith<StylePreparationException> {
                     r.prepare(StyleInput.InlineJson(ExtrusionFixtures.style(ExtrusionFixtures.layer(paint = paint))), host)
                 }

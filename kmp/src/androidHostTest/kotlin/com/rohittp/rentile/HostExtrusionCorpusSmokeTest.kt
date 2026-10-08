@@ -3,6 +3,7 @@ package com.rohittp.rentile
 import com.rohittp.rentile.internal.mvt.DecodedVectorGeometry
 import com.rohittp.rentile.internal.mvt.MvtDecoder
 import com.rohittp.rentile.internal.sha256Hex
+import com.rohittp.rentile.internal.style.StyleValue
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import java.nio.file.Path
@@ -29,7 +30,7 @@ class HostExtrusionCorpusSmokeTest {
             }))
             try {
                 val s = r.prepare(StyleInput.InlineJson(ExtrusionFixtures.style(ExtrusionFixtures.layer())), CompatibilityPolicy.RentileV1HostExtrusions)
-                // Warm the code, not the disk cache. The default raw store is NoOp.
+                // Warm the code, not the disk cache. This probe explicitly uses a no-op raw store.
                 repeat(3) { r.acquireExtrusionCandidates(s, listOf(tile)) }
                 val times = ArrayList<Long>()
                 var b = r.acquireExtrusionCandidates(s, listOf(tile))
@@ -44,6 +45,9 @@ class HostExtrusionCorpusSmokeTest {
                 for ((position, indexed) in polygons.withIndex()) {
                     val candidate = b.candidates[position]
                     assertEquals(indexed.index, candidate.featureIndex)
+                    val height = ((indexed.value.properties["height"] as? StyleValue.NumberValue)?.value ?: 0.0).coerceAtLeast(0.0)
+                    val base = ((indexed.value.properties["height_min"] as? StyleValue.NumberValue)?.value ?: 0.0).coerceIn(0.0, height)
+                    assertEquals(ExtrusionPaint(base, height, 0xff0a141e.toInt()), candidate.paintAtZoom(16.0))
                     val rings = (indexed.value.geometry as DecodedVectorGeometry.Polygons).rings
                     assertEquals(rings.size, candidate.geometry.ringCount)
                     for ((ringIndex, ring) in rings.withIndex()) {

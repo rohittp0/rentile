@@ -30,12 +30,14 @@ and the host must still budget all simultaneously retained CPU/GPU assets.
 ## Real tile measurement
 
 Twelve locally supplied z15 MVTs from Paris, Manhattan and Tokyo were compared through the public
-API with Rentile's existing decoder, coordinate by coordinate, including every hole and component.
+API with Rentile's existing decoder, coordinate by coordinate, including every hole and component. The probe also checks every feature's evaluated height,
+base and color. One real feature has a positive height but no `height_min`; its base defaults to zero
+as MapLibre does, so that building is preserved.
 The corpus had **1,372 feature records, 17,544 polygons, 18,083 rings and 143,621 vertices**. Some
 records contain many polygon components: feature count is not building-footprint count.
 
 On macOS arm64/JVM, after three warm-up acquisitions and seven timed acquisitions per tile, median
-time ranged from **0.51 to 2.30 ms** per tile. Conservative retained estimates ranged from **0.08 to
+time ranged from **0.43 to 2.70 ms** per tile. Conservative retained estimates ranged from **0.08 to
 0.43 MiB**. Timing includes local transport, hashing, selective decode and style binding, with a
 no-op raw store; it excludes network, triangulation, meshes, GPU upload/draw and mobile execution.
 This establishes the geometry path and desktop cost, not Android/iOS performance or OOM/ANR safety.

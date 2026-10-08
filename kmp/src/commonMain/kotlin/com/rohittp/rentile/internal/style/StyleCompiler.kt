@@ -815,9 +815,18 @@ internal class StyleCompiler(
             flat.source.minZoom, flat.source.maxZoom,
             paint["fill-extrusion-vertical-gradient"]?.asPrimitive()?.booleanOrNull ?: true,
         )
+        fun numericDefault(property: String, standard: Double): Double =
+            (paint[property] as? JsonObject)?.get("default")?.asPrimitive()?.doubleOrNull
+                ?.takeIf { it.isFinite() } ?: standard
+        val colorDefaultElement = (paint["fill-extrusion-color"] as? JsonObject)?.get("default")
+        val colorDefault = if (colorDefaultElement == null) CompiledColor(0, 0, 0, 255) else
+            colorDefaultElement.asPrimitive()?.takeIf { it.isString }?.content?.let(::parseCssColor)
+                ?: failRetained(index, layerId, "fill-extrusion-color default must be a supported CSS color")
         return CompiledExtrusionLayer(flat.source, descriptor, ExtrusionProgram(
             descriptor, flat.filter, base, height, flat.color, flat.opacity,
             listOfNotNull(layer["filter"], paint["fill-extrusion-base"], paint["fill-extrusion-height"], paint["fill-extrusion-color"]).any(::extrusionUsesZoom),
+            numericDefault("fill-extrusion-base", 0.0), numericDefault("fill-extrusion-height", 0.0),
+            colorDefault, numericDefault("fill-extrusion-opacity", 1.0),
         ))
     }
 

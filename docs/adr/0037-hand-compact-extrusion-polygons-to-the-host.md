@@ -23,7 +23,9 @@ tile/extent, never interpret these as requested output-tile pixels.
 
 Feature paint uses the prepared style's existing expression/filter compiler: fractional zoom for
 paint, integer zoom for filters. Heights and bases are metres, missing height defaults to zero,
-negative values clamp to zero, and base clamps to height. Feature color alpha is ignored; opacity
+negative values clamp to zero, and base clamps to height. Missing or unusable property values use
+MapLibre property defaults, including a zero base when a feature has height but no `height_min`;
+legacy explicit defaults take precedence. Feature color alpha is ignored; opacity
 and vertical-gradient belong to the layer. Constant feature paint is evaluated once. Zoom-dependent
 paint retains its feature properties and compiled program, with no source URL or encoded tile in
 the candidate's closure. Unsupported authored constructs fail preparation, rather than secretly
@@ -66,5 +68,6 @@ reports acquisition time and retained estimates. Desktop/native tests do not qua
 ANR, GPU performance or visual parity; those require the consumer renderer and device measurements.
 
 Primary references: [MapLibre extrusion properties](https://maplibre.org/maplibre-style-spec/layers/#fill-extrusion),
+[MapLibre legacy function defaults](https://github.com/maplibre/maplibre-style-spec/blob/main/src/function/index.ts),
 [MapLibre's vertex shader](https://github.com/maplibre/maplibre-gl-js/blob/main/src/shaders/glsl/fill_extrusion.vertex.glsl),
 and [MVT 2.1](https://github.com/mapbox/vector-tile-spec/tree/master/2.1).
