@@ -542,9 +542,11 @@ public enum class SymbolSizeKind {
  *   [LabelIconRef.translateY] do not scale. A text-fitted icon is fitted to the label box as
  *   already scaled.
  *
- * Mapbox sizes collision boxes, and fits `icon-text-fit` icons, against the text size evaluated at
- * `z + 1` rather than at the camera zoom; a host that reproduces Mapbox's collision exactly reads
- * that value as `sizeAt(z + 1.0)`, which is exact unless a stop lies strictly inside `(z, z + 1)`.
+ * Mapbox sizes collision boxes, and fits `icon-text-fit` icons, against `text-size` evaluated
+ * exactly at `z + 1` (its `layoutTextSize`) rather than at the camera zoom. `sizeAt(z + 1.0)` equals
+ * that for a constant or source size and for a zoom curve with no stop strictly inside
+ * `(z, z + 1)`, except a `step` or legacy `interval` curve with a stop at exactly `z + 1`, which
+ * `sizeAt` holds at the value below that stop.
  * Like every other pixel quantity on a candidate, all of these are Style Pixels; see
  * [LabelCandidate].
  */
@@ -642,7 +644,9 @@ public data class LabelIconRef(
  * text property is inert and fixed - permission to overlap and to be ignored by placement, no
  * padding, transparent zero-opacity paint, no translation - so a host that forgets to skip the
  * empty text half neither blocks nor is blocked by it and draws nothing for it. The icon is placed
- * and collided by its own [LabelIconRef] fields.
+ * and collided by its own [LabelIconRef] fields, and its [LabelIconRef.textFit] is
+ * [IconTextFit.NONE] whatever the style declares: with no text to fit to, Mapbox draws the icon at
+ * its sprite size.
  *
  * Those pixels are *style* pixels, at the ratio of one, and label acquisition takes no
  * [RenderOptions] at all: the same candidates serve a tile drawn at any [RenderOptions.outputSizePx].

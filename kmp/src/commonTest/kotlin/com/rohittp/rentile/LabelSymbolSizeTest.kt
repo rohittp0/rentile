@@ -234,6 +234,20 @@ class LabelSymbolSizeTest {
     }
 
     @Test
+    fun theSizeOneZoomUpIsMapboxsLayoutSizeExceptAtAStepStop() = runTest {
+        // Mapbox sizes collision boxes from text-size evaluated exactly at z + 1; the KDoc tells a
+        // host when sizeAt(z + 1) is that value. At z2 the expression's own value at z3 is 18 for
+        // this interpolate curve, and 20 for this step.
+        val interpolate = assertNotNull(
+            candidates(textLayer("""["interpolate",["linear"],["zoom"],1,10,5,26]""")).single().textSize,
+        )
+        val step = assertNotNull(candidates(textLayer("""["step",["zoom"],10,3,20]""")).single().textSize)
+
+        assertEquals(18.0, interpolate.sizeAt(3.0))
+        assertEquals(10.0, step.sizeAt(3.0))
+    }
+
+    @Test
     fun theSizeFunctionItselfFollowsMapboxArithmetic() {
         val linear = LabelSymbolSize(SymbolSizeKind.CAMERA, 14.0, 1.0, 5.0, 10.0, 26.0, 1.0)
         val step = LabelSymbolSize(SymbolSizeKind.CAMERA, 10.0, Double.NEGATIVE_INFINITY, 3.0, 10.0, 20.0, null)

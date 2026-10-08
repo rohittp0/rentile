@@ -208,6 +208,28 @@ class HostSymbolsTest {
     }
 
     @Test
+    fun anIconOnlyCandidateIsNotFittedToTextItDoesNotHave() = runTest {
+        // Mapbox fits an icon to its text only when there is shaped text (symbol_layout's
+        // fitIconToText runs under `if (defaultHorizontalShaping)`); without text the icon is
+        // drawn at its sprite size, so the candidate must not ask the host to fit it to nothing.
+        withRasterizer(LabelFixtures.Transport(namedAndNameless)) { rasterizer ->
+            val fitted =
+                """{"id":"poi-labels","type":"symbol","source":"v","source-layer":"poi",""" +
+                    """"layout":{"text-field":["get","name"],"text-font":["Open Sans Regular"],""" +
+                    """"icon-image":"marker","icon-text-fit":"both","icon-text-fit-padding":[1,2,3,4]}}"""
+            val style = rasterizer.prepare(StyleInput.InlineJson(LabelFixtures.style(fitted)), host)
+
+            val (withText, withoutText) = rasterizer.acquireLabelCandidates(style, listOf(tile)).candidates
+
+            assertEquals("Cafe", withText.text)
+            assertEquals(IconTextFit.BOTH, withText.icon?.textFit)
+            assertNull(withoutText.text)
+            assertEquals(IconTextFit.NONE, withoutText.icon?.textFit)
+            assertEquals(8.0, withoutText.icon?.width)
+        }
+    }
+
+    @Test
     fun aTextAndIconFeatureWhoseTextIsAnUnsupportedScriptKeepsItsIcon() = runTest {
         val arabic = poiTile(LabelFixtures.Feature(mapOf("name" to "القاهرة"), id = 1))
         withRasterizer(LabelFixtures.Transport(arabic)) { rasterizer ->

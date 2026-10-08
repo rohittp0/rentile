@@ -432,6 +432,10 @@ internal class LabelAssembly internal constructor(
      * the anchor with no padding, permission to overlap and to be ignored by placement, so it can
      * neither block nor be blocked, and transparent zero-opacity paint, so it draws nothing.
      * [LabelCandidate.textOptional] is true because the icon is meant to stand without text.
+     *
+     * Its icon is never fitted to text: Mapbox fits an icon only to shaped text (`fitIconToText`
+     * runs only when the feature has a horizontal shaping) and otherwise draws it at sprite size,
+     * so an `icon-text-fit` with no text to fit becomes [IconTextFit.NONE] here.
      */
     private fun iconOnlyCandidate(label: PendingLabel, styleIndex: Int): LabelCandidate = LabelCandidate(
         layerStyleIndex = styleIndex,
@@ -453,7 +457,7 @@ internal class LabelAssembly internal constructor(
         textOptional = true,
         glyphs = emptyList(),
         boundingBox = LabelBox(0.0, 0.0, 0.0, 0.0),
-        icon = label.icon,
+        icon = label.icon?.let { icon -> if (icon.textFit == IconTextFit.NONE) icon else icon.copy(textFit = IconTextFit.NONE) },
         overlap = SymbolOverlap.ALWAYS,
         ignorePlacement = true,
         padding = 0.0,
@@ -665,50 +669,50 @@ internal object LabelCandidateAssembler {
                         if (!iconFallback) continue
                         textLost = true
                     } else if (text != null) {
-                    // Everything left is property evaluation against this feature's own data. A
-                    // single feature carrying a value no text property can use must not take the
-                    // batch down with it: 0.2.0 spent two rounds removing exactly that failure for
-                    // icons, and ADR 0026's reasoning is unchanged here. The feature is skipped,
-                    // counted, and reported once for its layer.
-                    resolved = try {
-                        val fontStack = fontStackOf(program, context, tile)
-                        val size = program.size.evaluate(context).asNumber("text-size", tile)
-                        // Not a failure and not a loss: a style that resolves text-size to zero
-                        // is asking for no visible text at this zoom, exactly as placeIcons reads
-                        // an icon-size of zero. It leaves the denominator rather than sitting in
-                        // it uncounted, so the reported counts still account for every label the
-                        // layer wanted - and a layer that deliberately hides its text does not
-                        // start reporting a loss for doing so. Under the host-owned-symbols
-                        // profile the icon is then drawn alone, as Mapbox draws it.
-                        if (size <= 0.0) {
-                            if (!iconFallback) skips.candidates -= inside.size
+                        // Everything left is property evaluation against this feature's own data. A
+                        // single feature carrying a value no text property can use must not take the
+                        // batch down with it: 0.2.0 spent two rounds removing exactly that failure for
+                        // icons, and ADR 0026's reasoning is unchanged here. The feature is skipped,
+                        // counted, and reported once for its layer.
+                        resolved = try {
+                            val fontStack = fontStackOf(program, context, tile)
+                            val size = program.size.evaluate(context).asNumber("text-size", tile)
+                            // Not a failure and not a loss: a style that resolves text-size to zero
+                            // is asking for no visible text at this zoom, exactly as placeIcons reads
+                            // an icon-size of zero. It leaves the denominator rather than sitting in
+                            // it uncounted, so the reported counts still account for every label the
+                            // layer wanted - and a layer that deliberately hides its text does not
+                            // start reporting a loss for doing so. Under the host-owned-symbols
+                            // profile the icon is then drawn alone, as Mapbox draws it.
+                            if (size <= 0.0) {
+                                if (!iconFallback) skips.candidates -= inside.size
+                                null
+                            } else ResolvedLabel(
+                                fontStack = fontStack,
+                                textStyle = textStyleFor(program, context, fontStack, size, tile),
+                                textSize = program.sizeCurve.resolve(
+                                    property = program.size,
+                                    context = context,
+                                    tileZoom = tile.z,
+                                    tileZoomSize = size,
+                                    specificationDefault = TEXT_SIZE_DEFAULT,
+                                ),
+                                scalars = evaluateScalars(program, context, tile),
+                                layerStyle = layerStyles.getOrPut(program.layerOrder to tile.z) {
+                                    resolveLayerStyle(program.layerOrder, layer.descriptor.id, tile.z)
+                                },
+                            )
+                        } catch (error: RasterizationException) {
+                            if (!iconFallback) {
+                                skips.skipped += inside.size
+                                skips.tiles += tile
+                                continue
+                            }
+                            textLost = true
+                            textLossIsSkip = true
                             null
-                        } else ResolvedLabel(
-                            fontStack = fontStack,
-                            textStyle = textStyleFor(program, context, fontStack, size, tile),
-                            textSize = program.sizeCurve.resolve(
-                                property = program.size,
-                                context = context,
-                                tileZoom = tile.z,
-                                tileZoomSize = size,
-                                specificationDefault = TEXT_SIZE_DEFAULT,
-                            ),
-                            scalars = evaluateScalars(program, context, tile),
-                            layerStyle = layerStyles.getOrPut(program.layerOrder to tile.z) {
-                                resolveLayerStyle(program.layerOrder, layer.descriptor.id, tile.z)
-                            },
-                        )
-                    } catch (error: RasterizationException) {
-                        if (!iconFallback) {
-                            skips.skipped += inside.size
-                            skips.tiles += tile
-                            continue
                         }
-                        textLost = true
-                        textLossIsSkip = true
-                        null
-                    }
-                    if (resolved == null && !iconFallback) continue
+                        if (resolved == null && !iconFallback) continue
                     }
 
                     // A candidate without text still needs the symbol-level properties its text

@@ -22,6 +22,7 @@ final enum class com.rohittp.rentile/DiagnosticCode : kotlin/Enum<com.rohittp.re
     enum entry RESOURCE_CACHE_MISS // com.rohittp.rentile/DiagnosticCode.RESOURCE_CACHE_MISS|null[0]
     enum entry RESOURCE_REVALIDATED // com.rohittp.rentile/DiagnosticCode.RESOURCE_REVALIDATED|null[0]
     enum entry ROOT_BEHAVIOR_EXCLUDED // com.rohittp.rentile/DiagnosticCode.ROOT_BEHAVIOR_EXCLUDED|null[0]
+    enum entry SYMBOL_LAYER_HOST_OWNED // com.rohittp.rentile/DiagnosticCode.SYMBOL_LAYER_HOST_OWNED|null[0]
     enum entry TEXT_COMPONENT_REMOVED_ICON_RETAINED // com.rohittp.rentile/DiagnosticCode.TEXT_COMPONENT_REMOVED_ICON_RETAINED|null[0]
     enum entry TEXT_COUPLED_ICON_LAYER_EXCLUDED // com.rohittp.rentile/DiagnosticCode.TEXT_COUPLED_ICON_LAYER_EXCLUDED|null[0]
     enum entry TEXT_ONLY_LAYER_EXCLUDED // com.rohittp.rentile/DiagnosticCode.TEXT_ONLY_LAYER_EXCLUDED|null[0]
@@ -229,6 +230,19 @@ final enum class com.rohittp.rentile/SymbolOverlap : kotlin/Enum<com.rohittp.ren
     final fun values(): kotlin/Array<com.rohittp.rentile/SymbolOverlap> // com.rohittp.rentile/SymbolOverlap.values|values#static(){}[0]
 }
 
+final enum class com.rohittp.rentile/SymbolSizeKind : kotlin/Enum<com.rohittp.rentile/SymbolSizeKind> { // com.rohittp.rentile/SymbolSizeKind|null[0]
+    enum entry CAMERA // com.rohittp.rentile/SymbolSizeKind.CAMERA|null[0]
+    enum entry COMPOSITE // com.rohittp.rentile/SymbolSizeKind.COMPOSITE|null[0]
+    enum entry CONSTANT // com.rohittp.rentile/SymbolSizeKind.CONSTANT|null[0]
+    enum entry SOURCE // com.rohittp.rentile/SymbolSizeKind.SOURCE|null[0]
+
+    final val entries // com.rohittp.rentile/SymbolSizeKind.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/SymbolSizeKind> // com.rohittp.rentile/SymbolSizeKind.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): com.rohittp.rentile/SymbolSizeKind // com.rohittp.rentile/SymbolSizeKind.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<com.rohittp.rentile/SymbolSizeKind> // com.rohittp.rentile/SymbolSizeKind.values|values#static(){}[0]
+}
+
 final enum class com.rohittp.rentile/SymbolZOrder : kotlin/Enum<com.rohittp.rentile/SymbolZOrder> { // com.rohittp.rentile/SymbolZOrder|null[0]
     enum entry AUTO // com.rohittp.rentile/SymbolZOrder.AUTO|null[0]
     enum entry SOURCE // com.rohittp.rentile/SymbolZOrder.SOURCE|null[0]
@@ -332,6 +346,9 @@ abstract interface com.rohittp.rentile/BasemapRasterizer : kotlin/AutoCloseable 
     abstract suspend fun renderRaw(com.rohittp.rentile/PreparedBatch, kotlin.collections/List<com.rohittp.rentile/TileId> = ..., com.rohittp.rentile/RenderPriority = ...): com.rohittp.rentile/RawRenderBatch // com.rohittp.rentile/BasemapRasterizer.renderRaw|renderRaw(com.rohittp.rentile.PreparedBatch;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.RenderPriority){}[0]
     abstract suspend fun retryExact(com.rohittp.rentile/PreparedBatch): com.rohittp.rentile/ExactRecoveryResult // com.rohittp.rentile/BasemapRasterizer.retryExact|retryExact(com.rohittp.rentile.PreparedBatch){}[0]
     abstract suspend fun warmRawResources(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/RawWarmSummary // com.rohittp.rentile/BasemapRasterizer.warmRawResources|warmRawResources(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ResourceAccessMode){}[0]
+    open fun labelCandidateRequestKey(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions): kotlin/String // com.rohittp.rentile/BasemapRasterizer.labelCandidateRequestKey|labelCandidateRequestKey(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions){}[0]
+    open suspend fun acquireLabelCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/LabelCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireLabelCandidates|acquireLabelCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions;com.rohittp.rentile.ResourceAccessMode){}[0]
+    open suspend fun planLabelCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/LabelCandidatePlan // com.rohittp.rentile/BasemapRasterizer.planLabelCandidates|planLabelCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions;com.rohittp.rentile.ResourceAccessMode){}[0]
 }
 
 abstract interface com.rohittp.rentile/LabelCandidatePlan : kotlin/AutoCloseable { // com.rohittp.rentile/LabelCandidatePlan|null[0]
@@ -636,6 +653,8 @@ final class com.rohittp.rentile/CompatibilityPolicy { // com.rohittp.rentile/Com
             final fun <get-Default>(): com.rohittp.rentile/CompatibilityPolicy // com.rohittp.rentile/CompatibilityPolicy.Companion.Default.<get-Default>|<get-Default>(){}[0]
         final val RentileV1 // com.rohittp.rentile/CompatibilityPolicy.Companion.RentileV1|{}RentileV1[0]
             final fun <get-RentileV1>(): com.rohittp.rentile/CompatibilityPolicy // com.rohittp.rentile/CompatibilityPolicy.Companion.RentileV1.<get-RentileV1>|<get-RentileV1>(){}[0]
+        final val RentileV1HostSymbols // com.rohittp.rentile/CompatibilityPolicy.Companion.RentileV1HostSymbols|{}RentileV1HostSymbols[0]
+            final fun <get-RentileV1HostSymbols>(): com.rohittp.rentile/CompatibilityPolicy // com.rohittp.rentile/CompatibilityPolicy.Companion.RentileV1HostSymbols.<get-RentileV1HostSymbols>|<get-RentileV1HostSymbols>(){}[0]
     }
 }
 
@@ -783,7 +802,7 @@ final class com.rohittp.rentile/LabelBox { // com.rohittp.rentile/LabelBox|null[
 }
 
 final class com.rohittp.rentile/LabelCandidate { // com.rohittp.rentile/LabelCandidate|null[0]
-    constructor <init>(kotlin/Int, com.rohittp.rentile/TileId, com.rohittp.rentile/TileId, kotlin/Double, kotlin/Double, com.rohittp.rentile/LabelPlacement, kotlin.collections/List<com.rohittp.rentile/LabelLinePoint>, kotlin/Double, kotlin/Double, kotlin/Boolean, kotlin/Boolean, com.rohittp.rentile/SymbolZOrder, kotlin/Double, kotlin/Double, com.rohittp.rentile/SymbolAlignment, com.rohittp.rentile/SymbolAlignment, kotlin/Boolean, kotlin.collections/List<com.rohittp.rentile/LabelGlyphQuad>, com.rohittp.rentile/LabelBox, com.rohittp.rentile/LabelIconRef?, com.rohittp.rentile/SymbolOverlap, kotlin/Boolean, kotlin/Double, kotlin/Double, kotlin/Int, kotlin/Int, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, com.rohittp.rentile/SymbolAlignment) // com.rohittp.rentile/LabelCandidate.<init>|<init>(kotlin.Int;com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.Double;kotlin.Double;com.rohittp.rentile.LabelPlacement;kotlin.collections.List<com.rohittp.rentile.LabelLinePoint>;kotlin.Double;kotlin.Double;kotlin.Boolean;kotlin.Boolean;com.rohittp.rentile.SymbolZOrder;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment;com.rohittp.rentile.SymbolAlignment;kotlin.Boolean;kotlin.collections.List<com.rohittp.rentile.LabelGlyphQuad>;com.rohittp.rentile.LabelBox;com.rohittp.rentile.LabelIconRef?;com.rohittp.rentile.SymbolOverlap;kotlin.Boolean;kotlin.Double;kotlin.Double;kotlin.Int;kotlin.Int;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment){}[0]
+    constructor <init>(kotlin/Int, com.rohittp.rentile/TileId, com.rohittp.rentile/TileId, kotlin/Double, kotlin/Double, com.rohittp.rentile/LabelPlacement, kotlin.collections/List<com.rohittp.rentile/LabelLinePoint>, kotlin/Double, kotlin/Double, kotlin/Boolean, kotlin/Boolean, com.rohittp.rentile/SymbolZOrder, kotlin/Double, kotlin/Double, com.rohittp.rentile/SymbolAlignment, com.rohittp.rentile/SymbolAlignment, kotlin/Boolean, kotlin.collections/List<com.rohittp.rentile/LabelGlyphQuad>, com.rohittp.rentile/LabelBox, com.rohittp.rentile/LabelIconRef?, com.rohittp.rentile/SymbolOverlap, kotlin/Boolean, kotlin/Double, kotlin/Double, kotlin/Int, kotlin/Int, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, com.rohittp.rentile/SymbolAlignment, kotlin/Long?, kotlin/String?, com.rohittp.rentile/LabelSymbolSize?) // com.rohittp.rentile/LabelCandidate.<init>|<init>(kotlin.Int;com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.Double;kotlin.Double;com.rohittp.rentile.LabelPlacement;kotlin.collections.List<com.rohittp.rentile.LabelLinePoint>;kotlin.Double;kotlin.Double;kotlin.Boolean;kotlin.Boolean;com.rohittp.rentile.SymbolZOrder;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment;com.rohittp.rentile.SymbolAlignment;kotlin.Boolean;kotlin.collections.List<com.rohittp.rentile.LabelGlyphQuad>;com.rohittp.rentile.LabelBox;com.rohittp.rentile.LabelIconRef?;com.rohittp.rentile.SymbolOverlap;kotlin.Boolean;kotlin.Double;kotlin.Double;kotlin.Int;kotlin.Int;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment;kotlin.Long?;kotlin.String?;com.rohittp.rentile.LabelSymbolSize?){}[0]
 
     final val avoidEdges // com.rohittp.rentile/LabelCandidate.avoidEdges|{}avoidEdges[0]
         final fun <get-avoidEdges>(): kotlin/Boolean // com.rohittp.rentile/LabelCandidate.avoidEdges.<get-avoidEdges>|<get-avoidEdges>(){}[0]
@@ -791,6 +810,8 @@ final class com.rohittp.rentile/LabelCandidate { // com.rohittp.rentile/LabelCan
         final fun <get-boundingBox>(): com.rohittp.rentile/LabelBox // com.rohittp.rentile/LabelCandidate.boundingBox.<get-boundingBox>|<get-boundingBox>(){}[0]
     final val color // com.rohittp.rentile/LabelCandidate.color|{}color[0]
         final fun <get-color>(): kotlin/Int // com.rohittp.rentile/LabelCandidate.color.<get-color>|<get-color>(){}[0]
+    final val featureId // com.rohittp.rentile/LabelCandidate.featureId|{}featureId[0]
+        final fun <get-featureId>(): kotlin/Long? // com.rohittp.rentile/LabelCandidate.featureId.<get-featureId>|<get-featureId>(){}[0]
     final val glyphs // com.rohittp.rentile/LabelCandidate.glyphs|{}glyphs[0]
         final fun <get-glyphs>(): kotlin.collections/List<com.rohittp.rentile/LabelGlyphQuad> // com.rohittp.rentile/LabelCandidate.glyphs.<get-glyphs>|<get-glyphs>(){}[0]
     final val haloBlur // com.rohittp.rentile/LabelCandidate.haloBlur|{}haloBlur[0]
@@ -837,10 +858,14 @@ final class com.rohittp.rentile/LabelCandidate { // com.rohittp.rentile/LabelCan
         final fun <get-sourceTile>(): com.rohittp.rentile/TileId // com.rohittp.rentile/LabelCandidate.sourceTile.<get-sourceTile>|<get-sourceTile>(){}[0]
     final val symbolSpacing // com.rohittp.rentile/LabelCandidate.symbolSpacing|{}symbolSpacing[0]
         final fun <get-symbolSpacing>(): kotlin/Double // com.rohittp.rentile/LabelCandidate.symbolSpacing.<get-symbolSpacing>|<get-symbolSpacing>(){}[0]
+    final val text // com.rohittp.rentile/LabelCandidate.text|{}text[0]
+        final fun <get-text>(): kotlin/String? // com.rohittp.rentile/LabelCandidate.text.<get-text>|<get-text>(){}[0]
     final val textOptional // com.rohittp.rentile/LabelCandidate.textOptional|{}textOptional[0]
         final fun <get-textOptional>(): kotlin/Boolean // com.rohittp.rentile/LabelCandidate.textOptional.<get-textOptional>|<get-textOptional>(){}[0]
     final val textRotationDegrees // com.rohittp.rentile/LabelCandidate.textRotationDegrees|{}textRotationDegrees[0]
         final fun <get-textRotationDegrees>(): kotlin/Double // com.rohittp.rentile/LabelCandidate.textRotationDegrees.<get-textRotationDegrees>|<get-textRotationDegrees>(){}[0]
+    final val textSize // com.rohittp.rentile/LabelCandidate.textSize|{}textSize[0]
+        final fun <get-textSize>(): com.rohittp.rentile/LabelSymbolSize? // com.rohittp.rentile/LabelCandidate.textSize.<get-textSize>|<get-textSize>(){}[0]
     final val translateAlignment // com.rohittp.rentile/LabelCandidate.translateAlignment|{}translateAlignment[0]
         final fun <get-translateAlignment>(): com.rohittp.rentile/SymbolAlignment // com.rohittp.rentile/LabelCandidate.translateAlignment.<get-translateAlignment>|<get-translateAlignment>(){}[0]
     final val translateX // com.rohittp.rentile/LabelCandidate.translateX|{}translateX[0]
@@ -876,13 +901,16 @@ final class com.rohittp.rentile/LabelCandidate { // com.rohittp.rentile/LabelCan
     final fun component30(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component30|component30(){}[0]
     final fun component31(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component31|component31(){}[0]
     final fun component32(): com.rohittp.rentile/SymbolAlignment // com.rohittp.rentile/LabelCandidate.component32|component32(){}[0]
+    final fun component33(): kotlin/Long? // com.rohittp.rentile/LabelCandidate.component33|component33(){}[0]
+    final fun component34(): kotlin/String? // com.rohittp.rentile/LabelCandidate.component34|component34(){}[0]
+    final fun component35(): com.rohittp.rentile/LabelSymbolSize? // com.rohittp.rentile/LabelCandidate.component35|component35(){}[0]
     final fun component4(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component4|component4(){}[0]
     final fun component5(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component5|component5(){}[0]
     final fun component6(): com.rohittp.rentile/LabelPlacement // com.rohittp.rentile/LabelCandidate.component6|component6(){}[0]
     final fun component7(): kotlin.collections/List<com.rohittp.rentile/LabelLinePoint> // com.rohittp.rentile/LabelCandidate.component7|component7(){}[0]
     final fun component8(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component8|component8(){}[0]
     final fun component9(): kotlin/Double // com.rohittp.rentile/LabelCandidate.component9|component9(){}[0]
-    final fun copy(kotlin/Int = ..., com.rohittp.rentile/TileId = ..., com.rohittp.rentile/TileId = ..., kotlin/Double = ..., kotlin/Double = ..., com.rohittp.rentile/LabelPlacement = ..., kotlin.collections/List<com.rohittp.rentile/LabelLinePoint> = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., com.rohittp.rentile/SymbolZOrder = ..., kotlin/Double = ..., kotlin/Double = ..., com.rohittp.rentile/SymbolAlignment = ..., com.rohittp.rentile/SymbolAlignment = ..., kotlin/Boolean = ..., kotlin.collections/List<com.rohittp.rentile/LabelGlyphQuad> = ..., com.rohittp.rentile/LabelBox = ..., com.rohittp.rentile/LabelIconRef? = ..., com.rohittp.rentile/SymbolOverlap = ..., kotlin/Boolean = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., com.rohittp.rentile/SymbolAlignment = ...): com.rohittp.rentile/LabelCandidate // com.rohittp.rentile/LabelCandidate.copy|copy(kotlin.Int;com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.Double;kotlin.Double;com.rohittp.rentile.LabelPlacement;kotlin.collections.List<com.rohittp.rentile.LabelLinePoint>;kotlin.Double;kotlin.Double;kotlin.Boolean;kotlin.Boolean;com.rohittp.rentile.SymbolZOrder;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment;com.rohittp.rentile.SymbolAlignment;kotlin.Boolean;kotlin.collections.List<com.rohittp.rentile.LabelGlyphQuad>;com.rohittp.rentile.LabelBox;com.rohittp.rentile.LabelIconRef?;com.rohittp.rentile.SymbolOverlap;kotlin.Boolean;kotlin.Double;kotlin.Double;kotlin.Int;kotlin.Int;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment){}[0]
+    final fun copy(kotlin/Int = ..., com.rohittp.rentile/TileId = ..., com.rohittp.rentile/TileId = ..., kotlin/Double = ..., kotlin/Double = ..., com.rohittp.rentile/LabelPlacement = ..., kotlin.collections/List<com.rohittp.rentile/LabelLinePoint> = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., com.rohittp.rentile/SymbolZOrder = ..., kotlin/Double = ..., kotlin/Double = ..., com.rohittp.rentile/SymbolAlignment = ..., com.rohittp.rentile/SymbolAlignment = ..., kotlin/Boolean = ..., kotlin.collections/List<com.rohittp.rentile/LabelGlyphQuad> = ..., com.rohittp.rentile/LabelBox = ..., com.rohittp.rentile/LabelIconRef? = ..., com.rohittp.rentile/SymbolOverlap = ..., kotlin/Boolean = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., com.rohittp.rentile/SymbolAlignment = ..., kotlin/Long? = ..., kotlin/String? = ..., com.rohittp.rentile/LabelSymbolSize? = ...): com.rohittp.rentile/LabelCandidate // com.rohittp.rentile/LabelCandidate.copy|copy(kotlin.Int;com.rohittp.rentile.TileId;com.rohittp.rentile.TileId;kotlin.Double;kotlin.Double;com.rohittp.rentile.LabelPlacement;kotlin.collections.List<com.rohittp.rentile.LabelLinePoint>;kotlin.Double;kotlin.Double;kotlin.Boolean;kotlin.Boolean;com.rohittp.rentile.SymbolZOrder;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment;com.rohittp.rentile.SymbolAlignment;kotlin.Boolean;kotlin.collections.List<com.rohittp.rentile.LabelGlyphQuad>;com.rohittp.rentile.LabelBox;com.rohittp.rentile.LabelIconRef?;com.rohittp.rentile.SymbolOverlap;kotlin.Boolean;kotlin.Double;kotlin.Double;kotlin.Int;kotlin.Int;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment;kotlin.Long?;kotlin.String?;com.rohittp.rentile.LabelSymbolSize?){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelCandidate.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelCandidate.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/LabelCandidate.toString|toString(){}[0]
@@ -911,6 +939,24 @@ final class com.rohittp.rentile/LabelCandidateBatch { // com.rohittp.rentile/Lab
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelCandidateBatch.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelCandidateBatch.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/LabelCandidateBatch.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/LabelCandidateOptions { // com.rohittp.rentile/LabelCandidateOptions|null[0]
+    constructor <init>(kotlin/String? = ...) // com.rohittp.rentile/LabelCandidateOptions.<init>|<init>(kotlin.String?){}[0]
+
+    final val textFieldOverride // com.rohittp.rentile/LabelCandidateOptions.textFieldOverride|{}textFieldOverride[0]
+        final fun <get-textFieldOverride>(): kotlin/String? // com.rohittp.rentile/LabelCandidateOptions.textFieldOverride.<get-textFieldOverride>|<get-textFieldOverride>(){}[0]
+
+    final fun component1(): kotlin/String? // com.rohittp.rentile/LabelCandidateOptions.component1|component1(){}[0]
+    final fun copy(kotlin/String? = ...): com.rohittp.rentile/LabelCandidateOptions // com.rohittp.rentile/LabelCandidateOptions.copy|copy(kotlin.String?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelCandidateOptions.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelCandidateOptions.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/LabelCandidateOptions.toString|toString(){}[0]
+
+    final object Companion { // com.rohittp.rentile/LabelCandidateOptions.Companion|null[0]
+        final val Default // com.rohittp.rentile/LabelCandidateOptions.Companion.Default|{}Default[0]
+            final fun <get-Default>(): com.rohittp.rentile/LabelCandidateOptions // com.rohittp.rentile/LabelCandidateOptions.Companion.Default.<get-Default>|<get-Default>(){}[0]
+    }
 }
 
 final class com.rohittp.rentile/LabelCandidatePlanClosedException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/LabelCandidatePlanClosedException|null[0]
@@ -1002,7 +1048,7 @@ final class com.rohittp.rentile/LabelGlyphQuad { // com.rohittp.rentile/LabelGly
 }
 
 final class com.rohittp.rentile/LabelIconRef { // com.rohittp.rentile/LabelIconRef|null[0]
-    constructor <init>(kotlin/String, kotlin/Double, kotlin/Double, com.rohittp.rentile/LabelIconAnchor, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, com.rohittp.rentile/SymbolAlignment, kotlin/Int, kotlin/Double, kotlin/Int, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Boolean, com.rohittp.rentile/SymbolOverlap, kotlin/Boolean, com.rohittp.rentile/SymbolAlignment, com.rohittp.rentile/SymbolAlignment, kotlin/Boolean, kotlin/Boolean, com.rohittp.rentile/IconTextFit, kotlin.collections/List<kotlin/Double>) // com.rohittp.rentile/LabelIconRef.<init>|<init>(kotlin.String;kotlin.Double;kotlin.Double;com.rohittp.rentile.LabelIconAnchor;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment;kotlin.Int;kotlin.Double;kotlin.Int;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Boolean;com.rohittp.rentile.SymbolOverlap;kotlin.Boolean;com.rohittp.rentile.SymbolAlignment;com.rohittp.rentile.SymbolAlignment;kotlin.Boolean;kotlin.Boolean;com.rohittp.rentile.IconTextFit;kotlin.collections.List<kotlin.Double>){}[0]
+    constructor <init>(kotlin/String, kotlin/Double, kotlin/Double, com.rohittp.rentile/LabelIconAnchor, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, com.rohittp.rentile/SymbolAlignment, kotlin/Int, kotlin/Double, kotlin/Int, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Boolean, com.rohittp.rentile/SymbolOverlap, kotlin/Boolean, com.rohittp.rentile/SymbolAlignment, com.rohittp.rentile/SymbolAlignment, kotlin/Boolean, kotlin/Boolean, com.rohittp.rentile/IconTextFit, kotlin.collections/List<kotlin/Double>, com.rohittp.rentile/LabelSymbolSize) // com.rohittp.rentile/LabelIconRef.<init>|<init>(kotlin.String;kotlin.Double;kotlin.Double;com.rohittp.rentile.LabelIconAnchor;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment;kotlin.Int;kotlin.Double;kotlin.Int;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Boolean;com.rohittp.rentile.SymbolOverlap;kotlin.Boolean;com.rohittp.rentile.SymbolAlignment;com.rohittp.rentile.SymbolAlignment;kotlin.Boolean;kotlin.Boolean;com.rohittp.rentile.IconTextFit;kotlin.collections.List<kotlin.Double>;com.rohittp.rentile.LabelSymbolSize){}[0]
 
     final val anchor // com.rohittp.rentile/LabelIconRef.anchor|{}anchor[0]
         final fun <get-anchor>(): com.rohittp.rentile/LabelIconAnchor // com.rohittp.rentile/LabelIconRef.anchor.<get-anchor>|<get-anchor>(){}[0]
@@ -1042,6 +1088,8 @@ final class com.rohittp.rentile/LabelIconRef { // com.rohittp.rentile/LabelIconR
         final fun <get-rotationAlignment>(): com.rohittp.rentile/SymbolAlignment // com.rohittp.rentile/LabelIconRef.rotationAlignment.<get-rotationAlignment>|<get-rotationAlignment>(){}[0]
     final val rotationDegrees // com.rohittp.rentile/LabelIconRef.rotationDegrees|{}rotationDegrees[0]
         final fun <get-rotationDegrees>(): kotlin/Double // com.rohittp.rentile/LabelIconRef.rotationDegrees.<get-rotationDegrees>|<get-rotationDegrees>(){}[0]
+    final val size // com.rohittp.rentile/LabelIconRef.size|{}size[0]
+        final fun <get-size>(): com.rohittp.rentile/LabelSymbolSize // com.rohittp.rentile/LabelIconRef.size.<get-size>|<get-size>(){}[0]
     final val textFit // com.rohittp.rentile/LabelIconRef.textFit|{}textFit[0]
         final fun <get-textFit>(): com.rohittp.rentile/IconTextFit // com.rohittp.rentile/LabelIconRef.textFit.<get-textFit>|<get-textFit>(){}[0]
     final val textFitPadding // com.rohittp.rentile/LabelIconRef.textFitPadding|{}textFitPadding[0]
@@ -1073,6 +1121,7 @@ final class com.rohittp.rentile/LabelIconRef { // com.rohittp.rentile/LabelIconR
     final fun component23(): kotlin/Boolean // com.rohittp.rentile/LabelIconRef.component23|component23(){}[0]
     final fun component24(): com.rohittp.rentile/IconTextFit // com.rohittp.rentile/LabelIconRef.component24|component24(){}[0]
     final fun component25(): kotlin.collections/List<kotlin/Double> // com.rohittp.rentile/LabelIconRef.component25|component25(){}[0]
+    final fun component26(): com.rohittp.rentile/LabelSymbolSize // com.rohittp.rentile/LabelIconRef.component26|component26(){}[0]
     final fun component3(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component3|component3(){}[0]
     final fun component4(): com.rohittp.rentile/LabelIconAnchor // com.rohittp.rentile/LabelIconRef.component4|component4(){}[0]
     final fun component5(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component5|component5(){}[0]
@@ -1080,7 +1129,7 @@ final class com.rohittp.rentile/LabelIconRef { // com.rohittp.rentile/LabelIconR
     final fun component7(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component7|component7(){}[0]
     final fun component8(): kotlin/Double // com.rohittp.rentile/LabelIconRef.component8|component8(){}[0]
     final fun component9(): com.rohittp.rentile/SymbolAlignment // com.rohittp.rentile/LabelIconRef.component9|component9(){}[0]
-    final fun copy(kotlin/String = ..., kotlin/Double = ..., kotlin/Double = ..., com.rohittp.rentile/LabelIconAnchor = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., com.rohittp.rentile/SymbolAlignment = ..., kotlin/Int = ..., kotlin/Double = ..., kotlin/Int = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Boolean = ..., com.rohittp.rentile/SymbolOverlap = ..., kotlin/Boolean = ..., com.rohittp.rentile/SymbolAlignment = ..., com.rohittp.rentile/SymbolAlignment = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., com.rohittp.rentile/IconTextFit = ..., kotlin.collections/List<kotlin/Double> = ...): com.rohittp.rentile/LabelIconRef // com.rohittp.rentile/LabelIconRef.copy|copy(kotlin.String;kotlin.Double;kotlin.Double;com.rohittp.rentile.LabelIconAnchor;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment;kotlin.Int;kotlin.Double;kotlin.Int;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Boolean;com.rohittp.rentile.SymbolOverlap;kotlin.Boolean;com.rohittp.rentile.SymbolAlignment;com.rohittp.rentile.SymbolAlignment;kotlin.Boolean;kotlin.Boolean;com.rohittp.rentile.IconTextFit;kotlin.collections.List<kotlin.Double>){}[0]
+    final fun copy(kotlin/String = ..., kotlin/Double = ..., kotlin/Double = ..., com.rohittp.rentile/LabelIconAnchor = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., com.rohittp.rentile/SymbolAlignment = ..., kotlin/Int = ..., kotlin/Double = ..., kotlin/Int = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Boolean = ..., com.rohittp.rentile/SymbolOverlap = ..., kotlin/Boolean = ..., com.rohittp.rentile/SymbolAlignment = ..., com.rohittp.rentile/SymbolAlignment = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., com.rohittp.rentile/IconTextFit = ..., kotlin.collections/List<kotlin/Double> = ..., com.rohittp.rentile/LabelSymbolSize = ...): com.rohittp.rentile/LabelIconRef // com.rohittp.rentile/LabelIconRef.copy|copy(kotlin.String;kotlin.Double;kotlin.Double;com.rohittp.rentile.LabelIconAnchor;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;com.rohittp.rentile.SymbolAlignment;kotlin.Int;kotlin.Double;kotlin.Int;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Boolean;com.rohittp.rentile.SymbolOverlap;kotlin.Boolean;com.rohittp.rentile.SymbolAlignment;com.rohittp.rentile.SymbolAlignment;kotlin.Boolean;kotlin.Boolean;com.rohittp.rentile.IconTextFit;kotlin.collections.List<kotlin.Double>;com.rohittp.rentile.LabelSymbolSize){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelIconRef.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelIconRef.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/LabelIconRef.toString|toString(){}[0]
@@ -1147,6 +1196,38 @@ final class com.rohittp.rentile/LabelLinePoint { // com.rohittp.rentile/LabelLin
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelLinePoint.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelLinePoint.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/LabelLinePoint.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/LabelSymbolSize { // com.rohittp.rentile/LabelSymbolSize|null[0]
+    constructor <init>(com.rohittp.rentile/SymbolSizeKind, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double, kotlin/Double?) // com.rohittp.rentile/LabelSymbolSize.<init>|<init>(com.rohittp.rentile.SymbolSizeKind;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double?){}[0]
+
+    final val interpolationBase // com.rohittp.rentile/LabelSymbolSize.interpolationBase|{}interpolationBase[0]
+        final fun <get-interpolationBase>(): kotlin/Double? // com.rohittp.rentile/LabelSymbolSize.interpolationBase.<get-interpolationBase>|<get-interpolationBase>(){}[0]
+    final val kind // com.rohittp.rentile/LabelSymbolSize.kind|{}kind[0]
+        final fun <get-kind>(): com.rohittp.rentile/SymbolSizeKind // com.rohittp.rentile/LabelSymbolSize.kind.<get-kind>|<get-kind>(){}[0]
+    final val lowerSize // com.rohittp.rentile/LabelSymbolSize.lowerSize|{}lowerSize[0]
+        final fun <get-lowerSize>(): kotlin/Double // com.rohittp.rentile/LabelSymbolSize.lowerSize.<get-lowerSize>|<get-lowerSize>(){}[0]
+    final val lowerZoom // com.rohittp.rentile/LabelSymbolSize.lowerZoom|{}lowerZoom[0]
+        final fun <get-lowerZoom>(): kotlin/Double // com.rohittp.rentile/LabelSymbolSize.lowerZoom.<get-lowerZoom>|<get-lowerZoom>(){}[0]
+    final val tileZoomSize // com.rohittp.rentile/LabelSymbolSize.tileZoomSize|{}tileZoomSize[0]
+        final fun <get-tileZoomSize>(): kotlin/Double // com.rohittp.rentile/LabelSymbolSize.tileZoomSize.<get-tileZoomSize>|<get-tileZoomSize>(){}[0]
+    final val upperSize // com.rohittp.rentile/LabelSymbolSize.upperSize|{}upperSize[0]
+        final fun <get-upperSize>(): kotlin/Double // com.rohittp.rentile/LabelSymbolSize.upperSize.<get-upperSize>|<get-upperSize>(){}[0]
+    final val upperZoom // com.rohittp.rentile/LabelSymbolSize.upperZoom|{}upperZoom[0]
+        final fun <get-upperZoom>(): kotlin/Double // com.rohittp.rentile/LabelSymbolSize.upperZoom.<get-upperZoom>|<get-upperZoom>(){}[0]
+
+    final fun component1(): com.rohittp.rentile/SymbolSizeKind // com.rohittp.rentile/LabelSymbolSize.component1|component1(){}[0]
+    final fun component2(): kotlin/Double // com.rohittp.rentile/LabelSymbolSize.component2|component2(){}[0]
+    final fun component3(): kotlin/Double // com.rohittp.rentile/LabelSymbolSize.component3|component3(){}[0]
+    final fun component4(): kotlin/Double // com.rohittp.rentile/LabelSymbolSize.component4|component4(){}[0]
+    final fun component5(): kotlin/Double // com.rohittp.rentile/LabelSymbolSize.component5|component5(){}[0]
+    final fun component6(): kotlin/Double // com.rohittp.rentile/LabelSymbolSize.component6|component6(){}[0]
+    final fun component7(): kotlin/Double? // com.rohittp.rentile/LabelSymbolSize.component7|component7(){}[0]
+    final fun copy(com.rohittp.rentile/SymbolSizeKind = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double? = ...): com.rohittp.rentile/LabelSymbolSize // com.rohittp.rentile/LabelSymbolSize.copy|copy(com.rohittp.rentile.SymbolSizeKind;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Double?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LabelSymbolSize.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/LabelSymbolSize.hashCode|hashCode(){}[0]
+    final fun sizeAt(kotlin/Double): kotlin/Double // com.rohittp.rentile/LabelSymbolSize.sizeAt|sizeAt(kotlin.Double){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/LabelSymbolSize.toString|toString(){}[0]
 }
 
 final class com.rohittp.rentile/MapSession { // com.rohittp.rentile/MapSession|null[0]
