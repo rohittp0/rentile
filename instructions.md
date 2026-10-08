@@ -349,7 +349,11 @@ the candidate carries that paired icon's sprite geometry, paint, collision, alig
 inputs so the host places text and icon as one symbol. A host that draws those icons itself calls
 `acquireSpriteAtlas(style, pixelRatio = 2)` once per style for the provider's `@2x` sheet and draws
 each icon at `LabelIconRef` size times its own device ratio; candidate geometry never depends on
-which sheet it uses. A host that must know its Glyph Range URLs before they are fetched calls
+which sheet it uses. A host with a GPU texture ceiling configures
+`labelGlyphAtlas = LabelGlyphAtlasPolicy(LabelGlyphPacking.REFERENCED_GLYPHS, maxDimensionPx = 4096)`
+on its `RentileConfiguration`, so the label glyph atlas holds only the glyphs its candidates draw and
+stays within that texture size; that packing adds a part to both label keys, and the cap adds none.
+A host that must know its Glyph Range URLs before they are fetched calls
 `planLabelCandidates` first and reads them from the plan. Do not route
 atmosphere, route overlays, vehicles, globe/plane mapping, or UI camera state through Rentile.
 

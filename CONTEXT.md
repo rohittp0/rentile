@@ -103,7 +103,7 @@ One block of 256 consecutive Unicode codepoints of a font stack, acquired as sig
 _Avoid_: Font file, glyph page, character set
 
 **Label Candidate Batch**:
-The immutable result of one Label acquisition: its Label Candidates, the glyph atlas they reference, and the content key identifying the acquired glyph and vector bytes.
+The immutable result of one Label acquisition: its Label Candidates, the glyph atlas they reference, and the content key identifying the acquired glyph and vector bytes. The glyph atlas holds every glyph of every acquired Glyph Range by default, or, under the host's referenced-only packing, only the glyphs the candidates draw; it never holds sprite imagery, which is a **Sprite Atlas**.
 _Avoid_: Prepared Batch, Label Candidate Plan, render result, Label Tile
 
 **Glyph Closure**:
@@ -144,7 +144,7 @@ Performance profiling and numeric acceptance budgets are intentionally deferred 
 
 ## Distribution
 
-The public consumer coordinate is `com.rohittp.rentile:kmp`. Releases `0.1.0` through `0.1.4` remain on Maven Central; the shared repository at `https://maven.rohittp.com` is canonical after the migration and is also the version line: each release takes the highest version already published there and advances its patch component. `VERSION_NAME` in the root `gradle.properties` governs only when it names a version strictly above everything public, which is how a deliberate minor or major release is requested. `0.11.3` is published, and is the highest version on that line. Snapshot versions never govern and remain local-repository-only. Every push to `main` outside documentation publishes; documentation-only commits do not consume a version, and releases are serialised so concurrent pushes cannot race for one coordinate. The release workflow rejects an existing primary POM before upload, requires the exact version to pass signed local publication plus Android, JVM, iOS, macOS, Linux, and rolling-corpus gates, verifies every public artifact, then resolves it from a fresh credential-free consumer. A GitHub Release is not required. Version numbers are cheap and non-contiguous; a gap does not imply a withdrawn version.
+The public consumer coordinate is `com.rohittp.rentile:kmp`. Releases `0.1.0` through `0.1.4` remain on Maven Central; the shared repository at `https://maven.rohittp.com` is canonical after the migration and is also the version line: each release takes the highest version already published there and advances its patch component. `VERSION_NAME` in the root `gradle.properties` governs only when it names a version strictly above everything public, which is how a deliberate minor or major release is requested. `0.12.0`, declared in `VERSION_NAME` above the published `0.11.4`, is the version this release publishes. Snapshot versions never govern and remain local-repository-only. Every push to `main` outside documentation publishes; documentation-only commits do not consume a version, and releases are serialised so concurrent pushes cannot race for one coordinate. The release workflow rejects an existing primary POM before upload, requires the exact version to pass signed local publication plus Android, JVM, iOS, macOS, Linux, and rolling-corpus gates, verifies every public artifact, then resolves it from a fresh credential-free consumer. A GitHub Release is not required. Version numbers are cheap and non-contiguous; a gap does not imply a withdrawn version.
 
 `0.11.0` and `0.11.1` are both **partial**: an R2 `500` while writing
 `kmp-linuxx64/maven-metadata.xml.md5` abandoned the publications Gradle had not reached, so neither
@@ -153,12 +153,14 @@ and a `macosArm64` consumer of either resolves a 404. A released coordinate is i
 workflow rejects an existing primary POM, which is why the gap is recorded rather than fixed by a
 rebuild. **`0.11.2` was whole** — all eight coordinates published and signed, both public-verification
 steps run and passed — and it rewrote the stale `kmp-linuxx64/maven-metadata.xml.md5` on its way
-past, so the first of that ledger's two repairs is done. **`0.11.3` is whole too**, and is what
-consumers use: all eight coordinates present and signed from outside CI, `<release>0.11.3</release>`
-in every coordinate's metadata, every metadata document matching its published `md5` and `sha1`, and
-a credential-free resolution compiling against all six non-Android targets from a fresh Gradle user
-home. See the [0.11.1](docs/migrations/0.11.1.md), [0.11.2](docs/migrations/0.11.2.md) and
-[0.11.3](docs/migrations/0.11.3.md) ledgers.
+past, so the first of that ledger's two repairs is done. **`0.11.3` was whole too**: all eight
+coordinates present and signed from outside CI, `<release>0.11.3</release>` in every coordinate's
+metadata at the time, every metadata document matching its published `md5` and `sha1`, and a
+credential-free resolution compiling against all six non-Android targets from a fresh Gradle user
+home. **`0.11.4` is whole as well**, and is what consumers use until `0.12.0` resolves: all eight
+coordinates carry a `.pom` and its `.asc` signature, `<release>0.11.4</release>` is in every
+coordinate's metadata, and every metadata document matches its published `md5` and `sha1`. See the [0.11.1](docs/migrations/0.11.1.md), [0.11.2](docs/migrations/0.11.2.md),
+[0.11.3](docs/migrations/0.11.3.md) and [0.11.4](docs/migrations/0.11.4.md) ledgers.
 
 Rentile is licensed under Apache-2.0. Published artifacts also carry a maintained third-party notices inventory for dependencies and copied or adapted upstream code.
 

@@ -6,10 +6,17 @@ Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a
 
 Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
-`0.11.3` is published, whole on all eight coordinates, and is the newest version on the public line.
-It decodes a raster or DEM source tile once for the draws of a prepared batch that read it instead of
-once per draw, and changes no public signature, no key and no pixel, so it is a drop-in for `0.11.2`.
-See the [0.11.3 migration guide](docs/migrations/0.11.3.md). Consumers upgrading from `0.11.0` or
+`0.12.0` is the version this source tree declares, a deliberate breaking minor: it publishes once
+the release workflow passes, and until `com.rohittp.rentile:kmp:0.12.0` resolves from the public
+repository, `0.11.4` is the newest version there. `0.12.0` lets a host own every symbol layer, hands
+it the style's sprite sheet, and bounds the label glyph atlas; `RentileConfiguration`,
+`LabelCandidate` and `LabelIconRef` gain appended fields, so every consumer recompiles, and the two
+label-candidate keys move. See the [0.12.0 migration guide](docs/migrations/0.12.0.md).
+
+`0.11.4` is whole on all eight coordinates and a drop-in for `0.11.3`: a `filter` on a raster,
+hillshade or background layer is ignored instead of failing the style. See the
+[0.11.4 ledger](docs/migrations/0.11.4.md) and, for `0.11.3`, the
+[0.11.3 migration guide](docs/migrations/0.11.3.md). Consumers upgrading from `0.11.0` or
 `0.11.1` should also read the [0.11.2 guide](docs/migrations/0.11.2.md), which carries the one change
 an OkHttp-backed transport has to make for Rentile's per-origin budget to be spendable.
 
@@ -94,7 +101,10 @@ fitted box instead of the removed pre-fit `anchorOffsetX/Y` shifts. The consumer
 imagery by `LabelIconRef.imageName` and still owns projection, shaping limitations, cross-tile
 collision, depth, and final drawing. The label batch carries no sprite sheet; a consumer that draws
 icons itself calls `acquireSpriteAtlas` for the style's sheet, at ratio 1 or the provider's `@2x`,
-and draws each icon at `LabelIconRef` size times its own device ratio.
+and draws each icon at `LabelIconRef` size times its own device ratio. A host with a GPU texture
+ceiling sets `RentileConfiguration.labelGlyphAtlas` to
+`LabelGlyphAtlasPolicy(LabelGlyphPacking.REFERENCED_GLYPHS, maxDimensionPx = 4096)`, so the glyph
+atlas holds only the glyphs its candidates draw and never exceeds that width or height.
 See [ADR 0024](docs/adr/0024-label-placement-belongs-to-the-consumer.md),
 [ADR 0036](docs/adr/0036-hand-the-sprite-sheet-to-the-host.md) and the
 [0.6.0 migration guide](docs/migrations/0.6.0.md).
@@ -110,7 +120,7 @@ of the camera's fractional zoom that reproduce Mapbox GL exactly. A `LabelCandid
 `textFieldOverride` applies one `text-field` to every label layer at acquisition - a label-language
 setting - without changing the prepared style or any Output Tile key. See
 [ADR 0035](docs/adr/0035-the-host-can-own-every-symbol-layer.md) and the
-[0.12.0 host-symbols notes](docs/migrations/0.12.0-host-symbols.md).
+[0.12.0 migration guide](docs/migrations/0.12.0.md).
 
 ## Terrain tiles
 

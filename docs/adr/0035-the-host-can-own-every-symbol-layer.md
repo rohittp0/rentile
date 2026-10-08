@@ -83,7 +83,11 @@ time with its text properties removed and contributes icon-only candidates, whil
   `rentile-v1` Coverage Manifest - same styles, cases and thresholds - rather than committed beside
   it, so the rolling catalog cannot drift between two files. See `compatibility/README.md`.
 - **The host now owns sprites for every icon.** Rentile still names images and does not publish a
-  sprite atlas through the Label Candidate Batch; that is unchanged from ADR 0024.
+  sprite atlas through the Label Candidate Batch; that is unchanged from ADR 0024. The host acquires
+  the sheet separately, through `acquireSpriteAtlas`
+  ([ADR 0036](0036-hand-the-sprite-sheet-to-the-host.md)). Under this profile preparation resolves
+  the sprite for every visible icon layer, so ratio one hands back the very sheet the icon-only
+  candidates were sized from.
 
 ## Related label-side decisions in the same release
 
