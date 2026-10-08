@@ -74,6 +74,24 @@ class LabelLayoutTest {
     }
 
     @Test
+    fun anUnboundedWidthNeverWraps() {
+        val (whitespace, atlas) = setUp('A'.code, 'B'.code)
+        // What a line or line-center label is laid out with: every word on one row, each break
+        // keeping its space advance, however far past any finite text-max-width the text runs.
+        val laid = LabelLayout.layOut(
+            "AB AB AB AB",
+            atlas,
+            whitespace,
+            styleFor(atlas, maxWidthEm = Double.POSITIVE_INFINITY),
+        )!!
+
+        assertEquals(8, laid.quads.size)
+        assertEquals(1, laid.quads.map { it.y }.distinct().size)
+        // 24 for "AB" plus 6 for the space, from each word to the next.
+        assertEquals(listOf(30.0, 30.0, 30.0), laid.quads.chunked(2).map { it.first().x }.zipWithNext { a, b -> b - a })
+    }
+
+    @Test
     fun aSingleWordLongerThanTheLimitIsNotSplit() {
         val (whitespace, atlas) = setUp('A'.code, 'B'.code)
         // "AB" alone is 24 em-units, already over a 1-em (24px) limit, but it is one word

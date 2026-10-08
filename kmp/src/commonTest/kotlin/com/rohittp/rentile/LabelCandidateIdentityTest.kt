@@ -101,13 +101,13 @@ class LabelCandidateIdentityTest {
     }
 
     @Test
-    fun theLabelRequestKeyCarriesTheThirdSemanticsMarker() = runTest {
+    fun theLabelRequestKeyCarriesTheFourthSemanticsMarker() = runTest {
         val rasterizer = LabelFixtures.rasterizer(LabelFixtures.Transport(ByteArray(0)))
         try {
             val style = rasterizer.prepare(StyleInput.InlineJson(LabelFixtures.style(poiLabels, sprite = false)))
 
             assertEquals(
-                "label-candidates-3|${style.digest}|2/1/1".sha256Hex(),
+                "label-candidates-4|${style.digest}|2/1/1".sha256Hex(),
                 rasterizer.labelCandidateRequestKey(style, listOf(TileId(2, 1, 1))),
             )
         } finally {
@@ -117,7 +117,7 @@ class LabelCandidateIdentityTest {
     }
 
     @Test
-    fun theCandidateContentKeyCarriesTheThirdSemanticsMarker() = runTest {
+    fun theCandidateContentKeyCarriesTheFourthSemanticsMarker() = runTest {
         // A style with no glyphs template and no icon layers yields the empty batch, whose content
         // key is the marker over the style digest alone - the one content key a test can derive
         // without re-implementing the resource digests.
@@ -129,7 +129,7 @@ class LabelCandidateIdentityTest {
 
             val batch = rasterizer.acquireLabelCandidates(style, listOf(TileId(2, 1, 1)))
 
-            assertEquals("rentile-label-candidates-3\n${style.digest}\n\n".sha256Hex(), batch.contentKey)
+            assertEquals("rentile-label-candidates-4\n${style.digest}\n\n".sha256Hex(), batch.contentKey)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()

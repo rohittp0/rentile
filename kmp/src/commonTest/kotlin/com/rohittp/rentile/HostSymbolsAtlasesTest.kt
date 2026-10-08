@@ -77,11 +77,11 @@ class HostSymbolsAtlasesTest {
         // An icon-only candidate is identical under both packings: there is nothing to re-index.
         assertEquals(all.candidates.filter { it.glyphs.isEmpty() }, iconAlone)
 
-        // Both keys carry the 0.12.0 markers, and only the referenced packing adds its part.
+        // Both keys carry the 0.12.1 markers, and only the referenced packing adds its part.
         assertEquals(allStyle.digest, style.digest)
-        assertEquals("label-candidates-3|${style.digest}|2/1/1|glyph-packing:referenced".sha256Hex(), packed.requestKey)
-        assertEquals("label-candidates-3|${style.digest}|2/1/1".sha256Hex(), all.requestKey)
-        val contentBase = "rentile-label-candidates-3\n${style.digest}\n${poiTile.sha256Hex()}\n${glyphRange.sha256Hex()}\n2/1/1"
+        assertEquals("label-candidates-4|${style.digest}|2/1/1|glyph-packing:referenced".sha256Hex(), packed.requestKey)
+        assertEquals("label-candidates-4|${style.digest}|2/1/1".sha256Hex(), all.requestKey)
+        val contentBase = "rentile-label-candidates-4\n${style.digest}\n${poiTile.sha256Hex()}\n${glyphRange.sha256Hex()}\n2/1/1"
         assertEquals("$contentBase\nglyph-packing:referenced".sha256Hex(), packed.batch.contentKey)
         assertEquals(contentBase.sha256Hex(), all.batch.contentKey)
     }
@@ -114,7 +114,7 @@ class HostSymbolsAtlasesTest {
         // The request key folds in the override, then the packing; each combination is distinct.
         val identity = assertNotNull(english.textFieldIdentity)
         assertEquals(
-            "label-candidates-3|${style.digest}|2/1/1|text-field:${identity.sha256Hex()}|glyph-packing:referenced".sha256Hex(),
+            "label-candidates-4|${style.digest}|2/1/1|text-field:${identity.sha256Hex()}|glyph-packing:referenced".sha256Hex(),
             packed.requestKey,
         )
         val contentKeys = listOf(packed, unpacked, ownText).map { it.batch.contentKey }

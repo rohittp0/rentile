@@ -10,6 +10,8 @@ import com.rohittp.rentile.internal.style.TextJustify
 /**
  * Resolved text-layer style inputs [LabelLayout] needs to lay one label's text out.
  * `fontStackDigest` must match a [GlyphMetricsLookup.indexOf] key so glyph lookups land.
+ * [maxWidthEm] is `text-max-width` for a point label and [Double.POSITIVE_INFINITY] for a line or
+ * line-center one, which Mapbox never wraps.
  */
 internal data class LabelTextStyle(
     val fontStackDigest: String,
@@ -102,7 +104,8 @@ internal object LabelLayout {
      * codepoint is never split), resolves each to a [Token], groups tokens into word/break
      * runs, then packs words onto lines up to `maxWidthEm * EM_PX`, breaking at the last
      * whitespace run before a line would overflow. A single word longer than the limit is
-     * never split - it is simply the only thing on its line.
+     * never split - it is simply the only thing on its line. An infinite limit, which every line
+     * and line-center label has, never breaks: the whole text is one line.
      */
     private fun wrap(
         text: String,

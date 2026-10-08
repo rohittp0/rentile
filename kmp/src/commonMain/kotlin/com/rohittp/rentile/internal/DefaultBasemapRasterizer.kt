@@ -202,7 +202,7 @@ private const val MAX_ANCESTOR_DISTANCE = 2
  * layout or packing change without bumping this and a consumer's cache looks valid forever — it
  * will keep serving stale label geometry and never learn otherwise.
  */
-private const val LABEL_SEMANTICS_VERSION = "label-candidates-3"
+private const val LABEL_SEMANTICS_VERSION = "label-candidates-4"
 private val SUBSTITUTABLE_RESOURCE_CLASSES = setOf(
     ResourceClass.VECTOR_TILE,
     ResourceClass.RASTER_TILE,

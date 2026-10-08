@@ -355,7 +355,9 @@ public data class LabelGlyphAtlas(
  *
  * Each line of a multi-line label occupies one `text-line-height` row and is positioned from that
  * row's top edge, which is what [LabelGlyphEntry.top] is measured against; no baseline is involved
- * and none needs to be reconstructed to draw these.
+ * and none needs to be reconstructed to draw these. Only a [LabelPlacement.POINT] label wraps, at
+ * `text-max-width`: [LabelPlacement.LINE] and [LabelPlacement.LINE_CENTER] text is always one row,
+ * as Mapbox lays it out.
  *
  * The buffer is already compensated for: these are cell corners, not bearings, so the glyph body
  * lands on the provider's bearing without further adjustment.

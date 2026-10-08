@@ -547,7 +547,7 @@ internal class LabelAssembly internal constructor(
      * consumer another style's cached candidates.
      */
     private fun contentKey(ranges: List<AcquiredGlyphRange>, referencedOnly: Boolean): String = buildString {
-        append("rentile-label-candidates-3\n")
+        append("rentile-label-candidates-4\n")
         append(style.digest)
         append('\n')
         append(contentDigests.joinToString(","))
@@ -742,7 +742,7 @@ internal object LabelCandidateAssembler {
                                 null
                             } else ResolvedLabel(
                                 fontStack = fontStack,
-                                textStyle = textStyleFor(program, context, fontStack, size, tile),
+                                textStyle = textStyleFor(program, context, fontStack, size, placement, tile),
                                 textSize = program.sizeCurve.resolve(
                                     property = program.size,
                                     context = context,
@@ -946,7 +946,7 @@ internal object LabelCandidateAssembler {
                 entries = atlas.entries,
             ),
             contentKey = buildString {
-                append("rentile-label-candidates-3\n${style.digest}\n\n")
+                append("rentile-label-candidates-4\n${style.digest}\n\n")
                 appendTextFieldIdentity(textFieldIdentity)
             }.sha256Hex(),
             diagnostics = styleDiagnostics + glyphRangeUnavailable(tiles),
@@ -1100,6 +1100,7 @@ internal object LabelCandidateAssembler {
         context: StyleEvaluationContext,
         fontStack: String,
         sizePx: Double,
+        placement: LabelPlacement,
         tile: TileId,
     ): LabelTextStyle {
         val anchor = iconAnchorOrNull(program.anchor.evaluate(context).asString("text-anchor", tile))
@@ -1125,7 +1126,16 @@ internal object LabelCandidateAssembler {
             anchor = anchor,
             offsetEm = offset,
             justify = textJustifyOf(program.justify.evaluate(context), anchor, tile),
-            maxWidthEm = program.maxWidth.evaluate(context).asNumber("text-max-width", tile),
+            // Mapbox reads text-max-width for point placement only and shapes line and line-center
+            // text with an unbounded width, so a road or river name is one row along its line
+            // (GL JS v3.32.0 src/symbol/symbol_layout.ts:400-402, `isPointPlacement ? ... : Infinity`).
+            // It is not even evaluated for them, so a value no point label could use cannot cost a
+            // line label its feature.
+            maxWidthEm = if (placement == LabelPlacement.POINT) {
+                program.maxWidth.evaluate(context).asNumber("text-max-width", tile)
+            } else {
+                Double.POSITIVE_INFINITY
+            },
             letterSpacingEm = program.letterSpacing.evaluate(context).asNumber("text-letter-spacing", tile),
             lineHeightEm = program.lineHeight.evaluate(context).asNumber("text-line-height", tile),
             paddingPx = program.padding.evaluate(context).asNumber("text-padding", tile),
