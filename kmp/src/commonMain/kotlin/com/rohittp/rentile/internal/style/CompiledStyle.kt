@@ -10,6 +10,7 @@ import com.rohittp.rentile.internal.ProtectedResourceUrl
 import com.rohittp.rentile.internal.SecretContext
 import com.rohittp.rentile.internal.sprite.CompiledSpriteAtlas
 import com.rohittp.rentile.internal.sprite.SpriteAtlasEntry
+import com.rohittp.rentile.internal.sprite.SpriteReference
 import kotlinx.serialization.json.JsonObject
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -551,6 +552,8 @@ internal class CompiledPreparedStyle(
      */
     val glyphsTemplate: ProtectedResourceUrl?,
     val secretContext: SecretContext,
+    /** The root `sprite` key as `acquireSpriteAtlas` needs it; see [SpriteReference]. */
+    val spriteReference: SpriteReference = SpriteReference.Absent,
 ) : PreparedStyle {
     /**
      * Label layers recompiled per `text-field` override, keyed by the override's canonical JSON.

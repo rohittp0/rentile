@@ -209,4 +209,122 @@ class ApiContractTest {
         assertFalse(message.contains("http"))
         assertFalse(message.contains("{fontstack}"))
     }
+
+    @Test
+    fun theSpriteAtlasComparesAndPrintsByValueNotByReference() {
+        val entry = SpriteImageEntry(
+            name = "shield", x = 0, y = 0, width = 8, height = 8, pixelRatio = 2.0, sdf = true,
+            stretchX = listOf(SpriteStretchRange(2.0, 6.0)), stretchY = null,
+            content = SpriteContentBox(1.0, 1.0, 7.0, 7.0),
+        )
+        val one = SpriteAtlas(byteArrayOf(1, 2, 3), 8, 8, 2, "key", mapOf("shield" to entry))
+        val two = SpriteAtlas(byteArrayOf(1, 2, 3), 8, 8, 2, "key", mapOf("shield" to entry.copy()))
+
+        assertEquals(one, two)
+        assertEquals(one.hashCode(), two.hashCode())
+        assertFalse(one == SpriteAtlas(byteArrayOf(1, 2, 4), 8, 8, 2, "key", mapOf("shield" to entry)))
+        assertFalse(one == two.copy(pixelRatio = 1))
+        assertFalse(one.toString().contains("1, 2, 3"))
+        assertTrue(one.toString().contains("entryCount=1"))
+    }
+
+    @Test
+    fun anImplementerWrittenBeforeTheSpriteAtlasStillCompilesAndSaysItCannot() = runTest {
+        // BasemapRasterizer is implemented outside this module - a consumer's test fake is the
+        // usual case - so a new member must not break it. The default declines loudly rather
+        // than returning null, which would claim the style declares no sprite.
+        val legacy: BasemapRasterizer = LegacyRasterizer()
+        val style = object : PreparedStyle {
+            override val digest: String = "digest"
+            override val policy: CompatibilityPolicy = CompatibilityPolicy.Default
+            override val diagnostics: List<RenderDiagnostic> = emptyList()
+        }
+
+        assertFailsWith<UnsupportedOperationException> { legacy.acquireSpriteAtlas(style) }
+    }
+
+    @Test
+    fun theGlyphAtlasPolicyDefaultsToWhatEveryEarlierReleasePacked() {
+        val policy = LabelGlyphAtlasPolicy()
+
+        assertEquals(LabelGlyphPacking.ACQUIRED_RANGES, policy.packing)
+        assertEquals(null, policy.maxDimensionPx)
+        assertEquals(policy, RentileConfiguration(TRANSPORT, STORE).labelGlyphAtlas)
+        assertEquals(4096, LabelGlyphAtlasPolicy(maxDimensionPx = 4096).maxDimensionPx)
+        for (rejected in listOf(0, -1)) {
+            assertFailsWith<IllegalArgumentException>("maxDimensionPx $rejected must be rejected") {
+                LabelGlyphAtlasPolicy(maxDimensionPx = rejected)
+            }
+        }
+    }
+
+    /** Overrides exactly the members `BasemapRasterizer` had before `acquireSpriteAtlas`. */
+    private class LegacyRasterizer : BasemapRasterizer {
+        override suspend fun prepare(style: StyleInput, policy: CompatibilityPolicy): PreparedStyle = TODO()
+        override fun outputRequestKey(style: PreparedStyle, tile: TileId, options: RenderOptions): String = TODO()
+        override suspend fun prepareBatch(
+            style: PreparedStyle,
+            tiles: List<TileId>,
+            options: RenderOptions,
+            resourceAccess: ResourceAccessMode,
+            substitutionPolicy: TileSubstitutionPolicy,
+        ): PreparedBatch = TODO()
+        override suspend fun retryExact(batch: PreparedBatch): ExactRecoveryResult = TODO()
+        override fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor> = TODO()
+        override suspend fun warmRawResources(
+            style: PreparedStyle,
+            tiles: List<TileId>,
+            resourceAccess: ResourceAccessMode,
+        ): RawWarmSummary = TODO()
+        override suspend fun acquireLabelTiles(
+            style: PreparedStyle,
+            tiles: List<TileId>,
+            resourceAccess: ResourceAccessMode,
+        ): List<ValidatedMvtTile> = TODO()
+        override fun labelCandidateRequestKey(style: PreparedStyle, tiles: List<TileId>): String = TODO()
+        override suspend fun planLabelCandidates(
+            style: PreparedStyle,
+            tiles: List<TileId>,
+            resourceAccess: ResourceAccessMode,
+        ): LabelCandidatePlan = TODO()
+        override suspend fun acquireLabelCandidates(plan: LabelCandidatePlan): LabelCandidateBatch = TODO()
+        override suspend fun acquireLabelCandidates(
+            style: PreparedStyle,
+            tiles: List<TileId>,
+            resourceAccess: ResourceAccessMode,
+        ): LabelCandidateBatch = TODO()
+        override fun terrainSourceDescriptor(style: PreparedStyle): TerrainSourceDescriptor? = TODO()
+        override fun groundRadianceDescriptor(style: PreparedStyle): GroundRadianceDescriptor? = TODO()
+        override suspend fun acquireTerrainTiles(
+            style: PreparedStyle,
+            tiles: List<TileId>,
+            resourceAccess: ResourceAccessMode,
+        ): List<ValidatedDemTile> = TODO()
+        override suspend fun render(batch: PreparedBatch, tiles: List<TileId>, priority: RenderPriority): RenderBatch =
+            TODO()
+        override suspend fun renderRaw(
+            batch: PreparedBatch,
+            tiles: List<TileId>,
+            priority: RenderPriority,
+        ): RawRenderBatch = TODO()
+        override suspend fun render(
+            style: PreparedStyle,
+            tiles: List<TileId>,
+            options: RenderOptions,
+            resourceAccess: ResourceAccessMode,
+            substitutionPolicy: TileSubstitutionPolicy,
+            priority: RenderPriority,
+        ): RenderBatch = TODO()
+        override fun close() = Unit
+        override suspend fun awaitClosed() = Unit
+    }
+
+    private companion object {
+        val TRANSPORT = ResourceTransport { error("No transport is used") }
+        val STORE = object : RawResourceStore {
+            override suspend fun read(key: RawResourceKey): StoredRawResource? = null
+            override suspend fun write(key: RawResourceKey, resource: StoredRawResource) = Unit
+            override suspend fun remove(key: RawResourceKey) = Unit
+        }
+    }
 }

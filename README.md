@@ -91,10 +91,12 @@ The public API exposes
 glyph geometry, source-line geometry, feature-resolved paint, explicit overlap, alignment, and
 z-order enums, and icon text-fit inputs. `LabelIconRef` now carries a `LabelIconAnchor` for the final
 fitted box instead of the removed pre-fit `anchorOffsetX/Y` shifts. The consumer resolves sprite
-imagery by `LabelIconRef.imageName`, as in 0.5.x, and still owns projection, shaping limitations,
-cross-tile collision, depth, and final drawing. Rentile does not publish a second sprite atlas
-through the label batch.
-See [ADR 0024](docs/adr/0024-label-placement-belongs-to-the-consumer.md) and the
+imagery by `LabelIconRef.imageName` and still owns projection, shaping limitations, cross-tile
+collision, depth, and final drawing. The label batch carries no sprite sheet; a consumer that draws
+icons itself calls `acquireSpriteAtlas` for the style's sheet, at ratio 1 or the provider's `@2x`,
+and draws each icon at `LabelIconRef` size times its own device ratio.
+See [ADR 0024](docs/adr/0024-label-placement-belongs-to-the-consumer.md),
+[ADR 0036](docs/adr/0036-hand-the-sprite-sheet-to-the-host.md) and the
 [0.6.0 migration guide](docs/migrations/0.6.0.md).
 
 That is the default profile, `CompatibilityPolicy.RentileV1`, which still draws icons that do not

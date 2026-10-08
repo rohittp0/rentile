@@ -205,4 +205,64 @@ class GlyphAtlasPackerTest {
         assertNotEquals(wide.width, narrow.width)
         assertNotEquals(wide.contentKey, narrow.contentKey)
     }
+
+    @Test
+    fun aDimensionCapLaysTheAtlasOutExactlyAsTheSameRasterLimitWould() {
+        // The cap exists so a host can bound its glyph texture without lowering
+        // maxRasterDimensionPx for every raster and sprite too. For the glyph atlas itself it must
+        // therefore behave as that lowered limit did, byte for byte and key for key.
+        val glyphs = (0 until 120).map { glyph(it, 40, 40) }
+        val ranges = listOf(range("Open Sans Regular", 0, *glyphs.toTypedArray()))
+
+        val capped = GlyphAtlasPacker.pack(ranges, ResourceLimits(), maxDimensionPx = 512)
+        val limited = GlyphAtlasPacker.pack(ranges, ResourceLimits(maxRasterDimensionPx = 512))
+
+        assertTrue(capped.width <= 512 && capped.height <= 512)
+        assertEquals(limited.entries, capped.entries)
+        assertEquals(limited.width to limited.height, capped.width to capped.height)
+        assertEquals(limited.contentKey, capped.contentKey)
+        assertTrue(limited.pngBytes.contentEquals(capped.pngBytes))
+    }
+
+    @Test
+    fun aCapAboveTheRasterLimitChangesNothing() {
+        val glyphs = (0 until 120).map { glyph(it, 40, 40) }
+        val ranges = listOf(range("Open Sans Regular", 0, *glyphs.toTypedArray()))
+        val limits = ResourceLimits(maxRasterDimensionPx = 512)
+
+        val uncapped = GlyphAtlasPacker.pack(ranges, limits)
+        val capped = GlyphAtlasPacker.pack(ranges, limits, maxDimensionPx = 4096)
+
+        assertEquals(uncapped.entries, capped.entries)
+        assertEquals(uncapped.contentKey, capped.contentKey)
+        assertTrue(uncapped.pngBytes.contentEquals(capped.pngBytes))
+    }
+
+    @Test
+    fun anAtlasThatOutgrowsTheCapFailsNamingTheCapNotTheRasterLimit() {
+        val tall = (0 until 40).map { glyph(it, 40, 40) }
+        val error = assertFailsWith<SafetyLimitException> {
+            GlyphAtlasPacker.pack(listOf(range("Open Sans Regular", 0, *tall.toTypedArray())), maxDimensionPx = 128)
+        }
+
+        assertEquals("labelGlyphAtlas.maxDimensionPx", error.limitName)
+        assertEquals(128L, error.limit)
+        assertTrue(error.observed > 128L)
+    }
+
+    @Test
+    fun packingASubsetKeepsEachGlyphsCellPixelsAndCanonicalOrder() {
+        // Referenced-only packing hands the packer a canonical subset; that subset must pack as a
+        // smaller atlas of the very same cells, in the same relative order.
+        val glyphs = (65 until 75).map { glyphWithFill(it, 10, 12, it.toByte()) }
+        val ranges = listOf(range("Open Sans Regular", 0, *glyphs.toTypedArray()))
+        val canonical = GlyphAtlasPacker.canonicalGlyphs(ranges)
+        val subset = canonical.filterIndexed { index, _ -> index % 3 == 0 }
+
+        val packed = GlyphAtlasPacker.packGlyphs(subset, ResourceLimits(), maxDimensionPx = null)
+
+        assertEquals(subset.map { it.second.codepoint }, packed.entries.map { it.codepoint })
+        assertEquals(subset.indices.toList(), packed.entries.indices.map { packed.indexOf.getValue(packed.entries[it].fontStackDigest to packed.entries[it].codepoint) })
+        assertTrue(packed.width < GlyphAtlasPacker.pack(ranges).width)
+    }
 }

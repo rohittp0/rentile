@@ -578,8 +578,12 @@ public data class LabelSymbolSize(
 }
 
 /**
- * The sprite the style pairs with this label. [imageName] is an opaque lookup key into sprite
- * resources owned and resolved by the consumer; Rentile does not expose a public sprite atlas.
+ * The sprite the style pairs with this label. [imageName] keys [SpriteAtlas.entries]: a consumer
+ * that draws icons itself acquires the sheet with [BasemapRasterizer.acquireSpriteAtlas], at ratio
+ * `1` or the provider's `@2x`, and samples that entry (ADR 0036). Nothing here depends on which
+ * sheet it draws from - [width] and [height] are style pixels at ratio one, derived from the 1x
+ * sheet the style was prepared with and multiplied by `icon-size` at the tile's zoom ([size]) - so
+ * the same candidate and the same label keys serve every ratio. [SpriteAtlas] describes the draw.
  *
  * First apply [textFit] and [textFitPadding] to derive the icon's final drawn dimensions from the
  * label bounds. Derive the displacement from [anchor] against that fitted box, add
@@ -1101,6 +1105,8 @@ public data class RentileConfiguration(
     public val diagnosticSink: DiagnosticSink = DiagnosticSink.None,
     public val executionPolicy: ExecutionPolicy = ExecutionPolicy(),
     public val resourceLimits: ResourceLimits = ResourceLimits(),
+    /** Appended, for the reason recorded on [ResourceLimits.maxGlyphRangeBytes]. */
+    public val labelGlyphAtlas: LabelGlyphAtlasPolicy = LabelGlyphAtlasPolicy(),
 )
 
 /** Immutable style program owned by the rasterizer instance that prepared it. */
@@ -1399,6 +1405,39 @@ public interface BasemapRasterizer : AutoCloseable {
 
     /** Suspends until workers, leases, native objects, and secret state are released. */
     public suspend fun awaitClosed()
+
+    /**
+     * The style's sprite sheet as a [SpriteAtlas] a host can upload and draw icons from, or null
+     * when the style declares no `sprite` at all. See ADR 0036.
+     *
+     * [pixelRatio] selects the provider sheet and accepts only `1` and `2`; anything else throws
+     * [IllegalArgumentException]. `2` acquires `<sprite>@2x.json` and `<sprite>@2x.png` - the
+     * suffix goes before any query, so a credential in the sprite URL is kept - through the same
+     * raw store, acquisition path and single flight as the 1x sheet. It is all-or-error: a missing
+     * or malformed `@2x` sheet raises the typed failure and never falls back to the 1x sheet,
+     * which would hand a host half the texels it asked for.
+     *
+     * `1` returns the very sheet the style was prepared with whenever preparation resolved one,
+     * without another request and whatever [resourceAccess] says: that is the sheet every
+     * [LabelIconRef]'s size was derived from, and handing back a newer revision would let the two
+     * disagree. Preparation resolves a sheet only for styles with an icon or pattern layer, so for
+     * any other style `1` acquires the sheet here under [resourceAccess], as `2` always does.
+     * [ResourceAccessMode.CACHE_ONLY] never reaches the transport, [ResourceAccessMode.RELOAD]
+     * always does and replaces the stored entry, and
+     * [ResourceAccessMode.CACHE_SUBSTITUTE_THEN_NETWORK] is [ResourceAccessMode.NORMAL] here.
+     *
+     * A style whose `sprite` is the multi-sprite array form, or a relative reference with no base
+     * URI to resolve it against, declares a sprite this profile cannot acquire, and throws
+     * [StylePreparationException] rather than returning null.
+     *
+     * The default implementation throws [UnsupportedOperationException], so an implementer
+     * written before this member existed - a consumer's test fake, typically - keeps compiling.
+     */
+    public suspend fun acquireSpriteAtlas(
+        style: PreparedStyle,
+        pixelRatio: Int = 1,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): SpriteAtlas? = throw UnsupportedOperationException("This BasemapRasterizer does not provide sprite atlases")
 }
 
 private const val OPTIONS_UNSUPPORTED = "This BasemapRasterizer does not implement LabelCandidateOptions"
@@ -1407,4 +1446,164 @@ private const val OPTIONS_UNSUPPORTED = "This BasemapRasterizer does not impleme
 public object Rentile {
     public fun create(configuration: RentileConfiguration): BasemapRasterizer =
         createBasemapRasterizer(configuration)
+}
+
+/**
+ * One stretchable span of a sprite image, `[from, to]`, from the image's own left edge for
+ * `stretchX` or its top edge for `stretchY`, in the sheet's pixels. Ordered and non-overlapping
+ * within one axis, and inside the image, exactly as MapLibre's image validation requires.
+ */
+public data class SpriteStretchRange(
+    public val from: Double,
+    public val to: Double,
+)
+
+/**
+ * A sprite image's `content` box - where `icon-text-fit` puts the text - as left, top, right and
+ * bottom edges from the image's own top-left corner, in the sheet's pixels.
+ */
+public data class SpriteContentBox(
+    public val left: Double,
+    public val top: Double,
+    public val right: Double,
+    public val bottom: Double,
+)
+
+/**
+ * One image of a [SpriteAtlas]: where it sits in the sheet and how the style specification says
+ * to draw it.
+ *
+ * [x], [y], [width] and [height] are in the sheet's own pixels, measured from its top-left corner,
+ * x rightwards and y downwards. [pixelRatio] is this image's own ratio as the provider declared
+ * it, and it is the one to divide by: the image covers `width / pixelRatio` by
+ * `height / pixelRatio` style pixels. Do not assume it equals [SpriteAtlas.pixelRatio] - some
+ * providers answer an `@2x` request with the 1x sheet, entries at ratio `1` included.
+ *
+ * [sdf] marks a signed-distance-field image, tinted by `icon-color` rather than drawn as-is. Its
+ * distance is in the alpha channel and only there, rising inwards. MapLibre's SDF shader, which
+ * serves icons and glyphs alike, puts the shape's edge at alpha `0.75` (`192/255`) and moves the
+ * halo's outer edge by `1/8` of the alpha range per unit of `icon-halo-width / icon-size` (its
+ * `SDF_PX` of 8). The colour channels of an SDF image carry nothing and are whatever the provider
+ * wrote (black, for MapTiler's sheets); sample alpha alone. Rentile's own glyph atlas, [LabelGlyphAtlas], uses the same alpha encoding
+ * with its colour channels fixed at white, so one sampling rule serves both textures.
+ *
+ * [stretchX], [stretchY] and [content] are the provider's `icon-text-fit` metadata, parsed and
+ * validated but otherwise exactly as written; each is null when the entry does not declare it,
+ * which the style specification distinguishes from an empty list. They only matter to a host
+ * resizing an icon to its text (`LabelIconRef.textFit` other than `NONE`); a host drawing at the
+ * image's own aspect ignores them, as Rentile's Output Tile path does.
+ */
+public data class SpriteImageEntry(
+    public val name: String,
+    public val x: Int,
+    public val y: Int,
+    public val width: Int,
+    public val height: Int,
+    public val pixelRatio: Double,
+    public val sdf: Boolean,
+    public val stretchX: List<SpriteStretchRange>?,
+    public val stretchY: List<SpriteStretchRange>?,
+    public val content: SpriteContentBox?,
+)
+
+/**
+ * A style's sprite sheet as the provider served it, for a host that draws icons itself. Acquired
+ * with [BasemapRasterizer.acquireSpriteAtlas]; ADR 0036 records why Rentile hands it over.
+ *
+ * [pngBytes] are the provider's bytes verbatim - never re-encoded, so their colour type, gamma
+ * chunks and compression are the provider's, and the host's decoder must produce straight
+ * (unpremultiplied) RGBA from them, as the PNG format defines alpha. [width] and [height] are read
+ * from that PNG's header. [pixelRatio] is the sheet that was asked for, `1` or `2`, and
+ * [entries] is keyed by sprite name, which is what [LabelIconRef.imageName] holds.
+ *
+ * **Drawing a paired icon.** Candidate geometry never depends on which sheet a host draws from:
+ * [LabelIconRef.width] and [LabelIconRef.height] are style pixels at ratio one, derived from the
+ * 1x sheet the style was prepared with and already multiplied by `icon-size`. So look up
+ * `entries[icon.imageName]`, sample its `x, y, width, height` rectangle of this texture, and draw
+ * it into a quad of `icon.width * r` by `icon.height * r` device pixels, `r` being the host's own
+ * device pixel ratio - the same `r` it applies to every other label scalar. A ratio-2 sheet gives
+ * that quad twice the texels per style pixel and nothing else changes. When the 2x sheet lacks a
+ * name the 1x sheet had (the two are separate provider resources), draw from the 1x atlas instead.
+ *
+ * [contentKey] answers "must I re-upload this texture?": it changes with the JSON or PNG bytes and
+ * with Rentile's parsing of them, and is the same for identical bytes at either ratio. It is
+ * credential-free.
+ */
+public data class SpriteAtlas(
+    public val pngBytes: ByteArray,
+    public val width: Int,
+    public val height: Int,
+    public val pixelRatio: Int,
+    public val contentKey: String,
+    public val entries: Map<String, SpriteImageEntry>,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is SpriteAtlas &&
+            pngBytes.contentEquals(other.pngBytes) &&
+            width == other.width &&
+            height == other.height &&
+            pixelRatio == other.pixelRatio &&
+            contentKey == other.contentKey &&
+            entries == other.entries
+
+    override fun hashCode(): Int {
+        var result = pngBytes.contentHashCode()
+        result = 31 * result + width
+        result = 31 * result + height
+        result = 31 * result + pixelRatio
+        result = 31 * result + contentKey.hashCode()
+        result = 31 * result + entries.hashCode()
+        return result
+    }
+
+    override fun toString(): String =
+        "SpriteAtlas(byteCount=${pngBytes.size}, width=$width, height=$height, pixelRatio=$pixelRatio, " +
+            "contentKey=$contentKey, entryCount=${entries.size})"
+}
+
+/** Which glyphs a [LabelCandidateBatch]'s [LabelGlyphAtlas] holds. See [LabelGlyphAtlasPolicy]. */
+public enum class LabelGlyphPacking {
+    /**
+     * Every drawable glyph of every Glyph Range the batch acquired, whether or not a candidate
+     * draws it - what every release before this policy packed, and still the default. A Glyph
+     * Range is 256 codepoints wide while a label uses a handful of them, so for dense CJK text
+     * this is the large case: Outdoor at Tokyo z14 packed an 8192-pixel-wide atlas of over a
+     * hundred megabytes decoded.
+     */
+    ACQUIRED_RANGES,
+
+    /**
+     * Only the glyphs some candidate's [LabelGlyphQuad]s reference, packed in the same canonical
+     * order. Layout is unchanged - the same candidates, quads at the same positions and scales,
+     * each naming the same glyph - but [LabelGlyphQuad.entryIndex] indexes this shorter
+     * [LabelGlyphAtlas.entries], so the batch's request and content keys differ from
+     * [ACQUIRED_RANGES]'s.
+     */
+    REFERENCED_GLYPHS,
+}
+
+/**
+ * How a host wants its label glyph atlas built: which glyphs it holds, and how large the texture
+ * may grow. The default reproduces every earlier release exactly - the same entries, the same
+ * pixels and the same keys.
+ *
+ * [maxDimensionPx] caps the glyph atlas's width and height and nothing else. It lays the atlas out
+ * exactly as lowering [ResourceLimits.maxRasterDimensionPx] to the same value would, so the same
+ * glyphs produce the same texture and the same [LabelGlyphAtlas.contentKey] either way, but it
+ * leaves that limit, and with it every raster tile and sprite sheet, alone. Set it to the GPU's
+ * maximum texture size: a GL host that sizes for 4096 cannot sample an 8192-wide atlas at all. An
+ * atlas that cannot fit raises [SafetyLimitException] with `limitName`
+ * `labelGlyphAtlas.maxDimensionPx`; pair the cap with [LabelGlyphPacking.REFERENCED_GLYPHS] so a
+ * dense viewport fits. Null leaves the atlas bounded by `maxRasterDimensionPx` alone, as before.
+ *
+ * A cap moves cells, never indices, so it changes no candidate and neither label key; the atlas
+ * key covers the atlas's dimensions and moves with the texture.
+ */
+public data class LabelGlyphAtlasPolicy(
+    public val packing: LabelGlyphPacking = LabelGlyphPacking.ACQUIRED_RANGES,
+    public val maxDimensionPx: Int? = null,
+) {
+    init {
+        require(maxDimensionPx == null || maxDimensionPx > 0) { "maxDimensionPx must be positive" }
+    }
 }
