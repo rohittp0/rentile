@@ -1,13 +1,29 @@
 package com.rohittp.rentile.smoke
 
+import com.rohittp.rentile.BasemapRasterizer
+import com.rohittp.rentile.CompatibilityPolicy
+import com.rohittp.rentile.DiagnosticCode
 import com.rohittp.rentile.IconTextFit
 import com.rohittp.rentile.LabelCandidate
+import com.rohittp.rentile.LabelCandidateOptions
+import com.rohittp.rentile.LabelGlyphAtlasPolicy
+import com.rohittp.rentile.LabelGlyphPacking
 import com.rohittp.rentile.LabelIconAnchor
 import com.rohittp.rentile.LabelLayerStyle
 import com.rohittp.rentile.LabelPlacement
+import com.rohittp.rentile.LabelSymbolSize
+import com.rohittp.rentile.RawResourceStore
 import com.rohittp.rentile.RenderOptions
+import com.rohittp.rentile.RentileConfiguration
+import com.rohittp.rentile.ResourceTransport
+import com.rohittp.rentile.SpriteAtlas
+import com.rohittp.rentile.SpriteContentBox
+import com.rohittp.rentile.SpriteImageEntry
+import com.rohittp.rentile.SpriteStretchRange
+import com.rohittp.rentile.StyleInput
 import com.rohittp.rentile.SymbolAlignment
 import com.rohittp.rentile.SymbolOverlap
+import com.rohittp.rentile.SymbolSizeKind
 import com.rohittp.rentile.SymbolZOrder
 import com.rohittp.rentile.TerrainDemEncoding
 import com.rohittp.rentile.TileId
@@ -67,4 +83,89 @@ fun proveDecodedDemTexelApi(tile: ValidatedDemTile, x: Int, y: Int): Double {
         TerrainDemEncoding.MAPBOX -> -10_000.0 + (red * 65_536 + green * 256 + blue) * 0.1
         TerrainDemEncoding.TERRARIUM -> red * 256.0 + green + blue / 256.0 - 32_768.0
     }
+}
+
+/**
+ * Compile-time proof of the 0.12 label contract: a host that owns every symbol layer, reads each
+ * candidate's identity and camera-zoom size, chooses its label language without re-preparing the
+ * style, bounds its glyph atlas, and draws icons from the style's own sprite sheet.
+ */
+fun configureHostOwnedSymbols(transport: ResourceTransport, store: RawResourceStore): RentileConfiguration =
+    RentileConfiguration(
+        transport = transport,
+        rawResourceStore = store,
+        // What a GL host with a 4096 texture ceiling passes: only the glyphs its candidates draw.
+        labelGlyphAtlas = LabelGlyphAtlasPolicy(packing = LabelGlyphPacking.REFERENCED_GLYPHS, maxDimensionPx = 4096),
+    )
+
+/** Every label of [tiles] in English where the tiles have it, drawn at [cameraZoom]; true when consistent. */
+suspend fun proveHostOwnedSymbolsApi(
+    rasterizer: BasemapRasterizer,
+    style: StyleInput,
+    tiles: List<TileId>,
+    cameraZoom: Double,
+): Boolean {
+    val prepared = rasterizer.prepare(style, CompatibilityPolicy.RentileV1HostSymbols)
+    val english = LabelCandidateOptions(textFieldOverride = """["coalesce",["get","name:en"],["get","name"]]""")
+    val requestKey = rasterizer.labelCandidateRequestKey(prepared, tiles, english)
+    val plan = rasterizer.planLabelCandidates(prepared, tiles, english)
+    val batch = try {
+        rasterizer.acquireLabelCandidates(plan)
+    } finally {
+        plan.close()
+    }
+    val hostOwned = prepared.diagnostics.filter { it.code == DiagnosticCode.SYMBOL_LAYER_HOST_OWNED }
+
+    // The 1x sheet is the one every LabelIconRef was sized from; @2x covers the same style pixels.
+    val sheet: SpriteAtlas? = rasterizer.acquireSpriteAtlas(prepared, pixelRatio = 2)
+    val iconsResolve = batch.candidates.mapNotNull { it.icon }.all { icon ->
+        val entry: SpriteImageEntry? = sheet?.entries?.get(icon.imageName)
+        entry == null || (entry.pixelRatio > 0.0 && entry.width > 0 && proveSpriteEntry(entry) && iconScale(icon.size, cameraZoom) >= 0.0)
+    }
+    val identities = batch.candidates.map { candidateIdentity(it, batch.layerStyles) }.toSet()
+    val candidatesAreConsistent = identities.size <= batch.candidates.size && batch.candidates.all { candidate ->
+        proveCandidateIdentity(candidate) &&
+            candidate.glyphs.all { it.entryIndex in batch.atlas.entries.indices } &&
+            (candidate.textSize?.let { iconScale(it, cameraZoom) >= 0.0 } ?: candidate.glyphs.isEmpty())
+    }
+    return requestKey.isNotEmpty() && hostOwned.all { it.details.containsKey("labelLayer") } &&
+        iconsResolve && candidatesAreConsistent
+}
+
+/** An icon-only candidate has no glyphs, no text and no text size, and always an icon. */
+fun proveCandidateIdentity(candidate: LabelCandidate): Boolean {
+    val text: String? = candidate.text
+    return if (text == null) {
+        candidate.glyphs.isEmpty() && candidate.textSize == null && candidate.icon != null
+    } else {
+        text.isNotEmpty()
+    }
+}
+
+/**
+ * What a host de-duplicates a line or polygon feature's candidates by across tiles: its layer, its
+ * MVT feature id as the unsigned 64 bits it is, and its text.
+ */
+fun candidateIdentity(candidate: LabelCandidate, styles: List<LabelLayerStyle>): Triple<String, ULong?, String?> =
+    Triple(styles[candidate.layerStyleIndex].layerId, candidate.featureId?.toULong(), candidate.text)
+
+/** The factor a host applies to a symbol's tile-zoom geometry to draw it at [cameraZoom]. */
+fun iconScale(size: LabelSymbolSize, cameraZoom: Double): Double {
+    val kindIsKnown = when (size.kind) {
+        SymbolSizeKind.CONSTANT, SymbolSizeKind.SOURCE -> size.sizeAt(cameraZoom) == size.tileZoomSize
+        SymbolSizeKind.CAMERA, SymbolSizeKind.COMPOSITE -> size.lowerZoom <= size.upperZoom
+    }
+    if (!kindIsKnown || size.tileZoomSize == 0.0) return 0.0
+    return size.sizeAt(cameraZoom) / size.tileZoomSize
+}
+
+/** A sheet entry's stretch and content metadata, for a host that nine-slices `icon-text-fit` icons. */
+fun proveSpriteEntry(entry: SpriteImageEntry): Boolean {
+    val stretches: List<SpriteStretchRange> = entry.stretchX.orEmpty() + entry.stretchY.orEmpty()
+    val content: SpriteContentBox? = entry.content
+    // An SDF entry is sampled from its alpha channel alone, with the edge at 192/255.
+    val sampledChannels = if (entry.sdf) 1 else 4
+    return stretches.all { it.from <= it.to } &&
+        (content == null || (content.left <= content.right && content.top <= content.bottom)) &&
+        sampledChannels > 0
 }
