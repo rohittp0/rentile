@@ -29,6 +29,7 @@ import com.rohittp.rentile.internal.mvt.VectorCoordinate
 import com.rohittp.rentile.internal.mvt.VectorRing
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.style.CompiledColor
+import com.rohittp.rentile.internal.style.CompiledLabelLayer
 import com.rohittp.rentile.internal.style.CompiledLabelTextProgram
 import com.rohittp.rentile.internal.style.CompiledPreparedStyle
 import com.rohittp.rentile.internal.style.CompiledStyleProperty
@@ -186,6 +187,16 @@ internal class LabelIconSkips(val layerId: String) {
 internal val LABEL_TILE_ORDER: Comparator<TileId> = compareBy(TileId::z, TileId::x, TileId::y)
 
 /**
+ * Folds a `text-field` override into a label key, and folds nothing at all without one, so every
+ * key computed without an override is exactly the key computed before overrides existed.
+ */
+internal fun StringBuilder.appendTextFieldIdentity(identity: String?) {
+    if (identity == null) return
+    append("\ntext-field:")
+    append(identity.sha256Hex())
+}
+
+/**
  * Check for cancellation every 1024 items rather than every one. Both loops below are pure CPU
  * work over untrusted, unbounded input, so they need a cancellation point; making it periodic
  * keeps the check off the hot path of a tile with half a million features.
@@ -284,6 +295,10 @@ internal class LabelAssembly internal constructor(
      * symbols style has icons but no glyphs template.
      */
     private val planDiagnostics: List<RenderDiagnostic> = emptyList(),
+    /** The prepared style's diagnostics as a batch reports them, recompiled ones replacing its own under an override. */
+    private val styleDiagnostics: List<RenderDiagnostic> = style.diagnostics,
+    /** The `text-field` override's identity, folded into [contentKey]; null without one. */
+    private val textFieldIdentity: String? = null,
 ) {
     /**
      * Packs [ranges] into one atlas, lays every surviving label out against it, and assembles the
@@ -364,7 +379,7 @@ internal class LabelAssembly internal constructor(
             // LINE_PLACEMENT_LABEL_EXCLUDED diagnostic explain why a layer visible through
             // labelLayerDescriptors contributed no candidates. Without these, a caller reading
             // only this batch could not distinguish an excluded layer from an empty one.
-            diagnostics = style.diagnostics + planDiagnostics + labelDiagnostics(layoutLosses).onEach(record),
+            diagnostics = styleDiagnostics + planDiagnostics + labelDiagnostics(layoutLosses).onEach(record),
         )
     }
 
@@ -489,6 +504,7 @@ internal class LabelAssembly internal constructor(
         // Two different tile sets can share every MVT and glyph digest - overzoomed siblings of
         // one source tile do exactly that - and would otherwise alias onto one content key.
         append(requestedTiles.joinToString(",") { "${it.z}/${it.x}/${it.y}" })
+        appendTextFieldIdentity(textFieldIdentity)
     }.sha256Hex()
 }
 
@@ -524,6 +540,9 @@ internal object LabelCandidateAssembler {
         iconImageNameOf: (StyleValue, DecodedVectorFeature) -> String?,
         textAvailable: Boolean = true,
         planDiagnostics: List<RenderDiagnostic> = emptyList(),
+        labelLayers: List<CompiledLabelLayer> = style.labelLayers,
+        styleDiagnostics: List<RenderDiagnostic> = style.diagnostics,
+        textFieldIdentity: String? = null,
     ): LabelAssembly {
         val hostSymbols = style.policy.hostOwnedSymbols
         val pending = mutableListOf<PendingLabel>()
@@ -540,7 +559,7 @@ internal object LabelCandidateAssembler {
         // Style layer order, then requested tile, then feature index: iterating in the contract's
         // own order means the emitted list is already sorted, and the explicit sort below only has
         // to prove it rather than establish it.
-        for (layer in style.labelLayers.sortedBy { it.textProgram?.layerOrder ?: Int.MAX_VALUE }) {
+        for (layer in labelLayers.sortedBy { it.textProgram?.layerOrder ?: Int.MAX_VALUE }) {
             val program = layer.textProgram ?: continue
             for (tile in tiles.sortedWith(TILE_ORDER)) {
                 currentCoroutineContext().ensureActive()
@@ -837,6 +856,8 @@ internal object LabelCandidateAssembler {
             requestedTiles = tiles.sortedWith(TILE_ORDER),
             limits = limits,
             planDiagnostics = planDiagnostics,
+            styleDiagnostics = styleDiagnostics,
+            textFieldIdentity = textFieldIdentity,
         )
     }
 
@@ -849,6 +870,8 @@ internal object LabelCandidateAssembler {
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
         limits: ResourceLimits,
+        styleDiagnostics: List<RenderDiagnostic> = style.diagnostics,
+        textFieldIdentity: String? = null,
     ): LabelCandidateBatch {
         val atlas = GlyphAtlasPacker.pack(emptyList(), limits)
         return LabelCandidateBatch(
@@ -865,8 +888,11 @@ internal object LabelCandidateAssembler {
                 contentKey = atlas.contentKey,
                 entries = atlas.entries,
             ),
-            contentKey = "rentile-label-candidates-3\n${style.digest}\n\n".sha256Hex(),
-            diagnostics = style.diagnostics + glyphRangeUnavailable(tiles),
+            contentKey = buildString {
+                append("rentile-label-candidates-3\n${style.digest}\n\n")
+                appendTextFieldIdentity(textFieldIdentity)
+            }.sha256Hex(),
+            diagnostics = styleDiagnostics + glyphRangeUnavailable(tiles),
         )
     }
 

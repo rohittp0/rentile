@@ -76,6 +76,28 @@ internal class StyleCompiler(
         allowTrailingComma = false
     }
 
+    /**
+     * [style]'s label layers with every `text-field` replaced by [textField], compiled exactly as
+     * preparation compiles them - the same admission, the same degradation, the same diagnostics -
+     * so an override behaves like a style that declared it, and nothing else about [style] moves.
+     */
+    fun compileLabelLayersWithTextField(style: CompiledPreparedStyle, textField: JsonElement): LabelLayersWithTextField {
+        val diagnostics = mutableListOf<RenderDiagnostic>()
+        val layers = style.labelLayers.map { labelLayer ->
+            val layout = (labelLayer.layerJson["layout"] as? JsonObject).orEmpty()
+            val compilation = compileLabelProgram(
+                layer = labelLayer.layerJson,
+                layout = JsonObject(layout + ("text-field" to textField)),
+                index = labelLayer.layerIndex,
+                layerId = labelLayer.descriptor.id,
+                hostSymbols = style.policy.hostOwnedSymbols,
+            )
+            compilation.diagnostic?.let(diagnostics::add)
+            labelLayer.copy(textProgram = compilation.program)
+        }
+        return LabelLayersWithTextField(layers, diagnostics)
+    }
+
     suspend fun compile(bytes: ByteArray, policy: CompatibilityPolicy, baseUri: String?): CompiledPreparedStyle {
         val secretContext = SecretContext()
         return try {
@@ -265,6 +287,8 @@ internal class StyleCompiler(
                                 descriptor = descriptor,
                                 source = source,
                                 textProgram = compilation.program,
+                                layerJson = layer,
+                                layerIndex = index,
                             )
                             labelLayerAdmitted = true
                         }

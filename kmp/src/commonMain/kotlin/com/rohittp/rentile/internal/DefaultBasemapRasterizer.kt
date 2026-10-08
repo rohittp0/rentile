@@ -13,6 +13,7 @@ import com.rohittp.rentile.GlyphRangeRef
 import com.rohittp.rentile.GlyphTemplateMismatchException
 import com.rohittp.rentile.InvalidTileIdException
 import com.rohittp.rentile.LabelCandidateBatch
+import com.rohittp.rentile.LabelCandidateOptions
 import com.rohittp.rentile.LabelCandidatePlan
 import com.rohittp.rentile.LabelCandidatePlanClosedException
 import com.rohittp.rentile.LabelLayerDescriptor
@@ -87,6 +88,7 @@ import com.rohittp.rentile.internal.sprite.SpriteAtlasEntry
 import com.rohittp.rentile.internal.style.BackgroundDrawLayer
 import com.rohittp.rentile.internal.style.CompiledDrawLayer
 import com.rohittp.rentile.internal.style.CompiledColor
+import com.rohittp.rentile.internal.style.CompiledLabelLayer
 import com.rohittp.rentile.internal.style.CompiledPreparedStyle
 import com.rohittp.rentile.internal.style.CompiledLineCap
 import com.rohittp.rentile.internal.style.CompiledLineJoin
@@ -588,7 +590,14 @@ private class DefaultBasemapRasterizer(
         }
     }
 
-    override fun labelCandidateRequestKey(style: PreparedStyle, tiles: List<TileId>): String {
+    override fun labelCandidateRequestKey(style: PreparedStyle, tiles: List<TileId>): String =
+        labelCandidateRequestKey(style, tiles, LabelCandidateOptions.Default)
+
+    override fun labelCandidateRequestKey(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        options: LabelCandidateOptions,
+    ): String {
         val compiled = requireOwnedStyle(style)
         val stableTiles = tiles.toList()
         stableTiles.forEach { validateTile(it, compiled.policy) }
@@ -612,21 +621,52 @@ private class DefaultBasemapRasterizer(
         // the glyphs template's included, since that is where its credential lives. It also folds
         // in compiled.policy.id. So nothing else from the style is needed here, and nothing that
         // is here can leak a credential.
-        return listOf(
-            LABEL_SEMANTICS_VERSION,
-            compiled.digest,
-            stableTileList,
-        ).joinToString("|").sha256Hex()
+        //
+        // A text-field override is label-side only: it joins this key and the batch content key,
+        // and nothing else - the style digest and every Output Tile key stay exactly as they were.
+        // Without one the key is exactly the key computed before overrides existed.
+        return (
+            listOf(LABEL_SEMANTICS_VERSION, compiled.digest, stableTileList) +
+                listOfNotNull(options.textFieldIdentity?.let { "text-field:${it.sha256Hex()}" })
+            ).joinToString("|").sha256Hex()
+    }
+
+    /**
+     * The label layers, and the style diagnostics a batch reports, for [options]. With a
+     * `text-field` override the layers are recompiled once per style and override, and the
+     * prepared style's own UNSUPPORTED_TEXT_CONSTRUCT diagnostics - which only label-program
+     * compilation emits - are replaced by what recompiling reported.
+     */
+    private fun labelLayersFor(
+        style: CompiledPreparedStyle,
+        options: LabelCandidateOptions,
+    ): Pair<List<CompiledLabelLayer>, List<RenderDiagnostic>> {
+        val identity = options.textFieldIdentity ?: return style.labelLayers to style.diagnostics
+        val element = checkNotNull(options.textFieldElement)
+        val overridden = style.labelLayersWithTextField(identity) {
+            compiler.compileLabelLayersWithTextField(style, element)
+        }
+        return overridden.layers to
+            style.diagnostics.filterNot { it.code == DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT } +
+            overridden.diagnostics
     }
 
     override suspend fun planLabelCandidates(
         style: PreparedStyle,
         tiles: List<TileId>,
         resourceAccess: ResourceAccessMode,
+    ): LabelCandidatePlan = planLabelCandidates(style, tiles, LabelCandidateOptions.Default, resourceAccess)
+
+    override suspend fun planLabelCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        options: LabelCandidateOptions,
+        resourceAccess: ResourceAccessMode,
     ): LabelCandidatePlan = operation {
         val compiledStyle = requireOwnedStyle(style)
         val stableTiles = tiles.toList()
         stableTiles.forEach { validateTile(it, compiledStyle.policy) }
+        val (labelLayers, styleDiagnostics) = labelLayersFor(compiledStyle, options)
         // A style with no glyphs template has no text to lay out. That is a legitimate style, and
         // this API is opt-in, so it reports and plans an empty closure rather than failing
         // (ADR 0026). The diagnostic is recorded here rather than at acquisition because it is a
@@ -645,6 +685,8 @@ private class DefaultBasemapRasterizer(
                 resourceAccess = resourceAccess,
                 assembly = null,
                 limits = configuration.resourceLimits,
+                styleDiagnostics = styleDiagnostics,
+                textFieldIdentity = options.textFieldIdentity,
             )
         }
 
@@ -675,6 +717,9 @@ private class DefaultBasemapRasterizer(
             } else {
                 emptyList()
             },
+            labelLayers = labelLayers,
+            styleDiagnostics = styleDiagnostics,
+            textFieldIdentity = options.textFieldIdentity,
         )
         DefaultLabelCandidatePlan(
             owner = owner,
@@ -684,6 +729,8 @@ private class DefaultBasemapRasterizer(
             resourceAccess = resourceAccess,
             assembly = assembly,
             limits = configuration.resourceLimits,
+            styleDiagnostics = styleDiagnostics,
+            textFieldIdentity = options.textFieldIdentity,
         )
     }
 
@@ -693,13 +740,17 @@ private class DefaultBasemapRasterizer(
         // to pull state out from under an acquisition already in flight.
         val state = owned.stateForAcquisition()
         val assembly = state.assembly
-            ?: return@operation LabelCandidateAssembler.emptyBatch(state.style, state.callerTiles, state.limits)
+            ?: return@operation LabelCandidateAssembler.emptyBatch(
+                state.style, state.callerTiles, state.limits, state.styleDiagnostics, state.textFieldIdentity,
+            )
 
         // Only a host-owned-symbols plan reaches here without a template, and it planned no text,
         // so it requires no range and needs none.
         val glyphsTemplate = state.style.glyphsTemplate
         if (glyphsTemplate == null && assembly.requiredRanges.isNotEmpty()) {
-            return@operation LabelCandidateAssembler.emptyBatch(state.style, state.callerTiles, state.limits)
+            return@operation LabelCandidateAssembler.emptyBatch(
+                state.style, state.callerTiles, state.limits, state.styleDiagnostics, state.textFieldIdentity,
+            )
         }
         val rangeOutcomes = supervisorScope {
             assembly.requiredRanges.map { request ->
@@ -725,8 +776,15 @@ private class DefaultBasemapRasterizer(
         style: PreparedStyle,
         tiles: List<TileId>,
         resourceAccess: ResourceAccessMode,
+    ): LabelCandidateBatch = acquireLabelCandidates(style, tiles, LabelCandidateOptions.Default, resourceAccess)
+
+    override suspend fun acquireLabelCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        options: LabelCandidateOptions,
+        resourceAccess: ResourceAccessMode,
     ): LabelCandidateBatch {
-        val plan = planLabelCandidates(style, tiles, resourceAccess)
+        val plan = planLabelCandidates(style, tiles, options, resourceAccess)
         return try {
             acquireLabelCandidates(plan)
         } finally {
@@ -4262,6 +4320,10 @@ private class LabelCandidatePlanState(
     val resourceAccess: ResourceAccessMode,
     val assembly: LabelAssembly?,
     val limits: ResourceLimits,
+    /** The style's diagnostics as this plan's batches report them; see `labelLayersFor`. */
+    val styleDiagnostics: List<RenderDiagnostic>,
+    /** The plan's `text-field` override identity, for the empty batch's content key. */
+    val textFieldIdentity: String?,
 )
 
 @OptIn(ExperimentalAtomicApi::class)
@@ -4273,12 +4335,16 @@ private class DefaultLabelCandidatePlan(
     resourceAccess: ResourceAccessMode,
     assembly: LabelAssembly?,
     limits: ResourceLimits,
+    styleDiagnostics: List<RenderDiagnostic>,
+    textFieldIdentity: String?,
 ) : LabelCandidatePlan {
     // Null once closed, so close() can drop the LabelAssembly - and every PendingLabel it holds -
     // rather than keeping it reachable for as long as the caller holds this plan. AutoCloseable
     // implies release, and a reusable plan is exactly the object a caller is likely to hold onto.
     private val state = AtomicReference<LabelCandidatePlanState?>(
-        LabelCandidatePlanState(style, tiles, callerTiles, resourceAccess, assembly, limits),
+        LabelCandidatePlanState(
+            style, tiles, callerTiles, resourceAccess, assembly, limits, styleDiagnostics, textFieldIdentity,
+        ),
     )
 
     // Computed once at construction, not read through `state`, so both keep working after
@@ -4293,9 +4359,9 @@ private class DefaultLabelCandidatePlan(
 
     override val diagnostics: List<RenderDiagnostic> =
         if (assembly == null || style.glyphsTemplate == null) {
-            style.diagnostics + LabelCandidateAssembler.glyphRangeUnavailable(callerTiles)
+            styleDiagnostics + LabelCandidateAssembler.glyphRangeUnavailable(callerTiles)
         } else {
-            style.diagnostics
+            styleDiagnostics
         }
 
     override fun glyphUrls(template: String): List<String> {

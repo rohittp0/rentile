@@ -1,6 +1,12 @@
 package com.rohittp.rentile
 
+import com.rohittp.rentile.internal.canonicalJson
 import com.rohittp.rentile.internal.createBasemapRasterizer
+import com.rohittp.rentile.internal.style.StylePropertyCompiler
+import com.rohittp.rentile.internal.style.StyleType
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlin.math.pow
 
 /** North-up XYZ output-tile identity. */
@@ -754,6 +760,56 @@ public data class LabelCandidate(
     public val textSize: LabelSymbolSize?,
 )
 
+/**
+ * Label-side choices a host makes per acquisition, without re-preparing the style.
+ *
+ * [textFieldOverride] is one style-specification `text-field` value, as JSON - for example
+ * `["get","name"]` for native names, or `["coalesce",["get","name:en"],["get","name"]]` for English
+ * ones that fall back to the local name where the tiles omit `name:en` - applied to **every** label
+ * layer in place of its own `text-field`. Any expression this profile can compile is accepted. It is what a Mapbox host's label-language setting
+ * does when it sets `text-field` on every symbol layer, and it behaves the same way: under
+ * [CompatibilityPolicy.RentileV1HostSymbols] an icon-only label layer gains that text, in the
+ * specification's default font stack and size unless the layer declares its own; under
+ * [CompatibilityPolicy.RentileV1] the label layers are the text-bearing ones, so every one of them
+ * changes text and nothing else does. Null keeps each layer's own `text-field`.
+ *
+ * Nothing about the [PreparedStyle] changes. Its [PreparedStyle.digest], every Output Tile key and
+ * every Output Tile stay exactly as they are; only the label keys
+ * ([BasemapRasterizer.labelCandidateRequestKey] and [LabelCandidateBatch.contentKey]) fold the
+ * override in, so caches of both coexist. Two spellings of one expression - differing only in
+ * whitespace or object-key order - are one override. The label programs it produces are compiled
+ * once per prepared style and override, on first use, and reused after that.
+ *
+ * A layer whose own `text-field` the profile could not compile is compiled again with the override,
+ * so the [DiagnosticCode.UNSUPPORTED_TEXT_CONSTRUCT] its preparation reported is replaced, in a
+ * batch acquired with an override, by whatever compiling the override reports.
+ *
+ * Construction throws [IllegalArgumentException] when [textFieldOverride] is not JSON or is not an
+ * expression this profile can compile.
+ */
+public data class LabelCandidateOptions(
+    public val textFieldOverride: String? = null,
+) {
+    /** The parsed override, already proven to compile; null without one. */
+    internal val textFieldElement: JsonElement? = textFieldOverride?.let { json ->
+        val element = try {
+            Json.parseToJsonElement(json)
+        } catch (_: SerializationException) {
+            throw IllegalArgumentException("textFieldOverride must be JSON")
+        }
+        StylePropertyCompiler.compile(element)
+        element
+    }
+
+    /** The override's canonical JSON, which is its identity in every label key; null without one. */
+    internal val textFieldIdentity: String? = textFieldElement?.canonicalJson()
+
+    public companion object {
+        /** Each label layer's own `text-field`: the behaviour of every overload without options. */
+        public val Default: LabelCandidateOptions = LabelCandidateOptions()
+    }
+}
+
 /** The immutable result of one Label acquisition. Not a Prepared Batch; see CONTEXT.md. */
 public data class LabelCandidateBatch(
     public val candidates: List<LabelCandidate>,
@@ -1207,6 +1263,24 @@ public interface BasemapRasterizer : AutoCloseable {
     public fun labelCandidateRequestKey(style: PreparedStyle, tiles: List<TileId>): String
 
     /**
+     * [labelCandidateRequestKey] for an acquisition made with [options]: equal to it for
+     * [LabelCandidateOptions.Default], and distinct for every distinct
+     * [LabelCandidateOptions.textFieldOverride].
+     *
+     * The body here serves implementations written before options existed: it answers for the
+     * default options and throws [UnsupportedOperationException] for any other. Rentile's own
+     * rasterizer overrides it.
+     */
+    public fun labelCandidateRequestKey(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        options: LabelCandidateOptions,
+    ): String {
+        if (options.textFieldOverride != null) throw UnsupportedOperationException(OPTIONS_UNSUPPORTED)
+        return labelCandidateRequestKey(style, tiles)
+    }
+
+    /**
      * Acquires this tile set's Label Tiles, decodes and evaluates them, and freezes the Glyph
      * Ranges the batch will need - without acquiring any of them.
      *
@@ -1217,6 +1291,24 @@ public interface BasemapRasterizer : AutoCloseable {
         tiles: List<TileId>,
         resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
     ): LabelCandidatePlan
+
+    /**
+     * [planLabelCandidates] with [options]; the returned plan carries them, so
+     * [acquireLabelCandidates] of it applies them too. See [LabelCandidateOptions].
+     *
+     * The body here serves implementations written before options existed: it answers for the
+     * default options and throws [UnsupportedOperationException] for any other. Rentile's own
+     * rasterizer overrides it.
+     */
+    public suspend fun planLabelCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        options: LabelCandidateOptions,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): LabelCandidatePlan {
+        if (options.textFieldOverride != null) throw UnsupportedOperationException(OPTIONS_UNSUPPORTED)
+        return planLabelCandidates(style, tiles, resourceAccess)
+    }
 
     /**
      * Acquires [LabelCandidatePlan.glyphClosure] and assembles the batch, reusing the access mode
@@ -1238,6 +1330,23 @@ public interface BasemapRasterizer : AutoCloseable {
         tiles: List<TileId>,
         resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
     ): LabelCandidateBatch
+
+    /**
+     * [acquireLabelCandidates] with [options]. See [LabelCandidateOptions].
+     *
+     * The body here serves implementations written before options existed: it answers for the
+     * default options and throws [UnsupportedOperationException] for any other. Rentile's own
+     * rasterizer overrides it.
+     */
+    public suspend fun acquireLabelCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        options: LabelCandidateOptions,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): LabelCandidateBatch {
+        if (options.textFieldOverride != null) throw UnsupportedOperationException(OPTIONS_UNSUPPORTED)
+        return acquireLabelCandidates(style, tiles, resourceAccess)
+    }
 
     /** Returns null when the prepared style does not select a raster-dem terrain source. */
     public fun terrainSourceDescriptor(style: PreparedStyle): TerrainSourceDescriptor?
@@ -1287,6 +1396,8 @@ public interface BasemapRasterizer : AutoCloseable {
     /** Suspends until workers, leases, native objects, and secret state are released. */
     public suspend fun awaitClosed()
 }
+
+private const val OPTIONS_UNSUPPORTED = "This BasemapRasterizer does not implement LabelCandidateOptions"
 
 /** Factory for the process-local deep rendering module. */
 public object Rentile {
