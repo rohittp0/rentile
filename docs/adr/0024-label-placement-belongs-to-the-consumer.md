@@ -1,5 +1,10 @@
 # Label placement belongs to the consumer
 
+> Superseded in part by [ADR 0035](0035-the-host-can-own-every-symbol-layer.md) for the opt-in
+> `rentile-v1-host-symbols` profile only: there the Label closure is every visible vector symbol
+> layer with text **or** an icon, and an icon with no text is a Label Candidate of its own. Everything
+> below still holds for `rentile-v1`, the default, and the placement rule holds for both.
+
 Rentile will prepare Labels and never draw them into an Output Tile. As of `0.6.0`, the Label closure is every visible text-bearing vector symbol layer rather than only place-name source layers. Rentile resolves which features produce text, the text after style evaluation, the font stack, size, anchor, offset and justification, the glyph geometry those strings need, and any paired icon. Point candidates carry an anchor; line and line-center candidates additionally carry their geographic source line, selected tangent, and requested repeat spacing. The consumer projects each Label Candidate into screen space, resolves collision and priority across its whole viewport, applies depth and occlusion, and draws.
 
 Two independent reasons rule out the obvious alternative of rasterizing text into the tile like any other layer. An Output Tile is a mercator ground texture, so anything baked into it is baked into the ground: a consumer viewing that texture under a pitched perspective camera sees text compressed vertically toward the horizon, sheared by bearing, and reduced to sub-pixel height in the far field, whereas map text must stay upright and constant-size in screen space at every camera orientation. Separately, correct label collision is a screen-space problem across the entire viewport, while Rentile's existing symbol collision is tile-local and evaluated in tile space; two Labels in different tiles can overlap on screen without overlapping in any tile, and whether they do depends on the camera, so no tile-local decision is right for all cameras.

@@ -335,8 +335,15 @@ existing style selection
 Keep Rentile's raw cache and Travel Animator's output PNG cache in distinct namespaces. Keep the current remote-rendered path available as a separately keyed fallback during rollout.
 
 Rentile does not draw labels and never will, but it prepares candidates for every visible
-text-bearing vector symbol layer. A host that wants them calls `acquireLabelCandidates` and performs
-projection, cross-tile collision, occlusion, and drawing on top. Point, line, and line-center
+text-bearing vector symbol layer - and, when the style is prepared with
+`CompatibilityPolicy.RentileV1HostSymbols`, for every visible vector symbol layer with text or an
+icon, with no symbol drawn into the Output Tiles at all. A host that wants them calls
+`acquireLabelCandidates` and performs projection, cross-tile collision, occlusion, and drawing on
+top. Under that profile an icon with no text is an icon-only candidate (empty `glyphs`, null `text`);
+each candidate's `textSize` and icon `size` give the size Mapbox GL draws at the camera's fractional
+zoom, and `LabelCandidateOptions(textFieldOverride = ...)` switches label language without
+re-preparing the style or re-keying any Output Tile. See
+[ADR 0035](docs/adr/0035-the-host-can-own-every-symbol-layer.md). Point, line, and line-center
 candidates carry the geometry needed for that placement. When a label layer also declares an icon,
 the candidate carries that paired icon's sprite geometry, paint, collision, alignment, and text-fit
 inputs so the host places text and icon as one symbol. A host that must know its Glyph Range URLs
