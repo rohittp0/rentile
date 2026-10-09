@@ -1181,6 +1181,20 @@ public data class RenderBatch(
 
 /** Public renderer boundary. Implementations are process-local resource owners. */
 public interface BasemapRasterizer : AutoCloseable {
+    /**
+     * Selectively acquire source-backed scenery geometry from the authored extrusion sources.
+     * No placement, density, projection or invented sidewalks. All-or-error, canonical source
+     * deduplication; NORMAL/CACHE_ONLY/RELOAD use the validated raw-resource path.
+     */
+    public suspend fun acquireSceneryCandidates(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        query: List<SceneryLayerQuery>,
+        limits: SceneryLimits = SceneryLimits(),
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): SceneryCandidateBatch =
+        throw UnsupportedOperationException("Host scenery is unsupported by this implementation")
+
     /** Visible extrusion layers under a host-extrusion policy; empty under legacy profiles. */
     public fun extrusionLayerDescriptors(style: PreparedStyle): List<ExtrusionLayerDescriptor> =
         throw UnsupportedOperationException("Host extrusions are unsupported by this implementation")

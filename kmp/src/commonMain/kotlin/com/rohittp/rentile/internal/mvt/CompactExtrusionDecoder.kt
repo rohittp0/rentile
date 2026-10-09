@@ -3,6 +3,9 @@ package com.rohittp.rentile.internal.mvt
 import com.rohittp.rentile.ExtrusionGeometry
 import com.rohittp.rentile.ExtrusionLimits
 import com.rohittp.rentile.ResourceLimits
+import com.rohittp.rentile.SceneryGeometry
+import com.rohittp.rentile.SceneryGeometryType
+import com.rohittp.rentile.SceneryLayerQuery
 import com.rohittp.rentile.internal.style.StyleValue
 import kotlin.math.abs
 
@@ -22,6 +25,11 @@ internal class CompactPolygonFeature(
     val properties: Map<String, StyleValue>, val geometry: ExtrusionGeometry,
 )
 
+internal class CompactSceneryFeature(
+    val layer: String, val extent: Int, val index: Int, val id: Long?,
+    val properties: Map<String, StyleValue>, val geometry: SceneryGeometry,
+)
+
 /**
  * Selective, two-pass protobuf reader. It never constructs Wire's Tile graph, boxed geometry
  * commands, VectorCoordinates, or lists of ring points. Count/validate first, allocate exact
@@ -32,6 +40,17 @@ internal class CompactExtrusionDecoder(
     private val budget: ExtrusionBudget,
     private val checkCancellation: () -> Unit,
 ) {
+    private var sceneryQuery: Map<String, SceneryLayerQuery>? = null
+    private var emitScenery: ((CompactSceneryFeature) -> Unit)? = null
+
+    fun decodeScenery(bytes: ByteArray, query: List<SceneryLayerQuery>, emit: (CompactSceneryFeature) -> Unit) {
+        check(sceneryQuery == null)
+        sceneryQuery = query.associateBy { it.sourceLayer }
+        emitScenery = emit
+        try { decode(bytes, sceneryQuery!!.keys) {} }
+        finally { sceneryQuery = null; emitScenery = null }
+    }
+
     private var features = 0L
     private var tags = 0L
     private var commands = 0L
@@ -120,8 +139,11 @@ internal class CompactExtrusionDecoder(
                 else -> scan.skip(field)
             }
         }
-        if (type != 3L) return
-        val counts = polygon(feature, extent, null, null, null, countBudget = true)
+        val selected = sceneryQuery?.get(layer)
+        val expectedType = selected?.geometryType?.let { it.ordinal + 1 } ?: 3
+        if (type != expectedType.toLong()) return
+        val counts = if (type == 3L) polygon(feature, extent, null, null, null, countBudget = true)
+            else pointsOrLines(feature, extent, type == 1L, null, null, countBudget = true)
         val arrayBytes = (counts.vertices.toLong() * 2 + counts.rings + 1L + counts.polygons + 1L) * 4L
         budget.retain(arrayBytes + 128)
         // Count tags before allocating their map; charge a conservative map entry estimate.
@@ -144,6 +166,7 @@ internal class CompactExtrusionDecoder(
             if (key !in keys.indices.toLongRange() || value !in values.indices.toLongRange()) malformed()
             val k = keys[key.toInt()]
             val v = values[value.toInt()]
+            if (selected != null && k !in selected.properties) continue
             // Retained properties reference dictionary objects after this layer's working set dies.
             budget.retain(k.length.toLong() * 2 + 48 + (if (v is StyleValue.StringValue) v.value.length.toLong() * 2 + 48 else 32))
             if (properties.put(k, v) != null) malformed()
@@ -151,8 +174,12 @@ internal class CompactExtrusionDecoder(
         val xy = IntArray(counts.vertices * 2)
         val rings = IntArray(counts.rings + 1)
         val polygons = IntArray(counts.polygons + 1)
-        polygon(feature, extent, xy, rings, polygons, countBudget = false)
-        emit(CompactPolygonFeature(layer, extent, index, id, properties, ExtrusionGeometry(xy, rings, polygons)))
+        if (type == 3L) polygon(feature, extent, xy, rings, polygons, countBudget = false)
+        else pointsOrLines(feature, extent, type == 1L, xy, rings, countBudget = false)
+        if (selected != null) {
+            emitScenery!!(CompactSceneryFeature(layer, extent, index, id, properties,
+                SceneryGeometry(selected.geometryType, xy, rings, polygons)))
+        } else emit(CompactPolygonFeature(layer, extent, index, id, properties, ExtrusionGeometry(xy, rings, polygons)))
     }
 
     private data class Counts(val vertices: Int, val rings: Int, val polygons: Int)
@@ -216,6 +243,48 @@ internal class CompactExtrusionDecoder(
         if (open || ringCount == 0) malformed()
         rings?.set(ringCount, vertices); polygons?.set(polygonCount, ringCount)
         return Counts(vertices, ringCount, polygonCount)
+    }
+
+    private fun pointsOrLines(
+        feature: Slice, extent: Int, points: Boolean, xy: IntArray?, parts: IntArray?, countBudget: Boolean,
+    ): Counts {
+        val words = UIntFields(feature, 4, ::tick)
+        fun word(): Long? = words.next().also {
+            if (it != null && countBudget) checkedLimit("maxMvtCommands", resourceLimits.maxMvtCommands.toLong(), ++commands)
+        }
+        var x = 0L; var y = 0L
+        var vertices = 0; var partCount = 0; var partVertices = 0
+        val bound = maxOf(1L shl 28, extent.toLong() * 16)
+        while (true) {
+            tick()
+            val command = word() ?: break
+            val kind = command and 7
+            val count = command ushr 3
+            if (count <= 0 || kind !in 1L..2L || (points && kind != 1L)) malformed()
+            if (!points) {
+                if (kind == 1L) {
+                    if (count != 1L || (partCount > 0 && partVertices < 2)) malformed()
+                    parts?.set(partCount, vertices); partCount++; partVertices = 0
+                } else if (partCount == 0) malformed()
+            }
+            if (countBudget) {
+                checkedLimit("maxMvtCoordinates", resourceLimits.maxMvtCoordinates.toLong(), coordinates + count)
+                coordinates += count
+            }
+            if (count > Int.MAX_VALUE || vertices.toLong() + count > Int.MAX_VALUE / 2) malformed()
+            repeat(count.toInt()) {
+                tick()
+                x += zigzag(word() ?: malformed()); y += zigzag(word() ?: malformed())
+                if (abs(x) > bound || abs(y) > bound || x !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong() ||
+                    y !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) malformed()
+                xy?.set(vertices * 2, x.toInt()); xy?.set(vertices * 2 + 1, y.toInt())
+                vertices++; partVertices++
+            }
+        }
+        if (vertices == 0 || (!points && partVertices < 2)) malformed()
+        if (points) { parts?.set(0, 0); partCount = 1 }
+        parts?.set(partCount, vertices)
+        return Counts(vertices, partCount, 0)
     }
 
     private fun value(slice: Slice): StyleValue {

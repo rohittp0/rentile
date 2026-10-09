@@ -8,6 +8,8 @@ public abstract interface class com/rohittp/rentile/BasemapRasterizer : java/lan
 	public static synthetic fun acquireLabelCandidates$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun acquireLabelTiles (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun acquireLabelTiles$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public fun acquireSceneryCandidates (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Ljava/util/List;Lcom/rohittp/rentile/SceneryLimits;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun acquireSceneryCandidates$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Ljava/util/List;Lcom/rohittp/rentile/SceneryLimits;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public fun acquireSpriteAtlas (Lcom/rohittp/rentile/PreparedStyle;ILcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun acquireSpriteAtlas$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;ILcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun acquireTerrainTiles (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -49,6 +51,8 @@ public final class com/rohittp/rentile/BasemapRasterizer$DefaultImpls {
 	public static synthetic fun acquireLabelCandidates$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/LabelCandidateOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun acquireLabelCandidates$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun acquireLabelTiles$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static fun acquireSceneryCandidates (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Ljava/util/List;Lcom/rohittp/rentile/SceneryLimits;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun acquireSceneryCandidates$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Ljava/util/List;Lcom/rohittp/rentile/SceneryLimits;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static fun acquireSpriteAtlas (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;ILcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun acquireSpriteAtlas$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;ILcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun acquireTerrainTiles$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
@@ -1270,6 +1274,93 @@ public final class com/rohittp/rentile/SafetyLimitException : com/rohittp/rentil
 	public final fun getLimit ()J
 	public final fun getLimitName ()Ljava/lang/String;
 	public final fun getObserved ()J
+}
+
+public final class com/rohittp/rentile/SceneryCandidate {
+	public final fun booleanProperty (Ljava/lang/String;)Ljava/lang/Boolean;
+	public final fun getExtent ()I
+	public final fun getFeatureId ()Ljava/lang/Long;
+	public final fun getFeatureIndex ()I
+	public final fun getGeometry ()Lcom/rohittp/rentile/SceneryGeometry;
+	public final fun getSourceId ()Ljava/lang/String;
+	public final fun getSourceLayer ()Ljava/lang/String;
+	public final fun getSourceTile ()Lcom/rohittp/rentile/TileId;
+	public final fun numberProperty (Ljava/lang/String;)Ljava/lang/Double;
+	public final fun propertyKind (Ljava/lang/String;)Lcom/rohittp/rentile/SceneryPropertyKind;
+	public final fun stringProperty (Ljava/lang/String;)Ljava/lang/String;
+}
+
+public final class com/rohittp/rentile/SceneryCandidateBatch {
+	public final fun getCandidates ()Ljava/util/List;
+	public final fun getContentKey ()Ljava/lang/String;
+	public final fun getEstimatedRetainedBytes ()J
+}
+
+public final class com/rohittp/rentile/SceneryGeometry {
+	public final fun getPartCount ()I
+	public final fun getPolygonCount ()I
+	public final fun getPrimitiveByteCount ()J
+	public final fun getType ()Lcom/rohittp/rentile/SceneryGeometryType;
+	public final fun getVertexCount ()I
+	public final fun partEnd (I)I
+	public final fun partStart (I)I
+	public final fun polygonEnd (I)I
+	public final fun polygonStart (I)I
+	public final fun x (I)I
+	public final fun y (I)I
+}
+
+public final class com/rohittp/rentile/SceneryGeometryType : java/lang/Enum {
+	public static final field LINE Lcom/rohittp/rentile/SceneryGeometryType;
+	public static final field POINT Lcom/rohittp/rentile/SceneryGeometryType;
+	public static final field POLYGON Lcom/rohittp/rentile/SceneryGeometryType;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/rohittp/rentile/SceneryGeometryType;
+	public static fun values ()[Lcom/rohittp/rentile/SceneryGeometryType;
+}
+
+public final class com/rohittp/rentile/SceneryLayerQuery {
+	public fun <init> (Ljava/lang/String;Lcom/rohittp/rentile/SceneryGeometryType;Ljava/util/Set;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/rohittp/rentile/SceneryGeometryType;Ljava/util/Set;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Lcom/rohittp/rentile/SceneryGeometryType;
+	public final fun component3 ()Ljava/util/Set;
+	public final fun copy (Ljava/lang/String;Lcom/rohittp/rentile/SceneryGeometryType;Ljava/util/Set;)Lcom/rohittp/rentile/SceneryLayerQuery;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/SceneryLayerQuery;Ljava/lang/String;Lcom/rohittp/rentile/SceneryGeometryType;Ljava/util/Set;ILjava/lang/Object;)Lcom/rohittp/rentile/SceneryLayerQuery;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getGeometryType ()Lcom/rohittp/rentile/SceneryGeometryType;
+	public final fun getProperties ()Ljava/util/Set;
+	public final fun getSourceLayer ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/rohittp/rentile/SceneryLimits {
+	public fun <init> ()V
+	public fun <init> (JJJI)V
+	public synthetic fun <init> (JJJIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()J
+	public final fun component2 ()J
+	public final fun component3 ()J
+	public final fun component4 ()I
+	public final fun copy (JJJI)Lcom/rohittp/rentile/SceneryLimits;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/SceneryLimits;JJJIILjava/lang/Object;)Lcom/rohittp/rentile/SceneryLimits;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMaxEncodedTileBytes ()J
+	public final fun getMaxRequestedTiles ()I
+	public final fun getMaxRetainedBytes ()J
+	public final fun getMaxWorkingBytes ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/rohittp/rentile/SceneryPropertyKind : java/lang/Enum {
+	public static final field BOOLEAN Lcom/rohittp/rentile/SceneryPropertyKind;
+	public static final field NUMBER Lcom/rohittp/rentile/SceneryPropertyKind;
+	public static final field STRING Lcom/rohittp/rentile/SceneryPropertyKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/rohittp/rentile/SceneryPropertyKind;
+	public static fun values ()[Lcom/rohittp/rentile/SceneryPropertyKind;
 }
 
 public final class com/rohittp/rentile/SpriteAtlas {

@@ -217,6 +217,30 @@ final enum class com.rohittp.rentile/ResourceClass : kotlin/Enum<com.rohittp.ren
     final fun values(): kotlin/Array<com.rohittp.rentile/ResourceClass> // com.rohittp.rentile/ResourceClass.values|values#static(){}[0]
 }
 
+final enum class com.rohittp.rentile/SceneryGeometryType : kotlin/Enum<com.rohittp.rentile/SceneryGeometryType> { // com.rohittp.rentile/SceneryGeometryType|null[0]
+    enum entry LINE // com.rohittp.rentile/SceneryGeometryType.LINE|null[0]
+    enum entry POINT // com.rohittp.rentile/SceneryGeometryType.POINT|null[0]
+    enum entry POLYGON // com.rohittp.rentile/SceneryGeometryType.POLYGON|null[0]
+
+    final val entries // com.rohittp.rentile/SceneryGeometryType.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/SceneryGeometryType> // com.rohittp.rentile/SceneryGeometryType.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): com.rohittp.rentile/SceneryGeometryType // com.rohittp.rentile/SceneryGeometryType.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<com.rohittp.rentile/SceneryGeometryType> // com.rohittp.rentile/SceneryGeometryType.values|values#static(){}[0]
+}
+
+final enum class com.rohittp.rentile/SceneryPropertyKind : kotlin/Enum<com.rohittp.rentile/SceneryPropertyKind> { // com.rohittp.rentile/SceneryPropertyKind|null[0]
+    enum entry BOOLEAN // com.rohittp.rentile/SceneryPropertyKind.BOOLEAN|null[0]
+    enum entry NUMBER // com.rohittp.rentile/SceneryPropertyKind.NUMBER|null[0]
+    enum entry STRING // com.rohittp.rentile/SceneryPropertyKind.STRING|null[0]
+
+    final val entries // com.rohittp.rentile/SceneryPropertyKind.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/SceneryPropertyKind> // com.rohittp.rentile/SceneryPropertyKind.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): com.rohittp.rentile/SceneryPropertyKind // com.rohittp.rentile/SceneryPropertyKind.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<com.rohittp.rentile/SceneryPropertyKind> // com.rohittp.rentile/SceneryPropertyKind.values|values#static(){}[0]
+}
+
 final enum class com.rohittp.rentile/SymbolAlignment : kotlin/Enum<com.rohittp.rentile/SymbolAlignment> { // com.rohittp.rentile/SymbolAlignment|null[0]
     enum entry AUTO // com.rohittp.rentile/SymbolAlignment.AUTO|null[0]
     enum entry MAP // com.rohittp.rentile/SymbolAlignment.MAP|null[0]
@@ -362,6 +386,7 @@ abstract interface com.rohittp.rentile/BasemapRasterizer : kotlin/AutoCloseable 
     open fun labelCandidateRequestKey(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions): kotlin/String // com.rohittp.rentile/BasemapRasterizer.labelCandidateRequestKey|labelCandidateRequestKey(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions){}[0]
     open suspend fun acquireExtrusionCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ExtrusionLimits = ..., com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/ExtrusionCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireExtrusionCandidates|acquireExtrusionCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ExtrusionLimits;com.rohittp.rentile.ResourceAccessMode){}[0]
     open suspend fun acquireLabelCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/LabelCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireLabelCandidates|acquireLabelCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions;com.rohittp.rentile.ResourceAccessMode){}[0]
+    open suspend fun acquireSceneryCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, kotlin.collections/List<com.rohittp.rentile/SceneryLayerQuery>, com.rohittp.rentile/SceneryLimits = ..., com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/SceneryCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireSceneryCandidates|acquireSceneryCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;kotlin.collections.List<com.rohittp.rentile.SceneryLayerQuery>;com.rohittp.rentile.SceneryLimits;com.rohittp.rentile.ResourceAccessMode){}[0]
     open suspend fun acquireSpriteAtlas(com.rohittp.rentile/PreparedStyle, kotlin/Int = ..., com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/SpriteAtlas? // com.rohittp.rentile/BasemapRasterizer.acquireSpriteAtlas|acquireSpriteAtlas(com.rohittp.rentile.PreparedStyle;kotlin.Int;com.rohittp.rentile.ResourceAccessMode){}[0]
     open suspend fun planLabelCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/LabelCandidatePlan // com.rohittp.rentile/BasemapRasterizer.planLabelCandidates|planLabelCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions;com.rohittp.rentile.ResourceAccessMode){}[0]
 }
@@ -1825,6 +1850,98 @@ final class com.rohittp.rentile/SafetyLimitException : com.rohittp.rentile/Renti
         final fun <get-limitName>(): kotlin/String // com.rohittp.rentile/SafetyLimitException.limitName.<get-limitName>|<get-limitName>(){}[0]
     final val observed // com.rohittp.rentile/SafetyLimitException.observed|{}observed[0]
         final fun <get-observed>(): kotlin/Long // com.rohittp.rentile/SafetyLimitException.observed.<get-observed>|<get-observed>(){}[0]
+}
+
+final class com.rohittp.rentile/SceneryCandidate { // com.rohittp.rentile/SceneryCandidate|null[0]
+    final val extent // com.rohittp.rentile/SceneryCandidate.extent|{}extent[0]
+        final fun <get-extent>(): kotlin/Int // com.rohittp.rentile/SceneryCandidate.extent.<get-extent>|<get-extent>(){}[0]
+    final val featureId // com.rohittp.rentile/SceneryCandidate.featureId|{}featureId[0]
+        final fun <get-featureId>(): kotlin/Long? // com.rohittp.rentile/SceneryCandidate.featureId.<get-featureId>|<get-featureId>(){}[0]
+    final val featureIndex // com.rohittp.rentile/SceneryCandidate.featureIndex|{}featureIndex[0]
+        final fun <get-featureIndex>(): kotlin/Int // com.rohittp.rentile/SceneryCandidate.featureIndex.<get-featureIndex>|<get-featureIndex>(){}[0]
+    final val geometry // com.rohittp.rentile/SceneryCandidate.geometry|{}geometry[0]
+        final fun <get-geometry>(): com.rohittp.rentile/SceneryGeometry // com.rohittp.rentile/SceneryCandidate.geometry.<get-geometry>|<get-geometry>(){}[0]
+    final val sourceId // com.rohittp.rentile/SceneryCandidate.sourceId|{}sourceId[0]
+        final fun <get-sourceId>(): kotlin/String // com.rohittp.rentile/SceneryCandidate.sourceId.<get-sourceId>|<get-sourceId>(){}[0]
+    final val sourceLayer // com.rohittp.rentile/SceneryCandidate.sourceLayer|{}sourceLayer[0]
+        final fun <get-sourceLayer>(): kotlin/String // com.rohittp.rentile/SceneryCandidate.sourceLayer.<get-sourceLayer>|<get-sourceLayer>(){}[0]
+    final val sourceTile // com.rohittp.rentile/SceneryCandidate.sourceTile|{}sourceTile[0]
+        final fun <get-sourceTile>(): com.rohittp.rentile/TileId // com.rohittp.rentile/SceneryCandidate.sourceTile.<get-sourceTile>|<get-sourceTile>(){}[0]
+
+    final fun booleanProperty(kotlin/String): kotlin/Boolean? // com.rohittp.rentile/SceneryCandidate.booleanProperty|booleanProperty(kotlin.String){}[0]
+    final fun numberProperty(kotlin/String): kotlin/Double? // com.rohittp.rentile/SceneryCandidate.numberProperty|numberProperty(kotlin.String){}[0]
+    final fun propertyKind(kotlin/String): com.rohittp.rentile/SceneryPropertyKind? // com.rohittp.rentile/SceneryCandidate.propertyKind|propertyKind(kotlin.String){}[0]
+    final fun stringProperty(kotlin/String): kotlin/String? // com.rohittp.rentile/SceneryCandidate.stringProperty|stringProperty(kotlin.String){}[0]
+}
+
+final class com.rohittp.rentile/SceneryCandidateBatch { // com.rohittp.rentile/SceneryCandidateBatch|null[0]
+    final val candidates // com.rohittp.rentile/SceneryCandidateBatch.candidates|{}candidates[0]
+        final fun <get-candidates>(): kotlin.collections/List<com.rohittp.rentile/SceneryCandidate> // com.rohittp.rentile/SceneryCandidateBatch.candidates.<get-candidates>|<get-candidates>(){}[0]
+    final val contentKey // com.rohittp.rentile/SceneryCandidateBatch.contentKey|{}contentKey[0]
+        final fun <get-contentKey>(): kotlin/String // com.rohittp.rentile/SceneryCandidateBatch.contentKey.<get-contentKey>|<get-contentKey>(){}[0]
+    final val estimatedRetainedBytes // com.rohittp.rentile/SceneryCandidateBatch.estimatedRetainedBytes|{}estimatedRetainedBytes[0]
+        final fun <get-estimatedRetainedBytes>(): kotlin/Long // com.rohittp.rentile/SceneryCandidateBatch.estimatedRetainedBytes.<get-estimatedRetainedBytes>|<get-estimatedRetainedBytes>(){}[0]
+}
+
+final class com.rohittp.rentile/SceneryGeometry { // com.rohittp.rentile/SceneryGeometry|null[0]
+    final val partCount // com.rohittp.rentile/SceneryGeometry.partCount|{}partCount[0]
+        final fun <get-partCount>(): kotlin/Int // com.rohittp.rentile/SceneryGeometry.partCount.<get-partCount>|<get-partCount>(){}[0]
+    final val polygonCount // com.rohittp.rentile/SceneryGeometry.polygonCount|{}polygonCount[0]
+        final fun <get-polygonCount>(): kotlin/Int // com.rohittp.rentile/SceneryGeometry.polygonCount.<get-polygonCount>|<get-polygonCount>(){}[0]
+    final val primitiveByteCount // com.rohittp.rentile/SceneryGeometry.primitiveByteCount|{}primitiveByteCount[0]
+        final fun <get-primitiveByteCount>(): kotlin/Long // com.rohittp.rentile/SceneryGeometry.primitiveByteCount.<get-primitiveByteCount>|<get-primitiveByteCount>(){}[0]
+    final val type // com.rohittp.rentile/SceneryGeometry.type|{}type[0]
+        final fun <get-type>(): com.rohittp.rentile/SceneryGeometryType // com.rohittp.rentile/SceneryGeometry.type.<get-type>|<get-type>(){}[0]
+    final val vertexCount // com.rohittp.rentile/SceneryGeometry.vertexCount|{}vertexCount[0]
+        final fun <get-vertexCount>(): kotlin/Int // com.rohittp.rentile/SceneryGeometry.vertexCount.<get-vertexCount>|<get-vertexCount>(){}[0]
+
+    final fun partEnd(kotlin/Int): kotlin/Int // com.rohittp.rentile/SceneryGeometry.partEnd|partEnd(kotlin.Int){}[0]
+    final fun partStart(kotlin/Int): kotlin/Int // com.rohittp.rentile/SceneryGeometry.partStart|partStart(kotlin.Int){}[0]
+    final fun polygonEnd(kotlin/Int): kotlin/Int // com.rohittp.rentile/SceneryGeometry.polygonEnd|polygonEnd(kotlin.Int){}[0]
+    final fun polygonStart(kotlin/Int): kotlin/Int // com.rohittp.rentile/SceneryGeometry.polygonStart|polygonStart(kotlin.Int){}[0]
+    final fun x(kotlin/Int): kotlin/Int // com.rohittp.rentile/SceneryGeometry.x|x(kotlin.Int){}[0]
+    final fun y(kotlin/Int): kotlin/Int // com.rohittp.rentile/SceneryGeometry.y|y(kotlin.Int){}[0]
+}
+
+final class com.rohittp.rentile/SceneryLayerQuery { // com.rohittp.rentile/SceneryLayerQuery|null[0]
+    constructor <init>(kotlin/String, com.rohittp.rentile/SceneryGeometryType, kotlin.collections/Set<kotlin/String> = ...) // com.rohittp.rentile/SceneryLayerQuery.<init>|<init>(kotlin.String;com.rohittp.rentile.SceneryGeometryType;kotlin.collections.Set<kotlin.String>){}[0]
+
+    final val geometryType // com.rohittp.rentile/SceneryLayerQuery.geometryType|{}geometryType[0]
+        final fun <get-geometryType>(): com.rohittp.rentile/SceneryGeometryType // com.rohittp.rentile/SceneryLayerQuery.geometryType.<get-geometryType>|<get-geometryType>(){}[0]
+    final val properties // com.rohittp.rentile/SceneryLayerQuery.properties|{}properties[0]
+        final fun <get-properties>(): kotlin.collections/Set<kotlin/String> // com.rohittp.rentile/SceneryLayerQuery.properties.<get-properties>|<get-properties>(){}[0]
+    final val sourceLayer // com.rohittp.rentile/SceneryLayerQuery.sourceLayer|{}sourceLayer[0]
+        final fun <get-sourceLayer>(): kotlin/String // com.rohittp.rentile/SceneryLayerQuery.sourceLayer.<get-sourceLayer>|<get-sourceLayer>(){}[0]
+
+    final fun component1(): kotlin/String // com.rohittp.rentile/SceneryLayerQuery.component1|component1(){}[0]
+    final fun component2(): com.rohittp.rentile/SceneryGeometryType // com.rohittp.rentile/SceneryLayerQuery.component2|component2(){}[0]
+    final fun component3(): kotlin.collections/Set<kotlin/String> // com.rohittp.rentile/SceneryLayerQuery.component3|component3(){}[0]
+    final fun copy(kotlin/String = ..., com.rohittp.rentile/SceneryGeometryType = ..., kotlin.collections/Set<kotlin/String> = ...): com.rohittp.rentile/SceneryLayerQuery // com.rohittp.rentile/SceneryLayerQuery.copy|copy(kotlin.String;com.rohittp.rentile.SceneryGeometryType;kotlin.collections.Set<kotlin.String>){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/SceneryLayerQuery.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/SceneryLayerQuery.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/SceneryLayerQuery.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/SceneryLimits { // com.rohittp.rentile/SceneryLimits|null[0]
+    constructor <init>(kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Int = ...) // com.rohittp.rentile/SceneryLimits.<init>|<init>(kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Int){}[0]
+
+    final val maxEncodedTileBytes // com.rohittp.rentile/SceneryLimits.maxEncodedTileBytes|{}maxEncodedTileBytes[0]
+        final fun <get-maxEncodedTileBytes>(): kotlin/Long // com.rohittp.rentile/SceneryLimits.maxEncodedTileBytes.<get-maxEncodedTileBytes>|<get-maxEncodedTileBytes>(){}[0]
+    final val maxRequestedTiles // com.rohittp.rentile/SceneryLimits.maxRequestedTiles|{}maxRequestedTiles[0]
+        final fun <get-maxRequestedTiles>(): kotlin/Int // com.rohittp.rentile/SceneryLimits.maxRequestedTiles.<get-maxRequestedTiles>|<get-maxRequestedTiles>(){}[0]
+    final val maxRetainedBytes // com.rohittp.rentile/SceneryLimits.maxRetainedBytes|{}maxRetainedBytes[0]
+        final fun <get-maxRetainedBytes>(): kotlin/Long // com.rohittp.rentile/SceneryLimits.maxRetainedBytes.<get-maxRetainedBytes>|<get-maxRetainedBytes>(){}[0]
+    final val maxWorkingBytes // com.rohittp.rentile/SceneryLimits.maxWorkingBytes|{}maxWorkingBytes[0]
+        final fun <get-maxWorkingBytes>(): kotlin/Long // com.rohittp.rentile/SceneryLimits.maxWorkingBytes.<get-maxWorkingBytes>|<get-maxWorkingBytes>(){}[0]
+
+    final fun component1(): kotlin/Long // com.rohittp.rentile/SceneryLimits.component1|component1(){}[0]
+    final fun component2(): kotlin/Long // com.rohittp.rentile/SceneryLimits.component2|component2(){}[0]
+    final fun component3(): kotlin/Long // com.rohittp.rentile/SceneryLimits.component3|component3(){}[0]
+    final fun component4(): kotlin/Int // com.rohittp.rentile/SceneryLimits.component4|component4(){}[0]
+    final fun copy(kotlin/Long = ..., kotlin/Long = ..., kotlin/Long = ..., kotlin/Int = ...): com.rohittp.rentile/SceneryLimits // com.rohittp.rentile/SceneryLimits.copy|copy(kotlin.Long;kotlin.Long;kotlin.Long;kotlin.Int){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/SceneryLimits.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/SceneryLimits.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/SceneryLimits.toString|toString(){}[0]
 }
 
 final class com.rohittp.rentile/SpriteAtlas { // com.rohittp.rentile/SpriteAtlas|null[0]

@@ -1,5 +1,9 @@
 package com.rohittp.rentile.internal
 
+import com.rohittp.rentile.SceneryCandidate
+import com.rohittp.rentile.SceneryCandidateBatch
+import com.rohittp.rentile.SceneryLayerQuery
+import com.rohittp.rentile.SceneryLimits
 import com.rohittp.rentile.BasemapRasterizer
 import com.rohittp.rentile.BatchRenderException
 import com.rohittp.rentile.CompatibilityPolicy
@@ -606,6 +610,70 @@ private class DefaultBasemapRasterizer(
         // Group by authored layer, then canonical resource and feature order, independently of request order.
         ExtrusionCandidateBatch(candidates.sortedBy { it.layerStyleIndex }, layers.map { it.program.layerStyle() },
             (key + "\n" + content.joinToString("\n")).sha256Hex(), budget.retained)
+    }
+
+    override suspend fun acquireSceneryCandidates(
+        style: PreparedStyle, tiles: List<TileId>, query: List<SceneryLayerQuery>,
+        limits: SceneryLimits, resourceAccess: ResourceAccessMode,
+    ): SceneryCandidateBatch = operation {
+        val compiled = requireOwnedStyle(style)
+        if (tiles.size > limits.maxRequestedTiles) throw SafetyLimitException(
+            "Scenery request has too many tiles", "maxRequestedTiles", limits.maxRequestedTiles.toLong(),
+            tiles.size.toLong(), PipelineStage.RESOURCE_DECODING,
+        )
+        require(query.size <= 32 && query.map { it.sourceLayer }.distinct().size == query.size)
+        val stableQuery = query.map { it.copy(properties = it.properties.toSet()) }.sortedBy { it.sourceLayer }
+        val stableTiles = tiles.distinct().sortedWith(compareBy({ it.z }, { it.x }, { it.y }))
+        stableTiles.forEach { validateTile(it, compiled.policy) }
+        val budget = ExtrusionBudget(limits.decodingLimits())
+        val candidates = ArrayList<SceneryCandidate>()
+        val content = ArrayList<String>()
+        val queryKey = stableQuery.joinToString("\n") { q ->
+            "${q.sourceLayer.length}:${q.sourceLayer}:${q.geometryType}:" +
+                q.properties.sorted().joinToString(",") { "${it.length}:$it" }
+        }
+        val requestKey = ("rentile-scenery-1\n" + compiled.digest + "\n" + queryKey + "\n" +
+            stableTiles.joinToString("\n") { "${it.z}/${it.x}/${it.y}" }).sha256Hex()
+        try {
+            budget.retain(stableTiles.size.toLong() * 96 + stableQuery.sumOf { q ->
+                256L + q.sourceLayer.length * 2L + q.properties.sumOf { it.length * 2L + 96L }
+            })
+            val samples = linkedMapOf<String, com.rohittp.rentile.internal.mvt.VectorTileSample>()
+            if (stableQuery.isNotEmpty()) for (source in compiled.extrusionLayers.map { it.source }.distinctBy { it.idDigest }) {
+                for (tile in stableTiles) source.sampleFor(tile)?.let { sample ->
+                    if (sample.identity !in samples) { budget.retain(256); samples[sample.identity] = sample }
+                }
+            }
+            for (sample in samples.values.sortedBy { it.identity }) {
+                val context = kotlin.coroutines.coroutineContext
+                context.ensureActive()
+                val result = vectorAcquirer.acquireSelective(sample, resourceAccess, limits.maxEncodedTileBytes) { bytes ->
+                    val checkpoint = budget.retained
+                    val candidateCount = candidates.size
+                    try {
+                        CompactExtrusionDecoder(configuration.resourceLimits, budget) { context.ensureActive() }
+                            .decodeScenery(bytes, stableQuery) { feature ->
+                                budget.retain(192)
+                                candidates += SceneryCandidate(
+                                    TileId(sample.sourceZ, sample.sourceX, sample.sourceY), sample.source.idDigest,
+                                    feature.layer, feature.extent, feature.index, feature.id, feature.geometry, feature.properties,
+                                )
+                            }
+                    } catch (error: Throwable) {
+                        while (candidates.size > candidateCount) candidates.removeAt(candidates.lastIndex)
+                        budget.restore(checkpoint)
+                        throw error
+                    }
+                }
+                content += sample.identity + ":" + result.first
+            }
+            SceneryCandidateBatch(candidates.toList(),
+                (requestKey + "\n" + content.joinToString("\n")).sha256Hex(), budget.retained)
+        } catch (error: com.rohittp.rentile.internal.mvt.MvtDecodingException) {
+            if (error.limitName != null) throw SafetyLimitException("Scenery exceeds its budget", error.limitName,
+                error.limit!!, error.observed!!, PipelineStage.RESOURCE_DECODING)
+            throw error
+        }
     }
 
     override fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor> =
