@@ -31,6 +31,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Test manual release version guard
+        run: python3 -m unittest discover -s tools/tests -p test_dispatch_version.py
+
       - id: release
         name: Resolve the next public version
         shell: bash
@@ -123,6 +126,12 @@ jobs:
             done
             source="patch increment from published $published_latest"
           fi
+
+          # A manually dispatched backport may not acquire the version/API identity of a newer
+          # main release that became public while it queued. Main retains automatic patch policy.
+          python3 tools/check_dispatch_version.py \
+            --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" \
+            --declared "$declared" --resolved "$version"
 
           echo "Resolved version $version ($source)" >> "$GITHUB_STEP_SUMMARY"
           echo "version=$version" >> "$GITHUB_OUTPUT"
