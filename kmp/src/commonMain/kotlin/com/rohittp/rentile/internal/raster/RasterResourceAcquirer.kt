@@ -1,5 +1,6 @@
 package com.rohittp.rentile.internal.raster
 
+import com.rohittp.rentile.internal.requireDemContent
 import com.rohittp.rentile.DiagnosticCode
 import com.rohittp.rentile.DiagnosticSeverity
 import com.rohittp.rentile.MetricName
@@ -122,15 +123,29 @@ internal class RasterResourceAcquirer(
 
         val miss = cacheDiagnostic(DiagnosticCode.RESOURCE_CACHE_MISS, sanitizedId, sample)
         configuration.diagnosticSink.recordSafely(miss)
-        val shared = singleFlight.run(
-            key = key,
-            onJoin = {
-                configuration.metricsSink.recordSafely(
-                    RentileMetric(MetricName.SINGLE_FLIGHT_JOIN, resourceClass = sample.source.resourceClass),
-                )
-            },
-        ) {
-            fetchValidateAndStore(sample, url, sanitizedId, key, retainPixels)
+        val shared = try {
+            singleFlight.run(
+                key = key,
+                onJoin = {
+                    configuration.metricsSink.recordSafely(
+                        RentileMetric(MetricName.SINGLE_FLIGHT_JOIN, resourceClass = sample.source.resourceClass),
+                    )
+                },
+            ) {
+                fetchValidateAndStore(sample, url, sanitizedId, key, retainPixels)
+            }
+        } catch (failure: ResourceAcquisitionException) {
+            // A flight can back multiple overzoom output tiles. Absence belongs to this caller's
+            // output tile, not whichever sample happened to start their shared source request.
+            if (failure.resourceClass != ResourceClass.DEM_TILE || failure.statusCode != 204) throw failure
+            throw ResourceAcquisitionException(
+                message = "DEM source returned no content",
+                resourceClass = failure.resourceClass,
+                sanitizedResourceId = failure.sanitizedResourceId,
+                statusCode = failure.statusCode,
+                affectedTiles = listOf(sample.outputTile),
+                cause = failure,
+            )
         }
         val decoded = shared.decoded?.takeIf { !retainPixels || it.rgba != null }
             ?: validateRasterOrThrow(shared.bytes, sanitizedId, sample, retainPixels)
@@ -224,6 +239,7 @@ internal class RasterResourceAcquirer(
             )
         }
         val bytes = response.body
+        requireDemContent(response.statusCode, bytes.size, sample.source.resourceClass, sanitizedId, sample.outputTile)
         if (bytes.size.toLong() > configuration.resourceLimits.maxTileBytes) {
             throw SafetyLimitException(
                 message = "Raster tile exceeds the configured encoded byte limit",
