@@ -168,6 +168,7 @@ internal suspend fun RentileConfiguration.fetchRawResourceForWarm(
     }
     // Copied out once: TransportResponse.body hands back a fresh array on every read.
     val bytes = response.body
+    requireDemContent(response.statusCode, bytes.size, resourceClass, sanitizedId, outputTile)
     if (bytes.size.toLong() > resourceLimits.maxTileBytes) {
         throw SafetyLimitException(
             message = "Raw resource exceeds the configured encoded byte limit",
