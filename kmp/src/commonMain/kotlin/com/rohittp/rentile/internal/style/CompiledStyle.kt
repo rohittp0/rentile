@@ -556,6 +556,23 @@ internal class CompiledPreparedStyle(
     val spriteReference: SpriteReference = SpriteReference.Absent,
     val extrusionLayers: List<CompiledExtrusionLayer> = emptyList(),
 ) : PreparedStyle {
+    /** Draw-only variant; labels, terrain acquisition and the original style remain unchanged. */
+    fun withoutHillshade(): CompiledPreparedStyle = CompiledPreparedStyle(
+        owner = owner,
+        digest = digest,
+        policy = policy,
+        diagnostics = diagnostics,
+        drawLayers = drawLayers.filterNot { it is HillshadeDrawLayer },
+        labelLayers = labelLayers,
+        terrainSource = terrainSource,
+        groundRadiance = groundRadiance,
+        spriteAtlas = spriteAtlas,
+        glyphsTemplate = glyphsTemplate,
+        secretContext = secretContext,
+        spriteReference = spriteReference,
+        extrusionLayers = extrusionLayers,
+    )
+
     /**
      * Label layers recompiled per `text-field` override, keyed by the override's canonical JSON.
      * Published by compare-and-set, so two first uses racing each other may both compile and the

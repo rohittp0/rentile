@@ -320,6 +320,7 @@ private class DefaultBasemapRasterizer(
             append(tile.y)
             append('\n')
             append(options.outputSizePx)
+            if (!options.includeHillshade) append("\nhillshade:omit")
         }.sha256Hex()
     }
 
@@ -330,7 +331,8 @@ private class DefaultBasemapRasterizer(
         resourceAccess: ResourceAccessMode,
         substitutionPolicy: TileSubstitutionPolicy,
     ): PreparedBatch = operation {
-        val compiledStyle = requireOwnedStyle(style)
+        val ownedStyle = requireOwnedStyle(style)
+        val compiledStyle = if (options.includeHillshade) ownedStyle else ownedStyle.withoutHillshade()
         val stableTiles = tiles.toList()
         stableTiles.forEach { validateTile(it, compiledStyle.policy) }
         val duplicate = stableTiles.groupingBy { it }.eachCount().entries.firstOrNull { it.value > 1 }?.key
@@ -1776,6 +1778,7 @@ private class DefaultBasemapRasterizer(
                 append(tile.y)
                 append('\n')
                 append(options.outputSizePx)
+                if (!options.includeHillshade) append("\nhillshade:omit")
                 for (resource in resources.raster[tile].orEmpty().sortedBy { it.sample.identity }) {
                     append("\nraster:")
                     append(resource.sample.identity)
@@ -2357,12 +2360,10 @@ private class DefaultBasemapRasterizer(
         val shadow = evaluatedColor(layer.shadowColor.evaluate(context), "hillshade-shadow-color", tile)
         val encoding = layer.source.demEncoding ?: DemEncoding.MAPBOX
 
-        // One entry per source tile this draw reads, and every one of them is this draw's own:
-        // Skia's own header says an SkBitmap is not thread safe and that each thread must have its
-        // own, while threads may share the pixels behind it. What the batch shares is therefore the
-        // image these are read from, not these.
-        val decoded = mutableMapOf<Pair<Int, Int>, Bitmap>()
-        val ownedBitmaps = mutableListOf<Bitmap>()
+        // Copy each source once. Per-sample Bitmap.getColor, width and height cross into native
+        // code millions of times per output tile on Android; the managed sampler below preserves
+        // those exact N32-decoded colours without native work in the pixel loop.
+        val decoded = mutableMapOf<Pair<Int, Int>, HillshadeDemPixels>()
         try {
             for (resource in resources) {
                 // Shared only when this batch's draws read the same DEM more than once, which is
@@ -2377,8 +2378,17 @@ private class DefaultBasemapRasterizer(
                     .also { sourceTileDecodeRecorderForTest?.invoke(ResourceClass.DEM_TILE) }
                 try {
                     val bitmap = demPixels(image, resource, tile)
-                    ownedBitmaps += bitmap
-                    decoded[resource.sample.sourceX to resource.sample.sourceY] = bitmap
+                    try {
+                        decoded[resource.sample.sourceX to resource.sample.sourceY] =
+                            HillshadeDemPixels.read(bitmap) ?: throw ResourceDecodeException(
+                                message = "Prepared DEM pixels cannot be read",
+                                resourceClass = ResourceClass.DEM_TILE,
+                                sanitizedResourceId = resource.sample.identity.sha256Hex(),
+                                affectedTiles = listOf(tile),
+                            )
+                    } finally {
+                        bitmap.close()
+                    }
                 } finally {
                     if (shared == null) image.close()
                 }
@@ -2389,7 +2399,7 @@ private class DefaultBasemapRasterizer(
             val sourceHeight = centerBitmap.height
             val sourceDimension = 1L shl center.sample.sourceZ
 
-            fun heightAt(sourcePixelX: Int, sourcePixelY: Int): Double {
+            fun sourceHeightAt(sourcePixelX: Int, sourcePixelY: Int): Double {
                 val deltaX = floor(sourcePixelX.toDouble() / sourceWidth).toInt()
                 val deltaY = floor(sourcePixelY.toDouble() / sourceHeight).toInt()
                 val sourceX = floorMod(center.sample.sourceX.toLong() + deltaX, sourceDimension).toInt()
@@ -2398,63 +2408,56 @@ private class DefaultBasemapRasterizer(
                 val localX = floorMod(sourcePixelX.toLong(), sourceWidth.toLong()).toInt()
                 val localY = sourcePixelY.coerceIn(0, sourceHeight - 1)
                     .let { value -> if (bitmap === centerBitmap && sourceY != center.sample.sourceY) value else floorMod(sourcePixelY.toLong(), sourceHeight.toLong()).toInt() }
-                val color = bitmap.getColor(localX.coerceIn(0, bitmap.width - 1), localY.coerceIn(0, bitmap.height - 1))
-                val red = color ushr 16 and 0xff
-                val green = color ushr 8 and 0xff
-                val blue = color and 0xff
-                return when (encoding) {
-                    DemEncoding.MAPBOX -> -10_000.0 + (red * 65_536 + green * 256 + blue) * 0.1
-                    DemEncoding.TERRARIUM -> red * 256.0 + green + blue / 256.0 - 32_768.0
-                }
+                return bitmap.heightAt(localX, localY, encoding)
             }
 
-            val rgba = ByteArray(logicalSizePx * logicalSizePx * 4)
+            val sourceXs = IntArray(logicalSizePx) { outputX ->
+                ((center.sample.childX + (outputX + 0.5) / logicalSizePx) * sourceWidth /
+                    center.sample.childScale - 0.5).roundToInt()
+            }
+            val sourceYs = IntArray(logicalSizePx) { outputY ->
+                ((center.sample.childY + (outputY + 0.5) / logicalSizePx) * sourceHeight /
+                    center.sample.childScale - 0.5).roundToInt()
+            }
+            val heightAt = cachedHillshadeHeights(sourceXs, sourceYs, logicalSizePx, ::sourceHeightAt)
             val lightAltitude = PI / 4.0
             val lightAzimuth = 335.0 * PI / 180.0
             val flatIllumination = sin(lightAltitude)
-            for (outputY in 0 until logicalSizePx) {
-                val sourceY = (
-                    (center.sample.childY + (outputY + 0.5) / logicalSizePx) * sourceHeight / center.sample.childScale - 0.5
-                    ).roundToInt()
-                val globalSourceY = center.sample.sourceY.toDouble() * sourceHeight + sourceY
-                val worldY = (globalSourceY + 0.5) / (sourceDimension * sourceHeight)
-                val latitude = atan(sinh(PI * (1.0 - 2.0 * worldY)))
-                val metersPerPixel = max(
-                    0.01,
-                    EARTH_CIRCUMFERENCE_METERS * cos(latitude) / (sourceDimension * sourceWidth),
-                )
-                for (outputX in 0 until logicalSizePx) {
-                    val sourceX = (
-                        (center.sample.childX + (outputX + 0.5) / logicalSizePx) * sourceWidth / center.sample.childScale - 0.5
-                        ).roundToInt()
-                    val left = heightAt(sourceX - 1, sourceY)
-                    val right = heightAt(sourceX + 1, sourceY)
-                    val up = heightAt(sourceX, sourceY - 1)
-                    val down = heightAt(sourceX, sourceY + 1)
-                    val gradientX = (right - left) / (2.0 * metersPerPixel)
-                    val gradientY = (down - up) / (2.0 * metersPerPixel)
-                    val slope = atan(exaggeration * hypot(gradientX, gradientY))
-                    val aspect = atan2(gradientY, -gradientX)
-                    val illumination = sin(lightAltitude) * cos(slope) +
-                        cos(lightAltitude) * sin(slope) * cos(lightAzimuth - aspect)
-                    val delta = illumination - flatIllumination
-                    val accentAlpha = (sin(slope) * 0.28).coerceIn(0.0, 1.0)
-                    val shadeColor: CompiledColor
-                    val shadeAlpha: Double
-                    if (delta >= 0.0) {
-                        shadeColor = highlight
-                        shadeAlpha = (delta / (1.0 - flatIllumination)).coerceIn(0.0, 1.0)
-                    } else {
-                        shadeColor = shadow
-                        shadeAlpha = (-delta / (1.0 + flatIllumination)).coerceIn(0.0, 1.0)
-                    }
-                    val color = compositeHillshade(accent, accentAlpha, shadeColor, shadeAlpha)
-                    val offset = (outputY * logicalSizePx + outputX) * 4
-                    rgba[offset] = color.red.toByte()
-                    rgba[offset + 1] = color.green.toByte()
-                    rgba[offset + 2] = color.blue.toByte()
-                    rgba[offset + 3] = color.alpha.toByte()
+            var previousSourceY = Int.MIN_VALUE
+            var metersPerPixel = 0.0
+            val rgba = rasterizeHillshadeSamples(sourceXs, sourceYs) { sourceX, sourceY ->
+                if (sourceY != previousSourceY) {
+                    previousSourceY = sourceY
+                    val globalSourceY = center.sample.sourceY.toDouble() * sourceHeight + sourceY
+                    val worldY = (globalSourceY + 0.5) / (sourceDimension * sourceHeight)
+                    val latitude = atan(sinh(PI * (1.0 - 2.0 * worldY)))
+                    metersPerPixel = max(
+                        0.01,
+                        EARTH_CIRCUMFERENCE_METERS * cos(latitude) / (sourceDimension * sourceWidth),
+                    )
                 }
+                val left = heightAt(sourceX - 1, sourceY)
+                val right = heightAt(sourceX + 1, sourceY)
+                val up = heightAt(sourceX, sourceY - 1)
+                val down = heightAt(sourceX, sourceY + 1)
+                val gradientX = (right - left) / (2.0 * metersPerPixel)
+                val gradientY = (down - up) / (2.0 * metersPerPixel)
+                val slope = atan(exaggeration * hypot(gradientX, gradientY))
+                val aspect = atan2(gradientY, -gradientX)
+                val illumination = sin(lightAltitude) * cos(slope) +
+                    cos(lightAltitude) * sin(slope) * cos(lightAzimuth - aspect)
+                val delta = illumination - flatIllumination
+                val accentAlpha = (sin(slope) * 0.28).coerceIn(0.0, 1.0)
+                val shadeColor: CompiledColor
+                val shadeAlpha: Double
+                if (delta >= 0.0) {
+                    shadeColor = highlight
+                    shadeAlpha = (delta / (1.0 - flatIllumination)).coerceIn(0.0, 1.0)
+                } else {
+                    shadeColor = shadow
+                    shadeAlpha = (-delta / (1.0 + flatIllumination)).coerceIn(0.0, 1.0)
+                }
+                compositeHillshade(accent, accentAlpha, shadeColor, shadeAlpha)
             }
             val imageInfo = ImageInfo(logicalSizePx, logicalSizePx, ColorType.RGBA_8888, ColorAlphaType.UNPREMUL)
             val hillshade = Image.makeRaster(imageInfo, rgba, logicalSizePx * 4)
@@ -2471,9 +2474,8 @@ private class DefaultBasemapRasterizer(
                 hillshade.close()
             }
         } finally {
-            // The owned list rather than the map's values: two resources can land on one source
-            // coordinate, and the one the map dropped still has to be closed.
-            ownedBitmaps.forEach(Bitmap::close)
+            // Bulk copies are ordinary managed arrays, owned only for this draw.
+            decoded.clear()
         }
     }
 

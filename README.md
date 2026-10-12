@@ -6,7 +6,12 @@ Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a
 
 Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
-`0.13.0` is the feature version this source tree declares. It adds opt-in host-owned extrusion
+`0.15.0` adds opt-in temporary coverage without hillshade and reduces CPU hillshade sampling
+work. Full-detail output remains the default, with unchanged cache keys. The appended
+`RenderOptions` field changes constructor/copy ABI, so hosts must recompile. See the
+[0.15.0 migration guide](docs/migrations/0.15.0.md).
+
+`0.13.0` added host scenery support. It adds opt-in host-owned extrusion
 polygons and style evaluation, with selective decoding and per-operation memory limits. Existing
 profiles retain their raster behavior. See the [0.13.0 migration guide](docs/migrations/0.13.0.md)
 and [ADR 0037](docs/adr/0037-hand-compact-extrusion-polygons-to-the-host.md). Publication is complete

@@ -185,6 +185,8 @@ public enum class RenderPriority {
  */
 public data class RenderOptions(
     public val outputSizePx: Int = DEFAULT_OUTPUT_SIZE_PX,
+    /** Allows hosts to prepare temporary, separately cached map coverage before hillshade. */
+    public val includeHillshade: Boolean = true,
 ) {
     init {
         require(outputSizePx in SUPPORTED_OUTPUT_SIZES) {
