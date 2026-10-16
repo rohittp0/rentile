@@ -6,6 +6,10 @@ Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a
 
 Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
+`0.15.1` upgrades Skiko and the bundled Android native libraries to `0.150.2`. Consumers that
+depend on Skiko directly must align with Rentile's strict version constraint. See the
+[0.15.1 migration guide](docs/migrations/0.15.1.md).
+
 `0.15.0` adds opt-in temporary coverage without hillshade and reduces CPU hillshade sampling
 work. Full-detail output remains the default, with unchanged cache keys. The appended
 `RenderOptions` field changes constructor/copy ABI, so hosts must recompile. See the
