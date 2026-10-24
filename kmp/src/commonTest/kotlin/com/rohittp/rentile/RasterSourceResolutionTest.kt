@@ -31,6 +31,48 @@ class RasterSourceResolutionTest {
     }
 
     @Test
+    fun adjustedSourceMinzoomWarmsAndRendersBelowItsNumericOutputZoom() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests)
+        try {
+            val style = rasterizer.prepare(style(256, sourceMinZoom = 10))
+            val tiles = listOf(TileId(9, 3, 5))
+            val options = RenderOptions(512)
+            assertEquals(4, rasterizer.warmRawResources(style, tiles, options).fetched)
+            assertEquals(setOf("10/6/10", "10/7/10", "10/6/11", "10/7/11"), requests.toSet())
+            requests.clear()
+            val batch = rasterizer.prepareBatch(style, tiles, options, ResourceAccessMode.CACHE_ONLY)
+            try {
+                assertTrue(requests.isEmpty())
+                assertPixels(rasterizer.render(batch).tiles.single().pngBytes,
+                    listOf(64 to 64, 448 to 448), listOf(color(6, 10), color(7, 11)))
+            } finally { batch.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun adjustedSourceMinzoomDoesNotBypassSourceFloorOrLayerZoomRange() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests)
+        try {
+            for ((input, outputSize, tile) in listOf(
+                Triple(style(256, sourceMinZoom = 10), 512, TileId(8, 3, 5)),
+                Triple(style(512, sourceMinZoom = 10), 256, TileId(10, 3, 5)),
+                Triple(style(256, sourceMinZoom = 10, layerMinZoom = 10), 512, TileId(9, 3, 5)),
+                Triple(style(256, sourceMinZoom = 10, layerMaxZoom = 9), 512, TileId(9, 3, 5)),
+            )) {
+                val style = rasterizer.prepare(input)
+                val batch = rasterizer.prepareBatch(style, listOf(tile), RenderOptions(outputSize))
+                try {
+                    assertTrue(requests.isEmpty())
+                    assertPixels(rasterizer.render(batch).tiles.single().pngBytes,
+                        listOf(32 to 32), listOf(Color.TRANSPARENT))
+                } finally { batch.close() }
+            }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
     fun highResolutionRaster512AcquiresSixteenChildrenWithoutShiftingStyleZoom() = runTest {
         val requests = mutableListOf<String>()
         val rasterizer = renderer(requests, payloadSize = 512)
@@ -271,8 +313,8 @@ class RasterSourceResolutionTest {
         }, rawResourceStore = InMemoryRawResourceStore(), executionPolicy = executionPolicy))
     }
 
-    private fun style(tileSize: Int, sourceMaxZoom: Int = 22, layerMaxZoom: Int = 31, sourceBounds: String? = null): StyleInput =
-        StyleInput.InlineJson("""{"version":8,"sources":{"r":{"type":"raster","tileSize":$tileSize,"maxzoom":$sourceMaxZoom${sourceBounds?.let { ",\"bounds\":$it" }.orEmpty()},"tiles":["https://raster.test/{z}/{x}/{y}.png"]}},"layers":[{"id":"r","type":"raster","source":"r","maxzoom":$layerMaxZoom,"paint":{"raster-resampling":"nearest"}}]}""")
+    private fun style(tileSize: Int, sourceMaxZoom: Int = 22, layerMaxZoom: Int = 31, sourceBounds: String? = null, sourceMinZoom: Int = 0, layerMinZoom: Int = 0): StyleInput =
+        StyleInput.InlineJson("""{"version":8,"sources":{"r":{"type":"raster","tileSize":$tileSize,"minzoom":$sourceMinZoom,"maxzoom":$sourceMaxZoom${sourceBounds?.let { ",\"bounds\":$it" }.orEmpty()},"tiles":["https://raster.test/{z}/{x}/{y}.png"]}},"layers":[{"id":"r","type":"raster","source":"r","minzoom":$layerMinZoom,"maxzoom":$layerMaxZoom,"paint":{"raster-resampling":"nearest"}}]}""")
 
     private fun color(x: Int, y: Int): Int = Color.makeRGB((x * 17) % 256, (y * 19) % 256, 60)
 

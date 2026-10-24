@@ -13,7 +13,10 @@ directly into its own output subrectangle. Children outside source bounds are om
 that destination cell transparent; the remaining cells keep their original indices. It allocates no full native mosaic. At/below the output
 zoom, the existing ancestor window mapping crops the covering source tile. At source maxzoom the
 renderer can only magnify those available pixels; it never fabricates more native imagery.
-Style/layer evaluation remains at the output tile's zoom. Vector cartography, hillshade and DEM
+Style/layer evaluation remains at the output tile's zoom. Imagery source minzoom is checked only
+against the adjusted source zoom, never against the output zoom: a 256px source starting at z10
+is available to a 512px output tile at z9, while the layer's own minzoom/maxzoom still gate z9.
+Vector cartography, hillshade and DEM
 sampling retain their existing semantics; imagery density must not move the elevation grid.
 
 This supersedes ADR 0030's raster magnification-only clause. That optimization selected one source

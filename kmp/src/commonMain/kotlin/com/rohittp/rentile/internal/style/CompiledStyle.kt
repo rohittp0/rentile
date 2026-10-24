@@ -153,10 +153,7 @@ internal data class RasterDrawLayer(
     val resampling: RasterResampling,
     override val minZoom: Double,
     override val maxZoom: Double,
-) : CompiledDrawLayer {
-    override fun isActiveAt(zoom: Int): Boolean =
-        zoom >= minZoom && zoom < maxZoom && zoom >= source.minZoom
-}
+) : CompiledDrawLayer
 
 internal data class HillshadeDrawLayer(
     val source: CompiledRasterSource,
