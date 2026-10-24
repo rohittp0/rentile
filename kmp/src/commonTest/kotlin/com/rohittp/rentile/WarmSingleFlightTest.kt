@@ -51,7 +51,7 @@ class WarmSingleFlightTest {
             val style = rasterizer.prepare(rasterStyle())
             val tile = TileId(1, 0, 0)
 
-            val warm = async { rasterizer.warmRawResources(style, listOf(tile)) }
+            val warm = async { rasterizer.warmRawResources(style, listOf(tile), RenderOptions(256)) }
             warmInFlight.await()
             val batch = async { rasterizer.prepareBatch(style, listOf(tile), RenderOptions(256)) }
             // The acquisition reached the prefetch's flight rather than the transport: releasing
@@ -104,7 +104,7 @@ class WarmSingleFlightTest {
             val style = rasterizer.prepare(vectorStyle())
             val tile = TileId(1, 0, 0)
 
-            val warm = async { rasterizer.warmRawResources(style, listOf(tile)) }
+            val warm = async { rasterizer.warmRawResources(style, listOf(tile), RenderOptions(256)) }
             warmInFlight.await()
             val batch = async { rasterizer.prepareBatch(style, listOf(tile), RenderOptions(256)) }
             acquisitionJoined.await()
@@ -157,7 +157,7 @@ class WarmSingleFlightTest {
             acquisitionInFlight.await()
             // The prefetch must return without waiting: it holds an exchange permit while it runs,
             // so waiting here for work that needs a permit of its own could park the whole gate.
-            val summary = rasterizer.warmRawResources(style, listOf(tile))
+            val summary = rasterizer.warmRawResources(style, listOf(tile), RenderOptions(256))
             assertEquals(0, summary.fetched)
             assertEquals(1, summary.alreadyCached, "nothing to fetch, so nothing was fetched")
             assertEquals(0, summary.failed)
@@ -198,7 +198,7 @@ class WarmSingleFlightTest {
         try {
             val style = rasterizer.prepare(rasterStyle())
 
-            val summary = rasterizer.warmRawResources(style, listOf(TileId(1, 0, 0)))
+            val summary = rasterizer.warmRawResources(style, listOf(TileId(1, 0, 0)), RenderOptions(256))
 
             assertEquals(1, summary.fetched)
             assertEquals(0, summary.alreadyCached)
@@ -244,7 +244,7 @@ class WarmSingleFlightTest {
         try {
             val style = rasterizer.prepare(rasterStyle())
 
-            val warm = async { rasterizer.warmRawResources(style, listOf(TileId(1, 0, 0))) }
+            val warm = async { rasterizer.warmRawResources(style, listOf(TileId(1, 0, 0)), RenderOptions(256)) }
             throttled.await()
             val batch = rasterizer.prepareBatch(style, listOf(TileId(1, 1, 0)), RenderOptions(256))
             batch.close()

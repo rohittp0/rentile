@@ -22,8 +22,11 @@ class ProvisionalHillshadeTest {
             val provisional = RenderOptions(512, includeHillshade = false)
             val legacyKey = "rentile-output-request-3\n${style.digest}\n15/5000/5000\n512"
                 .encodeUtf8().sha256().hex()
-            assertEquals(legacyKey, rasterizer.outputRequestKey(style, tile, full))
-            assertNotEquals(legacyKey, rasterizer.outputRequestKey(style, tile, provisional))
+            val currentKey = "rentile-output-request-4\n${style.digest}\n15/5000/5000\n512"
+                .encodeUtf8().sha256().hex()
+            assertNotEquals(legacyKey, rasterizer.outputRequestKey(style, tile, full))
+            assertEquals(currentKey, rasterizer.outputRequestKey(style, tile, full))
+            assertNotEquals(currentKey, rasterizer.outputRequestKey(style, tile, provisional))
             val batch = rasterizer.prepareBatch(style, listOf(tile), provisional)
             try {
                 val output = rasterizer.renderRaw(batch).tiles.single()

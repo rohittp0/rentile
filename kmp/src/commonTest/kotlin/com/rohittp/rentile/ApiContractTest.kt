@@ -244,6 +244,21 @@ class ApiContractTest {
     }
 
     @Test
+    fun legacyImplementationsKeepWorkingWithAdditiveRasterMethods() = runTest {
+        val legacy = LegacyRasterizer()
+        val style = object : PreparedStyle {
+            override val digest: String = "digest"
+            override val policy: CompatibilityPolicy = CompatibilityPolicy.Default
+            override val diagnostics: List<RenderDiagnostic> = emptyList()
+        }
+        assertFalse(legacy.hasRasterImagery(style))
+        assertEquals(RawWarmSummary(1, 2, 3), legacy.warmRawResources(
+            style, listOf(TileId(0, 0, 0)), RenderOptions(1024), ResourceAccessMode.CACHE_ONLY,
+        ))
+        assertEquals(ResourceAccessMode.CACHE_ONLY, legacy.warmResourceAccess)
+    }
+
+    @Test
     fun theGlyphAtlasPolicyDefaultsToWhatEveryEarlierReleasePacked() {
         val policy = LabelGlyphAtlasPolicy()
 
@@ -260,6 +275,7 @@ class ApiContractTest {
 
     /** Overrides exactly the members `BasemapRasterizer` had before `acquireSpriteAtlas`. */
     private class LegacyRasterizer : BasemapRasterizer {
+        var warmResourceAccess: ResourceAccessMode? = null
         override suspend fun prepare(style: StyleInput, policy: CompatibilityPolicy): PreparedStyle = TODO()
         override fun outputRequestKey(style: PreparedStyle, tile: TileId, options: RenderOptions): String = TODO()
         override suspend fun prepareBatch(
@@ -275,7 +291,10 @@ class ApiContractTest {
             style: PreparedStyle,
             tiles: List<TileId>,
             resourceAccess: ResourceAccessMode,
-        ): RawWarmSummary = TODO()
+        ): RawWarmSummary {
+            warmResourceAccess = resourceAccess
+            return RawWarmSummary(1, 2, 3)
+        }
         override suspend fun acquireLabelTiles(
             style: PreparedStyle,
             tiles: List<TileId>,

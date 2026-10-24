@@ -1183,6 +1183,9 @@ public data class RenderBatch(
 
 /** Public renderer boundary. Implementations are process-local resource owners. */
 public interface BasemapRasterizer : AutoCloseable {
+    /** Whether the prepared style retains visible raster imagery layers, excluding DEM/hillshade. */
+    public fun hasRasterImagery(style: PreparedStyle): Boolean = false
+
     /**
      * Selectively acquire source-backed scenery geometry from the authored extrusion sources.
      * No placement, density, projection or invented sidewalks. All-or-error, canonical source
@@ -1304,6 +1307,14 @@ public interface BasemapRasterizer : AutoCloseable {
         tiles: List<TileId>,
         resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
     ): RawWarmSummary
+
+    /** Warms the same imagery source closure as prepareBatch with these output options. */
+    public suspend fun warmRawResources(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        options: RenderOptions,
+        resourceAccess: ResourceAccessMode = ResourceAccessMode.NORMAL,
+    ): RawWarmSummary = warmRawResources(style, tiles, resourceAccess)
 
     public suspend fun acquireLabelTiles(
         style: PreparedStyle,

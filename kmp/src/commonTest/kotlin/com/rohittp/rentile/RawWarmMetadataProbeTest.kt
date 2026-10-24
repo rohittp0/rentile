@@ -30,9 +30,9 @@ class RawWarmMetadataProbeTest {
             val style = rasterizer.prepare(rasterStyle())
             val tiles = listOf(TileId(2, 0, 0), TileId(2, 1, 0), TileId(2, 0, 1), TileId(2, 1, 1))
 
-            assertEquals(tiles.size, rasterizer.warmRawResources(style, tiles).fetched)
+            assertEquals(tiles.size, rasterizer.warmRawResources(style, tiles, RenderOptions(256)).fetched)
             store.resetCounts()
-            val second = rasterizer.warmRawResources(style, tiles)
+            val second = rasterizer.warmRawResources(style, tiles, RenderOptions(256))
 
             assertEquals(tiles.size, second.alreadyCached)
             assertEquals(0, second.fetched)
@@ -61,8 +61,8 @@ class RawWarmMetadataProbeTest {
             val style = rasterizer.prepare(rasterStyle())
             val tiles = listOf(TileId(2, 0, 0))
 
-            assertEquals(1, rasterizer.warmRawResources(style, tiles).fetched)
-            assertEquals(1, rasterizer.warmRawResources(style, tiles).alreadyCached)
+            assertEquals(1, rasterizer.warmRawResources(style, tiles, RenderOptions(256)).fetched)
+            assertEquals(1, rasterizer.warmRawResources(style, tiles, RenderOptions(256)).alreadyCached)
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()

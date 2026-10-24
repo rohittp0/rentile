@@ -93,6 +93,7 @@ import com.rohittp.rentile.internal.raster.RasterResource
 import com.rohittp.rentile.internal.raster.RasterResourceAcquirer
 import com.rohittp.rentile.internal.raster.RasterSample
 import com.rohittp.rentile.internal.raster.ancestor as rasterAncestor
+import com.rohittp.rentile.internal.raster.imagerySamplesFor
 import com.rohittp.rentile.internal.raster.composeRasterChildren
 import com.rohittp.rentile.internal.raster.immediateChildren as immediateRasterChildren
 import com.rohittp.rentile.internal.raster.rasterAncestorSubstitute
@@ -201,6 +202,8 @@ internal fun createBasemapRasterizer(
 
 private const val EARTH_CIRCUMFERENCE_METERS = 40_075_016.68557849
 private const val MAX_ANCESTOR_DISTANCE = 2
+// Bounds planning/queued encoded inputs before acquisition, including large declared64 mosaics.
+private const val MAX_RASTER_SAMPLES_PER_BATCH = 4096
 
 /**
  * Bump this whenever a change to label evaluation, text layout or glyph-atlas packing would
@@ -310,7 +313,7 @@ private class DefaultBasemapRasterizer(
         val compiled = requireOwnedStyle(style)
         validateTile(tile, compiled.policy)
         return buildString {
-            append("rentile-output-request-3\n")
+            append("rentile-output-request-4\n")
             append(compiled.digest)
             append('\n')
             append(tile.z)
@@ -340,6 +343,7 @@ private class DefaultBasemapRasterizer(
         val preparedResources = prepareBatchResources(
             style = compiledStyle,
             tiles = stableTiles,
+            options = options,
             resourceAccess = resourceAccess,
             substitutionPolicy = substitutionPolicy,
         )
@@ -372,23 +376,25 @@ private class DefaultBasemapRasterizer(
     private suspend fun prepareBatchResources(
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
+        options: RenderOptions,
         resourceAccess: ResourceAccessMode,
         substitutionPolicy: TileSubstitutionPolicy,
     ): PreparedResources = if (
         resourceAccess == ResourceAccessMode.CACHE_SUBSTITUTE_THEN_NETWORK
     ) {
-        prepareCacheSubstituteThenNetwork(style, tiles, substitutionPolicy)
+        prepareCacheSubstituteThenNetwork(style, tiles, options, substitutionPolicy)
     } else {
-        prepareResources(style, tiles, resourceAccess, substitutionPolicy)
+        prepareResources(style, tiles, options, resourceAccess, substitutionPolicy)
     }
 
     private suspend fun prepareResources(
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
+        options: RenderOptions,
         resourceAccess: ResourceAccessMode,
         substitutionPolicy: TileSubstitutionPolicy,
     ): PreparedResources {
-        val (rasterPlan, vectorPlan) = planResources(style, tiles, resourceAccess)
+        val (rasterPlan, vectorPlan) = planResources(style, tiles, options, resourceAccess)
         validateSubstitutionAllowance(rasterPlan, vectorPlan, substitutionPolicy)
         return resolveResources(rasterPlan, vectorPlan, resourceAccess)
     }
@@ -401,11 +407,13 @@ private class DefaultBasemapRasterizer(
     private suspend fun prepareCacheSubstituteThenNetwork(
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
+        options: RenderOptions,
         substitutionPolicy: TileSubstitutionPolicy,
     ): PreparedResources {
         val (cachedRaster, cachedVector) = planResources(
             style,
             tiles,
+            options,
             ResourceAccessMode.CACHE_ONLY,
         )
         val cacheFailures = cachedRaster.failures() + cachedVector.failures()
@@ -462,6 +470,7 @@ private class DefaultBasemapRasterizer(
             prepared += prepareResources(
                 style = style,
                 tiles = networkTiles,
+                options = options,
                 resourceAccess = ResourceAccessMode.NORMAL,
                 substitutionPolicy = TileSubstitutionPolicy(remainingSubstitutedTiles),
             )
@@ -472,9 +481,10 @@ private class DefaultBasemapRasterizer(
     private suspend fun planResources(
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
+        options: RenderOptions,
         resourceAccess: ResourceAccessMode,
     ): Pair<RasterAcquisitionPlan, VectorAcquisitionPlan> = supervisorScope {
-        val raster = async { planRasterResources(style, tiles, resourceAccess) }
+        val raster = async { planRasterResources(style, tiles, options, resourceAccess) }
         val vector = async { planVectorResources(style, tiles, resourceAccess) }
         raster.await() to vector.await()
     }
@@ -681,18 +691,29 @@ private class DefaultBasemapRasterizer(
     override fun labelLayerDescriptors(style: PreparedStyle): List<LabelLayerDescriptor> =
         requireOwnedStyle(style).labelLayers.map { it.descriptor }
 
+    override fun hasRasterImagery(style: PreparedStyle): Boolean =
+        requireOwnedStyle(style).drawLayers.any { it is RasterDrawLayer }
+
     override suspend fun warmRawResources(
         style: PreparedStyle,
         tiles: List<TileId>,
         resourceAccess: ResourceAccessMode,
+    ): RawWarmSummary = warmRawResources(style, tiles, RenderOptions(), resourceAccess)
+
+    override suspend fun warmRawResources(
+        style: PreparedStyle,
+        tiles: List<TileId>,
+        options: RenderOptions,
+        resourceAccess: ResourceAccessMode,
     ): RawWarmSummary = operation {
-        val compiledStyle = requireOwnedStyle(style)
+        val ownedStyle = requireOwnedStyle(style)
+        val compiledStyle = if (options.includeHillshade) ownedStyle else ownedStyle.withoutHillshade()
         val stableTiles = tiles.toList()
         stableTiles.forEach { validateTile(it, compiledStyle.policy) }
         // Deduplicated by resource identity, not by tile: adjacent output tiles routinely share one
         // source sample, and warming it once per tile would multiply the requests this exists to use
         // well.
-        val rasterSamples = rasterSamplesByTile(compiledStyle, stableTiles)
+        val rasterSamples = rasterSamplesByTile(compiledStyle, stableTiles, options, checkDecodedBudget = false)
             .values.flatten().distinctBy { it.identity }
         val vectorSamples = vectorSamplesByTile(compiledStyle, stableTiles)
             .values.flatten().distinctBy { it.identity }
@@ -1250,22 +1271,45 @@ private class DefaultBasemapRasterizer(
     private fun rasterSamplesByTile(
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
-    ): Map<TileId, List<RasterSample>> = tiles.associateWith { tile ->
-        style.drawLayers
-            .filter { it is RasterDrawLayer || it is HillshadeDrawLayer }
-            .filter { it.isActiveAt(tile.z) }
-            .flatMap { layer ->
-                when (layer) {
-                    is RasterDrawLayer -> listOfNotNull(layer.source.sampleFor(tile))
-                    is HillshadeDrawLayer -> layer.source.sampleFor(tile)?.let { center ->
-                        (-1..1).flatMap { deltaY ->
-                            (-1..1).mapNotNull { deltaX -> center.neighbor(deltaX, deltaY) }
+        options: RenderOptions,
+        checkDecodedBudget: Boolean = true,
+    ): Map<TileId, List<RasterSample>> {
+        var imagerySamples = 0
+        var declaredDecodedBytes = 0L
+        val uniqueImagerySamples = mutableSetOf<String>()
+        val byteLimit = rasterWorkingByteLimit()
+        val outputBytes = options.outputSizePx.toLong() * options.outputSizePx * 4L
+        return tiles.associateWith { tile ->
+            val seenImagerySources = mutableSetOf<String>()
+            style.drawLayers
+                .filter { it is RasterDrawLayer || it is HillshadeDrawLayer }
+                .filter { it.isActiveAt(tile.z) }
+                .flatMap { layer ->
+                    when (layer) {
+                        is RasterDrawLayer -> if (!seenImagerySources.add(layer.source.idDigest)) emptyList() else {
+                            val remaining = MAX_RASTER_SAMPLES_PER_BATCH - imagerySamples
+                            val samples = layer.source.imagerySamplesFor(tile, options.outputSizePx, remaining)
+                            imagerySamples += samples.size
+                            if (imagerySamples > MAX_RASTER_SAMPLES_PER_BATCH) throw SafetyLimitException(
+                                "Raster imagery batch exceeds its source sample limit", "maxRasterSourceSamples",
+                                MAX_RASTER_SAMPLES_PER_BATCH.toLong(), imagerySamples.toLong(),
+                                PipelineStage.RESOURCE_ACQUISITION, affectedTiles = listOf(tile),
+                            )
+                            val newSamples = samples.count { uniqueImagerySamples.add(it.identity) }
+                            declaredDecodedBytes += newSamples.toLong() * layer.source.tileSize * layer.source.tileSize * 4L
+                            if (checkDecodedBudget) enforceRasterWorkingBytes(declaredDecodedBytes + outputBytes, byteLimit, tile)
+                            samples
                         }
-                    }.orEmpty()
-                    else -> emptyList()
+                        is HillshadeDrawLayer -> layer.source.sampleFor(tile)?.let { center ->
+                            (-1..1).flatMap { deltaY ->
+                                (-1..1).mapNotNull { deltaX -> center.neighbor(deltaX, deltaY) }
+                            }
+                        }.orEmpty()
+                        else -> emptyList()
+                    }
                 }
-            }
-            .distinctBy { it.identity }
+                .distinctBy { it.identity }
+        }
     }
 
     /** Which vector source samples each output tile needs; see [rasterSamplesByTile]. */
@@ -1291,16 +1335,28 @@ private class DefaultBasemapRasterizer(
     private suspend fun planRasterResources(
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
+        options: RenderOptions,
         accessMode: ResourceAccessMode,
-    ): RasterAcquisitionPlan = supervisorScope {
-        val samplesByTile = rasterSamplesByTile(style, tiles)
+    ): RasterAcquisitionPlan = coroutineScope {
+        val samplesByTile = rasterSamplesByTile(style, tiles, options)
         val representatives = samplesByTile.values.flatten()
             .associateBy { it.identity }
             .entries
             .sortedBy { it.key }
             .associate { it.toPair() }
+        val encodedBudget = Mutex()
+        var retainedEncodedBytes = 0L
         val pending = representatives.mapValues { (_, sample) ->
-            async { acquireOutcome { rasterAcquirer.acquire(sample, accessMode) } }
+            async {
+                val outcome = acquireOutcome { rasterAcquirer.acquire(sample, accessMode) }
+                if (outcome is AcquisitionOutcome.Success && sample.source.resourceClass == ResourceClass.RASTER_TILE) {
+                    encodedBudget.withLock {
+                        retainedEncodedBytes += outcome.value.bytes.size
+                        enforceRasterWorkingBytes(retainedEncodedBytes, rasterWorkingByteLimit(), sample.outputTile)
+                    }
+                }
+                outcome
+            }
         }
         val outcomes = pending.mapValues { (_, deferred) -> deferred.await() }
         RasterAcquisitionPlan(samplesByTile, outcomes)
@@ -1748,12 +1804,50 @@ private class DefaultBasemapRasterizer(
         ).also(configuration.diagnosticSink::recordSafely)
     }
 
+    private fun rasterWorkingByteLimit(): Long = minOf(
+        configuration.resourceLimits.maxDecodedRasterBytes,
+        configuration.executionPolicy.maxResidentDecodedBytes,
+    )
+
+    private fun enforceRasterWorkingBytes(bytes: Long, limit: Long, tile: TileId) {
+        if (bytes > limit) throw SafetyLimitException(
+            "Raster imagery working set exceeds the configured memory limit",
+            "maxRasterWorkingBytes", limit, bytes, PipelineStage.RESOURCE_ACQUISITION,
+            affectedTiles = listOf(tile),
+        )
+    }
+
+    /**
+     * No large native mosaic is allocated: each input is drawn directly into its output window.
+     * Account conservatively for actual payload planes, output surfaces on every render worker,
+     * and images the batch may retain for reuse. This also catches declared64/payload256 styles.
+     */
+    private fun enforceRasterMosaicWorkingSet(resources: PreparedResources, options: RenderOptions) {
+        val imagery = resources.raster.mapValues { (_, inputs) ->
+            inputs.filter { it.sample.source.resourceClass == ResourceClass.RASTER_TILE }
+        }.filterValues { it.isNotEmpty() }
+        if (imagery.isEmpty()) return
+        val unique = imagery.values.flatten().distinctBy { it.sample.identity to it.contentDigest }
+        val encodedBytes = unique.sumOf { it.bytes.size.toLong() }
+        val limit = rasterWorkingByteLimit()
+        enforceRasterWorkingBytes(encodedBytes, limit, imagery.keys.first())
+        val sharedDigests = shareableSourceTileDigests(resources)
+        val retained = unique.filter { it.contentDigest in sharedDigests }.distinctBy { it.contentDigest }
+            .sumOf { it.width.toLong() * it.height * 4L }
+        val largest = imagery.maxBy { (_, inputs) -> inputs.sumOf { it.width.toLong() * it.height * 4L } }
+        val nativeBytes = largest.value.sumOf { it.width.toLong() * it.height * 4L }
+        val surfaceBytes = options.outputSizePx.toLong() * options.outputSizePx * 4L
+        val workers = minOf(imagery.size, configuration.executionPolicy.maxConcurrentMetatileWorkers)
+        enforceRasterWorkingBytes(retained + workers * (nativeBytes + surfaceBytes), limit, largest.key)
+    }
+
     private fun buildPreparedBatchState(
         style: CompiledPreparedStyle,
         tiles: List<TileId>,
         options: RenderOptions,
         resources: PreparedResources,
     ): PreparedBatchState {
+        enforceRasterMosaicWorkingSet(resources, options)
         val resourceDiagnostics = (
             resources.raster.values.flatten().flatMap { it.diagnostics } +
                 resources.vector.values.flatten().flatMap { it.diagnostics } +
@@ -1768,7 +1862,7 @@ private class DefaultBasemapRasterizer(
         }.toMap()
         val contentKeys = tiles.associateWith { tile ->
             buildString {
-                append("rentile-output-4\n")
+                append("rentile-output-5\n")
                 append(style.digest)
                 append('\n')
                 append(tile.z)
@@ -1925,6 +2019,7 @@ private class DefaultBasemapRasterizer(
             if (
                 resource != null &&
                 resource.sample.childScale == 1 &&
+                resource.sample.outputScale == 1 &&
                 resource.width == batch.options.outputSizePx &&
                 resource.height == batch.options.outputSizePx &&
                 resource.bytes.isPng()
@@ -2176,9 +2271,9 @@ private class DefaultBasemapRasterizer(
                 when (layer) {
                     is BackgroundDrawLayer -> drawBackground(surface, layer, tile, spriteContext, logicalSizePx)
                     is RasterDrawLayer -> {
-                        val resource = rasterResources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest }
-                            ?: continue
-                        drawRaster(surface, layer, resource, logicalSizePx, tile, sourceTiles)
+                        for (resource in rasterResources.filter { it.sample.source.idDigest == layer.source.idDigest }) {
+                            drawRaster(surface, layer, resource, logicalSizePx, tile, sourceTiles)
+                        }
                     }
                     is HillshadeDrawLayer -> {
                         val centerSample = layer.source.sampleFor(tile) ?: continue
@@ -2303,7 +2398,12 @@ private class DefaultBasemapRasterizer(
                 surface.canvas.drawImageRect(
                     image,
                     Rect.makeLTRB(sourceLeft, sourceTop, sourceRight, sourceBottom),
-                    Rect.makeWH(logicalSizePx.toFloat(), logicalSizePx.toFloat()),
+                    Rect.makeXYWH(
+                        logicalSizePx.toFloat() * sample.outputX / sample.outputScale,
+                        logicalSizePx.toFloat() * sample.outputY / sample.outputScale,
+                        logicalSizePx.toFloat() / sample.outputScale,
+                        logicalSizePx.toFloat() / sample.outputScale,
+                    ),
                     sampling,
                     paint,
                     true,

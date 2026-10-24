@@ -3102,7 +3102,7 @@ class RentileRuntimeTest {
             val style = rasterizer.prepare(rasterStyle("secret"))
             val tile = TileId(1, 0, 0)
 
-            val summary = rasterizer.warmRawResources(style, listOf(tile))
+            val summary = rasterizer.warmRawResources(style, listOf(tile), RenderOptions(256))
             val afterWarm = requestedUrlsMutex.withLock { requestedUrls.toList() }
 
             assertEquals(1, summary.fetched)
@@ -3138,8 +3138,8 @@ class RentileRuntimeTest {
             val style = rasterizer.prepare(rasterStyle("secret"))
             val tile = TileId(1, 0, 0)
 
-            val first = rasterizer.warmRawResources(style, listOf(tile))
-            val second = rasterizer.warmRawResources(style, listOf(tile))
+            val first = rasterizer.warmRawResources(style, listOf(tile), RenderOptions(256))
+            val second = rasterizer.warmRawResources(style, listOf(tile), RenderOptions(256))
 
             assertEquals(1, first.fetched)
             assertEquals(0, first.alreadyCached)
@@ -3162,7 +3162,7 @@ class RentileRuntimeTest {
         try {
             val style = rasterizer.prepare(rasterStyle("secret"))
 
-            val summary = rasterizer.warmRawResources(style, listOf(TileId(1, 0, 0)))
+            val summary = rasterizer.warmRawResources(style, listOf(TileId(1, 0, 0)), RenderOptions(256))
 
             assertEquals(0, summary.fetched)
             assertEquals(1, summary.failed)
