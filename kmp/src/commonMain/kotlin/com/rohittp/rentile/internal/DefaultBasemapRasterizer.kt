@@ -325,10 +325,19 @@ private class DefaultBasemapRasterizer(
             append('\n')
             append(options.outputSizePx)
             if (!options.includeHillshade) append("\nhillshade:omit")
-            if (options.rasterAcquisitionDensity == RasterAcquisitionDensity.OUTPUT_ZOOM) {
-                append("\nraster-acquisition:output-zoom")
-            }
+            appendRasterAcquisitionIdentity(options)
         }.sha256Hex()
+    }
+
+    private fun StringBuilder.appendRasterAcquisitionIdentity(options: RenderOptions) {
+        if (options.rasterAcquisitionDensity == RasterAcquisitionDensity.OUTPUT_ZOOM) {
+            append("\nraster-acquisition:output-zoom")
+        } else {
+            options.maximumRasterSourceZoomDelta?.let { cap ->
+                append("\nraster-source-zoom-delta:")
+                append(cap)
+            }
+        }
     }
 
     override suspend fun prepareBatch(
@@ -1294,7 +1303,8 @@ private class DefaultBasemapRasterizer(
                             val remaining = MAX_RASTER_SAMPLES_PER_BATCH - imagerySamples
                             val samples = when (options.rasterAcquisitionDensity) {
                                 RasterAcquisitionDensity.NATIVE ->
-                                    layer.source.imagerySamplesFor(tile, options.outputSizePx, remaining)
+                                    layer.source.imagerySamplesFor(tile, options.outputSizePx, remaining,
+                                        options.maximumRasterSourceZoomDelta)
                                 RasterAcquisitionDensity.OUTPUT_ZOOM ->
                                     listOfNotNull(layer.source.sampleFor(tile))
                             }
@@ -1882,9 +1892,7 @@ private class DefaultBasemapRasterizer(
                 append('\n')
                 append(options.outputSizePx)
                 if (!options.includeHillshade) append("\nhillshade:omit")
-                if (options.rasterAcquisitionDensity == RasterAcquisitionDensity.OUTPUT_ZOOM) {
-                    append("\nraster-acquisition:output-zoom")
-                }
+                appendRasterAcquisitionIdentity(options)
                 for (resource in resources.raster[tile].orEmpty().sortedBy { it.sample.identity }) {
                     append("\nraster:")
                     append(resource.sample.identity)

@@ -515,6 +515,156 @@ class RasterSourceResolutionTest {
         } finally { rasterizer.close(); rasterizer.awaitClosed() }
     }
 
+    @Test
+    fun nativeZoomCapBoundsDeclared64ToFourChildrenAndKeepsLayerZoom() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests)
+        try {
+            val prepared = rasterizer.prepare(style(64, sourceMaxZoom = 19, layerMinZoom = 16, layerMaxZoom = 17))
+            val options = RenderOptions(512, maximumRasterSourceZoomDelta = 1)
+            val batch = rasterizer.prepareBatch(prepared, listOf(TileId(16, 3, 5)), options)
+            try {
+                assertEquals(setOf("17/6/10", "17/7/10", "17/6/11", "17/7/11"), requests.toSet())
+                assertPixels(rasterizer.render(batch).tiles.single().pngBytes,
+                    listOf(64 to 64, 448 to 448), listOf(color(6, 10), color(7, 11)))
+            } finally { batch.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun nativeZoomCapStillHonorsSourceMaxzoomAndAncestorCropping() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests, quadrantPayload = true)
+        try {
+            val prepared = rasterizer.prepare(style(64, sourceMaxZoom = 15))
+            val batch = rasterizer.prepareBatch(prepared, listOf(TileId(16, 3, 5)),
+                RenderOptions(512, maximumRasterSourceZoomDelta = 1))
+            try {
+                assertEquals(listOf("15/1/2"), requests)
+                assertPixels(rasterizer.render(batch).tiles.single().pngBytes,
+                    listOf(64 to 64, 448 to 448), listOf(Color.YELLOW, Color.YELLOW))
+            } finally { batch.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun nativeZoomCapBelowSourceMinzoomLeavesImageryUnavailable() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests)
+        try {
+            val prepared = rasterizer.prepare(style(64, sourceMinZoom = 6))
+            val options = RenderOptions(512, maximumRasterSourceZoomDelta = 1)
+            val tiles = listOf(TileId(4, 3, 5))
+            assertEquals(0, rasterizer.warmRawResources(prepared, tiles, options).fetched)
+            val batch = rasterizer.prepareBatch(prepared, tiles, options)
+            try {
+                assertTrue(requests.isEmpty(), "the capped zoom, not uncapped density, must reach source minzoom")
+                assertPixels(rasterizer.render(batch).tiles.single().pngBytes,
+                    listOf(64 to 64, 448 to 448), listOf(Color.TRANSPARENT, Color.TRANSPARENT))
+            } finally { batch.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun nativeZoomCapAtSourceMinzoomIsAvailableToWarmingAndCacheOnlyAcquisition() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests)
+        try {
+            val prepared = rasterizer.prepare(style(64, sourceMinZoom = 5))
+            val options = RenderOptions(512, maximumRasterSourceZoomDelta = 1)
+            val tiles = listOf(TileId(4, 3, 5))
+            assertEquals(4, rasterizer.warmRawResources(prepared, tiles, options).fetched)
+            assertEquals(4, rasterizer.warmRawResources(prepared, tiles, options).alreadyCached)
+            requests.clear()
+            val batch = rasterizer.prepareBatch(prepared, tiles, options, ResourceAccessMode.CACHE_ONLY)
+            try {
+                assertTrue(requests.isEmpty(), "warming and render preparation must freeze the same capped closure")
+                assertPixels(rasterizer.render(batch).tiles.single().pngBytes,
+                    listOf(64 to 64, 448 to 448), listOf(color(6, 10), color(7, 11)))
+            } finally { batch.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun nativeZoomCapHasSeparateOutputKeysEvenWhenSatelliteCoordinatesMatch() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests, payloadSize = 512)
+        try {
+            val prepared = rasterizer.prepare(style(512))
+            val tile = TileId(16, 3, 5)
+            val uncapped = RenderOptions(512)
+            val capped = uncapped.copy(maximumRasterSourceZoomDelta = 1)
+            assertEquals(null, uncapped.maximumRasterSourceZoomDelta)
+            assertEquals(rasterizer.outputRequestKey(prepared, tile, uncapped),
+                rasterizer.outputRequestKey(prepared, tile, uncapped.copy(maximumRasterSourceZoomDelta = null)))
+            assertNotEquals(rasterizer.outputRequestKey(prepared, tile, uncapped),
+                rasterizer.outputRequestKey(prepared, tile, capped))
+            val first = rasterizer.prepareBatch(prepared, listOf(tile), uncapped)
+            try {
+                val second = rasterizer.prepareBatch(prepared, listOf(tile), capped)
+                try {
+                    assertEquals(listOf("16/3/5"), requests)
+                    assertNotEquals(first.contentKeys.getValue(tile), second.contentKeys.getValue(tile))
+                    assertContentEquals(rasterizer.render(first).tiles.single().pngBytes,
+                        rasterizer.render(second).tiles.single().pngBytes)
+                } finally { second.close() }
+            } finally { first.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun outputZoomIgnoresNativeCapForAcquisitionPixelsAndBothOutputKeys() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests)
+        try {
+            val prepared = rasterizer.prepare(style(64))
+            val tile = TileId(4, 3, 5)
+            val original = RenderOptions(512, rasterAcquisitionDensity = RasterAcquisitionDensity.OUTPUT_ZOOM)
+            val first = rasterizer.prepareBatch(prepared, listOf(tile), original)
+            try {
+                val expected = rasterizer.render(first).tiles.single().pngBytes
+                for (cap in listOf(0, 1, 30)) {
+                    val options = original.copy(maximumRasterSourceZoomDelta = cap)
+                    assertEquals(rasterizer.outputRequestKey(prepared, tile, original),
+                        rasterizer.outputRequestKey(prepared, tile, options))
+                    val next = rasterizer.prepareBatch(prepared, listOf(tile), options)
+                    try {
+                        assertEquals(first.contentKeys, next.contentKeys)
+                        assertContentEquals(expected, rasterizer.render(next).tiles.single().pngBytes)
+                    } finally { next.close() }
+                }
+                assertEquals(listOf("4/3/5"), requests)
+            } finally { first.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun zeroNativeZoomCapAndSmallerOutputNeverForceFinerAcquisition() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests, quadrantPayload = true, payloadSize = 512)
+        try {
+            val tile = TileId(4, 3, 5)
+            val terrain = rasterizer.prepare(style(64))
+            val limited = rasterizer.prepareBatch(terrain, listOf(tile), RenderOptions(512, maximumRasterSourceZoomDelta = 0))
+            try { assertEquals(listOf("4/3/5"), requests) } finally { limited.close() }
+            requests.clear()
+            val satellite = rasterizer.prepare(style(512))
+            val small = rasterizer.prepareBatch(satellite, listOf(tile), RenderOptions(256, maximumRasterSourceZoomDelta = 1))
+            try {
+                assertEquals(listOf("3/1/2"), requests)
+                assertPixels(rasterizer.render(small).tiles.single().pngBytes,
+                    listOf(32 to 32, 224 to 224), listOf(Color.YELLOW, Color.YELLOW))
+            } finally { small.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun nativeZoomCapValidationRejectsInvalidDeltas() {
+        assertFailsWith<IllegalArgumentException> { RenderOptions(maximumRasterSourceZoomDelta = -1) }
+        assertFailsWith<IllegalArgumentException> { RenderOptions(maximumRasterSourceZoomDelta = 31) }
+        assertEquals(30, RenderOptions(maximumRasterSourceZoomDelta = 30).maximumRasterSourceZoomDelta)
+    }
+
     private fun renderer(
         requests: MutableList<String>,
         quadrantPayload: Boolean = false,

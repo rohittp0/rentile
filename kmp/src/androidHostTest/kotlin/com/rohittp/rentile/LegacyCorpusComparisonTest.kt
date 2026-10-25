@@ -88,6 +88,11 @@ class LegacyCorpusComparisonTest {
                 assertEquals(hillshade, result.includeHillshade)
                 assertEquals("OUTPUT_ZOOM", RenderOptions::class.java.getMethod("getRasterAcquisitionDensity")
                     .invoke(result).toString())
+                RenderOptions::class.java.methods.singleOrNull {
+                    it.name == "getMaximumRasterSourceZoomDelta"
+                }?.let { getter ->
+                    assertEquals(null, getter.invoke(result), "appended options must retain their defaults")
+                }
                 assertFailsWith<IllegalStateException> { LegacyCorpusComparison.options(size, hillshade, "BASELINE") }
             } else {
                 assertEquals(RenderOptions(size, hillshade), LegacyCorpusComparison.options(size, hillshade, "BASELINE"))

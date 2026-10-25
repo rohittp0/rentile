@@ -95,6 +95,11 @@ RENTILE_CORPUS_REPORT_DIR="$PWD/build/reports/rentile-corpus" \
 
 The report contains PNG tiles, available 3×3 mosaics, `results.tsv`, a capability ledger, and a contact sheet. The ledger separates `DECLARED_ONLY` from `EMITTED`: label capabilities reach `EMITTED` only through sampled candidate semantics, and its final column records credential-free evidence such as `text-fit:BOTH`, `placement:LINE,line-geometry`, `non-default:7.0`, or `differing-values`. Other dispositions retain `EXERCISED`/`MISSING`. `results.tsv` also carries one label-acquisition row per style per label case, tagged `label:<case-id>`, with the candidate count, atlas dimensions, glyph-range count and redacted diagnostic codes described above. It never contains catalog responses, style JSON, source caches, resource URLs, query strings, provider responses, or raw layer IDs — the label rows carry only counts and dimensions, never a glyphs URL or a font stack that could identify a provider account.
 
+Unexpected failures outside an individual tile/label result are retained as sanitized failed
+style/profile rows. The same Gradle invocation still visits every later included style/profile,
+writes the complete report and fails its aggregate assertion; continuation never accepts an error
+or adds an exclusion. Coroutine cancellation still propagates from the outer continuation wrapper.
+
 ## Comparing original raster acquisition
 
 The opt-in legacy comparison runs the same host harness against 0.15.1 and the current

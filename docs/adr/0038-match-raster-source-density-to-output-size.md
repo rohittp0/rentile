@@ -59,3 +59,7 @@ Since 0.17.0 this remains the default `RasterAcquisitionDensity.NATIVE`. A calle
 select `OUTPUT_ZOOM` to preserve the former acquisition and pixel behavior for interactive use;
 see [ADR 0039](0039-retain-output-zoom-raster-acquisition-explicitly.md). This is a content-affecting
 render option, not an automatic device/Preview heuristic.
+
+Since 0.18.0, callers may bound density-derived native source zoom relative to output zoom with
+`RenderOptions.maximumRasterSourceZoomDelta`. The default remains unrestricted by that option;
+see [ADR 0040](0040-bound-native-raster-source-zoom-explicitly.md).

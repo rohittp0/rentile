@@ -202,10 +202,22 @@ public data class RenderOptions(
     public val includeHillshade: Boolean = true,
     /** Raster imagery acquisition only; vector, hillshade and DEM sampling are unaffected. */
     public val rasterAcquisitionDensity: RasterAcquisitionDensity = RasterAcquisitionDensity.NATIVE,
+    /**
+     * Optional ceiling on native imagery source zoom relative to the output tile's zoom.
+     *
+     * Null preserves unrestricted source/output-size density. A value of 1 allows at most the
+     * four source children at output z + 1, still bounded by source maxzoom. The ceiling is applied
+     * before source minzoom availability, without changing style/layer evaluation or output size.
+     * Ignored by [RasterAcquisitionDensity.OUTPUT_ZOOM], including its output cache identities.
+     */
+    public val maximumRasterSourceZoomDelta: Int? = null,
 ) {
     init {
         require(outputSizePx in SUPPORTED_OUTPUT_SIZES) {
             "outputSizePx must be one of ${SUPPORTED_OUTPUT_SIZES.sorted()}"
+        }
+        require(maximumRasterSourceZoomDelta == null || maximumRasterSourceZoomDelta in 0..30) {
+            "maximumRasterSourceZoomDelta must be null or in 0..30"
         }
     }
 

@@ -5,6 +5,7 @@ import com.rohittp.rentile.internal.metadata.resolveHttpReference
 import com.rohittp.rentile.internal.sha256Hex
 import com.rohittp.rentile.internal.withRedactedAuthenticationQuery
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -37,6 +38,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.test.assertFalse
 
 /**
  * Opt-in smoke test for the rolling public map catalog.
@@ -110,7 +112,9 @@ class MapCatalogCorpusSmokeTest {
                 .sortedBy { style -> style.id.toInt() }
                 .flatMap { style ->
                     profiles.map { profile ->
-                        profile to renderStyle(rasterizer, style, transport, profile, outputDirectory)
+                        profile to renderStyleSafely(style, profile.reportSuffix) {
+                            renderStyle(rasterizer, style, transport, profile, outputDirectory)
+                        }
                     }
                 }
         } finally {
@@ -171,12 +175,7 @@ class MapCatalogCorpusSmokeTest {
             results,
             corpusFidelityErrors,
         )
-        val completedStyles = results.count { result ->
-            result.preparationErrorCode == null &&
-                result.tiles.values.all { it.status == SmokeStatus.RENDERED } &&
-                result.labelResults.all { it.errorCode == null } &&
-                result.fidelityErrors.isEmpty()
-        }
+        val completedStyles = results.count { it.completedSuccessfully() }
         assertEquals(
             expected = true,
             actual = completedStyles == results.size && corpusFidelityErrors.isEmpty(),
@@ -190,6 +189,67 @@ class MapCatalogCorpusSmokeTest {
             },
         )
         comparison?.complete(results.size)
+    }
+
+    /** Keep the complete report and visit later styles without accepting a failed style. */
+    private suspend fun renderStyleSafely(
+        style: CatalogStyleEntry,
+        reportSuffix: String,
+        render: suspend () -> StyleSmokeResult,
+    ): StyleSmokeResult = try {
+        render()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        // Never report exception messages: a glyph-template invariant can contain provider URLs.
+        val code = "UNEXPECTED_STYLE_FAILURE:${failure::class.simpleName ?: "UNKNOWN_FAILURE"}"
+        StyleSmokeResult(
+            styleId = style.id + reportSuffix,
+            styleName = style.name,
+            preparationErrorCode = code,
+            diagnostics = emptyList(),
+            tiles = emptyMap(),
+            mosaics = emptyMap(),
+            labelResults = emptyList(),
+            declaredCapabilities = emptySet(),
+            runtimeLabelCapabilities = emptySet(),
+            runtimeLabelEvidence = emptyMap(),
+            fidelityErrors = listOf(code),
+            fidelityObservations = emptyList(),
+        )
+    }
+
+    private fun StyleSmokeResult.completedSuccessfully(): Boolean =
+        preparationErrorCode == null &&
+            tiles.values.all { it.status == SmokeStatus.RENDERED } &&
+            labelResults.all { it.errorCode == null } && fidelityErrors.isEmpty()
+
+    @Test
+    fun unexpectedStyleFailureRetainsAFailedRowAndContinuesEveryLaterStyleProfile(): Unit = runBlocking {
+        val visited = mutableListOf<String>()
+        val results = mutableListOf<StyleSmokeResult>()
+        for (id in listOf("59", "80")) for (suffix in listOf("", "-host-symbols")) {
+            val style = CatalogStyleEntry(id, "Fixture", "https://private.test/?token=secret")
+            results += renderStyleSafely(style, suffix) {
+                visited += id + suffix
+                throw IllegalStateException("private provider URL and font token=secret")
+            }
+        }
+        assertEquals(listOf("59", "59-host-symbols", "80", "80-host-symbols"), visited)
+        assertEquals(visited, results.map { it.styleId })
+        assertTrue(results.all { it.preparationErrorCode == "UNEXPECTED_STYLE_FAILURE:IllegalStateException" })
+        assertFalse(results.any { it.completedSuccessfully() }, "recording an exception must not pass the final gate")
+        assertFalse(results.toString().contains("secret"), "reports must omit exception messages and URLs")
+    }
+
+    @Test
+    fun corpusContinuationDoesNotSwallowCancellation(): Unit = runBlocking {
+        val expected = CancellationException("cancel corpus")
+        val style = CatalogStyleEntry("59", "Fixture", "https://private.test/")
+        val actual = assertFailsWith<CancellationException> {
+            renderStyleSafely(style, "") { throw expected }
+        }
+        assertTrue(actual === expected)
     }
 
     /**
@@ -441,10 +501,9 @@ class MapCatalogCorpusSmokeTest {
      * [rendersPublicCatalogCoverageThroughPublicInterface] still fails the gate when any style
      * carries a non-null error code here - acquisition throwing included.
      *
-     * One exception to that soft-fail architecture, deliberately: [LabelCandidatePlan.glyphUrls]
-     * is called uncaught, so a [GlyphTemplateMismatchException] - this gate's own template
-     * resolution disagreeing with the style's - aborts the run loudly instead of hiding as one
-     * more error code. The closure-exactness check that follows it, in contrast, *is* folded into
+     * [LabelCandidatePlan.glyphUrls] is called uncaught here: a template invariant becomes a
+     * sanitized failed style row in [renderStyleSafely], so later styles/profiles still run and
+     * the final aggregate assertion still fails. The closure-exactness check is folded into
      * this case's [LabelCaseSmokeResult.errorCode] rather than thrown - see the comment at
      * `unpredictedGlyphUrls` below for why, and for why a thrown assertion here would be the wrong
      * choice for this particular property.
@@ -544,9 +603,8 @@ class MapCatalogCorpusSmokeTest {
             // this one back to equality, or a legitimate warm cache will fail the gate.
             //
             // A violation is folded into this case's errorCode/diagnostics below rather than
-            // thrown: rendersPublicCatalogCoverageThroughPublicInterface has no catch around its
-            // style loop, so a thrown assertion here would discard the Corpus Report - the HTML
-            // and TSV - for every style already rendered, not just this one.
+            // thrown: an exception would replace this style's detailed tile/label results with
+            // one sanitized failed-style row. Preserve the more precise case evidence here.
             // Redacted on both sides before the difference, not just for display after: this
             // gate's own recorded URL and the plan's predicted URL both still carry the provider
             // credential at this point, and unpredictedGlyphUrls flows straight into this case's

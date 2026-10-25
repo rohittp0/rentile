@@ -1641,10 +1641,12 @@ final class com.rohittp.rentile/RenderDiagnostic { // com.rohittp.rentile/Render
 }
 
 final class com.rohittp.rentile/RenderOptions { // com.rohittp.rentile/RenderOptions|null[0]
-    constructor <init>(kotlin/Int = ..., kotlin/Boolean = ..., com.rohittp.rentile/RasterAcquisitionDensity = ...) // com.rohittp.rentile/RenderOptions.<init>|<init>(kotlin.Int;kotlin.Boolean;com.rohittp.rentile.RasterAcquisitionDensity){}[0]
+    constructor <init>(kotlin/Int = ..., kotlin/Boolean = ..., com.rohittp.rentile/RasterAcquisitionDensity = ..., kotlin/Int? = ...) // com.rohittp.rentile/RenderOptions.<init>|<init>(kotlin.Int;kotlin.Boolean;com.rohittp.rentile.RasterAcquisitionDensity;kotlin.Int?){}[0]
 
     final val includeHillshade // com.rohittp.rentile/RenderOptions.includeHillshade|{}includeHillshade[0]
         final fun <get-includeHillshade>(): kotlin/Boolean // com.rohittp.rentile/RenderOptions.includeHillshade.<get-includeHillshade>|<get-includeHillshade>(){}[0]
+    final val maximumRasterSourceZoomDelta // com.rohittp.rentile/RenderOptions.maximumRasterSourceZoomDelta|{}maximumRasterSourceZoomDelta[0]
+        final fun <get-maximumRasterSourceZoomDelta>(): kotlin/Int? // com.rohittp.rentile/RenderOptions.maximumRasterSourceZoomDelta.<get-maximumRasterSourceZoomDelta>|<get-maximumRasterSourceZoomDelta>(){}[0]
     final val outputSizePx // com.rohittp.rentile/RenderOptions.outputSizePx|{}outputSizePx[0]
         final fun <get-outputSizePx>(): kotlin/Int // com.rohittp.rentile/RenderOptions.outputSizePx.<get-outputSizePx>|<get-outputSizePx>(){}[0]
     final val rasterAcquisitionDensity // com.rohittp.rentile/RenderOptions.rasterAcquisitionDensity|{}rasterAcquisitionDensity[0]
@@ -1653,7 +1655,8 @@ final class com.rohittp.rentile/RenderOptions { // com.rohittp.rentile/RenderOpt
     final fun component1(): kotlin/Int // com.rohittp.rentile/RenderOptions.component1|component1(){}[0]
     final fun component2(): kotlin/Boolean // com.rohittp.rentile/RenderOptions.component2|component2(){}[0]
     final fun component3(): com.rohittp.rentile/RasterAcquisitionDensity // com.rohittp.rentile/RenderOptions.component3|component3(){}[0]
-    final fun copy(kotlin/Int = ..., kotlin/Boolean = ..., com.rohittp.rentile/RasterAcquisitionDensity = ...): com.rohittp.rentile/RenderOptions // com.rohittp.rentile/RenderOptions.copy|copy(kotlin.Int;kotlin.Boolean;com.rohittp.rentile.RasterAcquisitionDensity){}[0]
+    final fun component4(): kotlin/Int? // com.rohittp.rentile/RenderOptions.component4|component4(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Boolean = ..., com.rohittp.rentile/RasterAcquisitionDensity = ..., kotlin/Int? = ...): com.rohittp.rentile/RenderOptions // com.rohittp.rentile/RenderOptions.copy|copy(kotlin.Int;kotlin.Boolean;com.rohittp.rentile.RasterAcquisitionDensity;kotlin.Int?){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RenderOptions.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/RenderOptions.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/RenderOptions.toString|toString(){}[0]

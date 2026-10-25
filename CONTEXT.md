@@ -26,7 +26,9 @@ _Avoid_: Screen pixel, device pixel, logical pixel, output pixel
 A vector, raster, or elevation tile consumed as input while producing one or more output tiles.
 Raster imagery source zoom follows the declared source tile size and requested output size by
 default (`RasterAcquisitionDensity.NATIVE`); an output can consume a native child mosaic or an
-ancestor crop. `OUTPUT_ZOOM` explicitly preserves pre-0.16.0 acquisition at the output zoom,
+ancestor crop. An optional `maximumRasterSourceZoomDelta` bounds only the density-derived
+native source zoom relative to the output zoom; null retains the existing density. `OUTPUT_ZOOM`
+ignores that cap and explicitly preserves pre-0.16.0 acquisition at the output zoom,
 independently of pixel dimensions, for consumers retaining that interactive cost and detail. Style evaluation stays at the
 output tile's zoom, and DEM/hillshade source sampling stays independent (ADR0038).
 _Avoid_: Output tile, Label Tile

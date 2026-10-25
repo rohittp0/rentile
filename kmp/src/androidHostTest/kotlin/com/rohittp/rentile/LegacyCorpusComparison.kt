@@ -134,7 +134,12 @@ internal class LegacyCorpusComparison(
                     val values = (1..copy.parameterCount).map { index ->
                         RenderOptions::class.java.getMethod("component$index").invoke(options)
                     }.toMutableList()
-                    values[copy.parameterCount - 1] = setting
+                    // Later options append components after the density setting. Locate its type
+                    // rather than assuming it is still the last field; all other defaults survive.
+                    val densityIndex = copy.parameterTypes.indices.single {
+                        copy.parameterTypes[it] == getter.returnType
+                    }
+                    values[densityIndex] = setting
                     copy.invoke(options, *values.toTypedArray()) as RenderOptions
                 }
                 else -> error("Invalid corpus acquisition mode")

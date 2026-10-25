@@ -79,14 +79,17 @@ internal fun CompiledRasterSource.imagerySamplesFor(
     tile: TileId,
     outputSizePx: Int,
     maximumSamples: Int = MAX_RASTER_SAMPLES_PER_OUTPUT_TILE,
+    maximumSourceZoomDelta: Int? = null,
 ): List<RasterSample> {
     if (bounds?.intersects(tile) == false) return emptyList()
     // All admitted source/output sizes are powers of two; integer arithmetic avoids rounding a
     // zoom boundary. Source z may exceed the public output profile's z22, but never XYZ z30.
     val zoomOffset = outputSizePx.countTrailingZeroBits() - tileSize.countTrailingZeroBits()
     val targetZoom = maxOf(0, tile.z + zoomOffset)
-    if (targetZoom < minZoom) return emptyList()
-    val sourceZ = minOf(targetZoom, maxZoom)
+    val sourceZ = minOf(targetZoom, maxZoom, maximumSourceZoomDelta?.let { tile.z + it } ?: maxZoom)
+    // A cap may put a density-eligible source below its minimum. Never fetch below that minimum
+    // or raise the capped zoom to reach it; the source is unavailable for this output instead.
+    if (sourceZ < minZoom) return emptyList()
     if (sourceZ <= tile.z) return listOf(sampleAtZoom(tile, sourceZ))
     val scale = 1L shl (sourceZ - tile.z)
     val sampleCount = scale * scale
