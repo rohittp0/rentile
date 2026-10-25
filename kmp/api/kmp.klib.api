@@ -147,6 +147,17 @@ final enum class com.rohittp.rentile/PipelineStage : kotlin/Enum<com.rohittp.ren
     final fun values(): kotlin/Array<com.rohittp.rentile/PipelineStage> // com.rohittp.rentile/PipelineStage.values|values#static(){}[0]
 }
 
+final enum class com.rohittp.rentile/RasterAcquisitionDensity : kotlin/Enum<com.rohittp.rentile/RasterAcquisitionDensity> { // com.rohittp.rentile/RasterAcquisitionDensity|null[0]
+    enum entry NATIVE // com.rohittp.rentile/RasterAcquisitionDensity.NATIVE|null[0]
+    enum entry OUTPUT_ZOOM // com.rohittp.rentile/RasterAcquisitionDensity.OUTPUT_ZOOM|null[0]
+
+    final val entries // com.rohittp.rentile/RasterAcquisitionDensity.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<com.rohittp.rentile/RasterAcquisitionDensity> // com.rohittp.rentile/RasterAcquisitionDensity.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): com.rohittp.rentile/RasterAcquisitionDensity // com.rohittp.rentile/RasterAcquisitionDensity.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<com.rohittp.rentile/RasterAcquisitionDensity> // com.rohittp.rentile/RasterAcquisitionDensity.values|values#static(){}[0]
+}
+
 final enum class com.rohittp.rentile/RenderPriority : kotlin/Enum<com.rohittp.rentile/RenderPriority> { // com.rohittp.rentile/RenderPriority|null[0]
     enum entry NORMAL // com.rohittp.rentile/RenderPriority.NORMAL|null[0]
     enum entry URGENT // com.rohittp.rentile/RenderPriority.URGENT|null[0]
@@ -1630,16 +1641,19 @@ final class com.rohittp.rentile/RenderDiagnostic { // com.rohittp.rentile/Render
 }
 
 final class com.rohittp.rentile/RenderOptions { // com.rohittp.rentile/RenderOptions|null[0]
-    constructor <init>(kotlin/Int = ..., kotlin/Boolean = ...) // com.rohittp.rentile/RenderOptions.<init>|<init>(kotlin.Int;kotlin.Boolean){}[0]
+    constructor <init>(kotlin/Int = ..., kotlin/Boolean = ..., com.rohittp.rentile/RasterAcquisitionDensity = ...) // com.rohittp.rentile/RenderOptions.<init>|<init>(kotlin.Int;kotlin.Boolean;com.rohittp.rentile.RasterAcquisitionDensity){}[0]
 
     final val includeHillshade // com.rohittp.rentile/RenderOptions.includeHillshade|{}includeHillshade[0]
         final fun <get-includeHillshade>(): kotlin/Boolean // com.rohittp.rentile/RenderOptions.includeHillshade.<get-includeHillshade>|<get-includeHillshade>(){}[0]
     final val outputSizePx // com.rohittp.rentile/RenderOptions.outputSizePx|{}outputSizePx[0]
         final fun <get-outputSizePx>(): kotlin/Int // com.rohittp.rentile/RenderOptions.outputSizePx.<get-outputSizePx>|<get-outputSizePx>(){}[0]
+    final val rasterAcquisitionDensity // com.rohittp.rentile/RenderOptions.rasterAcquisitionDensity|{}rasterAcquisitionDensity[0]
+        final fun <get-rasterAcquisitionDensity>(): com.rohittp.rentile/RasterAcquisitionDensity // com.rohittp.rentile/RenderOptions.rasterAcquisitionDensity.<get-rasterAcquisitionDensity>|<get-rasterAcquisitionDensity>(){}[0]
 
     final fun component1(): kotlin/Int // com.rohittp.rentile/RenderOptions.component1|component1(){}[0]
     final fun component2(): kotlin/Boolean // com.rohittp.rentile/RenderOptions.component2|component2(){}[0]
-    final fun copy(kotlin/Int = ..., kotlin/Boolean = ...): com.rohittp.rentile/RenderOptions // com.rohittp.rentile/RenderOptions.copy|copy(kotlin.Int;kotlin.Boolean){}[0]
+    final fun component3(): com.rohittp.rentile/RasterAcquisitionDensity // com.rohittp.rentile/RenderOptions.component3|component3(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Boolean = ..., com.rohittp.rentile/RasterAcquisitionDensity = ...): com.rohittp.rentile/RenderOptions // com.rohittp.rentile/RenderOptions.copy|copy(kotlin.Int;kotlin.Boolean;com.rohittp.rentile.RasterAcquisitionDensity){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RenderOptions.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/RenderOptions.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/RenderOptions.toString|toString(){}[0]

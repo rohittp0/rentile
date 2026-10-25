@@ -53,3 +53,9 @@ The official Mapbox GL JS source uses raster source tile size in covering zoom s
 selects high-DPI raster URLs independently: [transform](https://github.com/mapbox/mapbox-gl-js/blob/main/src/geo/transform.ts),
 [raster source](https://github.com/mapbox/mapbox-gl-js/blob/main/src/source/raster_tile_source.ts),
 [URL normalization](https://github.com/mapbox/mapbox-gl-js/blob/main/src/util/mapbox.ts).
+
+
+Since 0.17.0 this remains the default `RasterAcquisitionDensity.NATIVE`. A caller may explicitly
+select `OUTPUT_ZOOM` to preserve the former acquisition and pixel behavior for interactive use;
+see [ADR 0039](0039-retain-output-zoom-raster-acquisition-explicitly.md). This is a content-affecting
+render option, not an automatic device/Preview heuristic.

@@ -10,6 +10,9 @@ import org.jetbrains.skia.Image
 import org.jetbrains.skia.Surface
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertContentEquals
+import kotlin.test.assertNotEquals
+import okio.ByteString.Companion.encodeUtf8
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -291,6 +294,223 @@ class RasterSourceResolutionTest {
                 assertEquals(512, requests.size)
                 assertTrue(requests.all { it.startsWith("19/") })
                 assertEquals(tiles.size, rasterizer.render(batch).tiles.size)
+            } finally { batch.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun outputZoomIgnoresDeclaredSizeAndOutputSizeForAcquisitionAndWarming() = runTest {
+        for (declaredSize in listOf(64, 512)) for (outputSize in listOf(256, 512)) {
+            val requests = mutableListOf<String>()
+            val rasterizer = renderer(requests)
+            try {
+                val style = rasterizer.prepare(style(declaredSize))
+                val options = RenderOptions(outputSize, rasterAcquisitionDensity = RasterAcquisitionDensity.OUTPUT_ZOOM)
+                val tiles = listOf(TileId(14, 3, 5))
+                assertEquals(1, rasterizer.warmRawResources(style, tiles, options).fetched)
+                assertEquals(listOf("14/3/5"), requests)
+                requests.clear()
+                val batch = rasterizer.prepareBatch(style, tiles, options, ResourceAccessMode.CACHE_ONLY)
+                try {
+                    assertTrue(requests.isEmpty())
+                    assertPixels(rasterizer.render(batch).tiles.single().pngBytes,
+                        listOf(32 to 32), listOf(color(3, 5)))
+                } finally { batch.close() }
+            } finally { rasterizer.close(); rasterizer.awaitClosed() }
+        }
+    }
+
+    @Test
+    fun outputZoomPreservesLegacyMinzoomAvailabilityAndLayerRange() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests)
+        try {
+            val options = RenderOptions(512, rasterAcquisitionDensity = RasterAcquisitionDensity.OUTPUT_ZOOM)
+            for ((input, tile, expected) in listOf(
+                Triple(style(64, sourceMinZoom = 10), TileId(9, 3, 5), emptyList()),
+                Triple(style(512, sourceMinZoom = 10), TileId(10, 3, 5), listOf("10/3/5")),
+                Triple(style(64, layerMinZoom = 10), TileId(9, 3, 5), emptyList()),
+                Triple(style(64, layerMaxZoom = 10), TileId(10, 3, 5), emptyList()),
+            )) {
+                requests.clear()
+                val style = rasterizer.prepare(input)
+                val batch = rasterizer.prepareBatch(style, listOf(tile), options, ResourceAccessMode.RELOAD)
+                try {
+                    assertEquals(expected, requests)
+                    assertPixels(rasterizer.render(batch).tiles.single().pngBytes, listOf(32 to 32),
+                        listOf(if (expected.isEmpty()) Color.TRANSPARENT else color(3, 5)))
+                } finally { batch.close() }
+            }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun outputZoomReturnsIdenticalValidatedPngOnlyWhenPayloadMatchesOutputSize() = runTest {
+        for (declaredSize in listOf(64, 512)) for (outputSize in listOf(256, 512)) {
+            val requests = mutableListOf<String>()
+            val rasterizer = renderer(requests, quadrantPayload = true, payloadSize = outputSize)
+            try {
+                val style = rasterizer.prepare(style(declaredSize))
+                val options = RenderOptions(outputSize, rasterAcquisitionDensity = RasterAcquisitionDensity.OUTPUT_ZOOM)
+                val batch = rasterizer.prepareBatch(style, listOf(TileId(14, 3, 5)), options)
+                try {
+                    val tile = rasterizer.render(batch).tiles.single()
+                    assertContentEquals(png(null, outputSize), tile.pngBytes)
+                    assertTrue(tile.diagnostics.any { it.code == DiagnosticCode.RASTER_PASSTHROUGH_USED })
+                } finally { batch.close() }
+            } finally { rasterizer.close(); rasterizer.awaitClosed() }
+        }
+    }
+
+    @Test
+    fun outputZoomDoesNotForwardWrongSizedPngAndPreservesLegacyMagnification() = runTest {
+        for ((payloadSize, outputSize) in listOf(256 to 512, 512 to 256)) {
+            val requests = mutableListOf<String>()
+            val rasterizer = renderer(requests, quadrantPayload = true, payloadSize = payloadSize)
+            try {
+                val style = rasterizer.prepare(style(64))
+                val options = RenderOptions(outputSize, rasterAcquisitionDensity = RasterAcquisitionDensity.OUTPUT_ZOOM)
+                val batch = rasterizer.prepareBatch(style, listOf(TileId(14, 3, 5)), options)
+                try {
+                    val tile = rasterizer.render(batch).tiles.single()
+                    assertEquals(listOf("14/3/5"), requests)
+                    assertTrue(tile.diagnostics.none { it.code == DiagnosticCode.RASTER_PASSTHROUGH_USED })
+                    // The 0.15.1 nearest-neighbour draw magnifies/downsamples this same quadrant image.
+                    assertContentEquals(png(null, outputSize), tile.pngBytes)
+                } finally { batch.close() }
+            } finally { rasterizer.close(); rasterizer.awaitClosed() }
+        }
+    }
+
+    @Test
+    fun outputZoomCropsMaxzoomAncestorAndWrapsOutputXWithoutPassthrough() = runTest {
+        for (declaredSize in listOf(64, 512)) {
+            val requests = mutableListOf<String>()
+            val rasterizer = renderer(requests, quadrantPayload = true, payloadSize = 512)
+            try {
+                val style = rasterizer.prepare(style(declaredSize, sourceMaxZoom = 14))
+                val options = RenderOptions(512, rasterAcquisitionDensity = RasterAcquisitionDensity.OUTPUT_ZOOM)
+                val batch = rasterizer.prepareBatch(style, listOf(TileId(15, (1 shl 15) + 7, 9)), options)
+                try {
+                    val tile = rasterizer.render(batch).tiles.single()
+                    assertEquals(listOf("14/3/4"), requests)
+                    assertContentEquals(png(Color.YELLOW, 512), tile.pngBytes)
+                    assertTrue(tile.diagnostics.none { it.code == DiagnosticCode.RASTER_PASSTHROUGH_USED })
+                } finally { batch.close() }
+            } finally { rasterizer.close(); rasterizer.awaitClosed() }
+        }
+    }
+
+    @Test
+    fun acquisitionModesHaveSeparateRequestAndContentKeysEvenWhenClosureMatches() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests, payloadSize = 512)
+        try {
+            val style = rasterizer.prepare(style(512))
+            val tile = TileId(14, 3, 5)
+            val native = RenderOptions(512)
+            val legacy = native.copy(rasterAcquisitionDensity = RasterAcquisitionDensity.OUTPUT_ZOOM)
+            assertEquals(RasterAcquisitionDensity.NATIVE, native.rasterAcquisitionDensity)
+            assertNotEquals(rasterizer.outputRequestKey(style, tile, native), rasterizer.outputRequestKey(style, tile, legacy))
+            val nativeBatch = rasterizer.prepareBatch(style, listOf(tile), native)
+            val legacyBatch = rasterizer.prepareBatch(style, listOf(tile), legacy, ResourceAccessMode.CACHE_ONLY)
+            try {
+                assertEquals(listOf("14/3/5"), requests, "identical raw URLs remain shareable across density modes")
+                assertNotEquals(nativeBatch.contentKeys.getValue(tile), legacyBatch.contentKeys.getValue(tile))
+                assertContentEquals(rasterizer.render(nativeBatch).tiles.single().pngBytes,
+                    rasterizer.render(legacyBatch).tiles.single().pngBytes)
+            } finally { nativeBatch.close(); legacyBatch.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun nativeRequestAndContentSemanticsRemainUnchangedFrom016() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests)
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson("""{"version":8,"sources":{},"layers":[{"id":"b","type":"background"}]}"""))
+            val tile = TileId(14, 3, 5)
+            for (includeHillshade in listOf(true, false)) {
+                val options = RenderOptions(512, includeHillshade)
+                val suffix = if (includeHillshade) "" else "\nhillshade:omit"
+                assertEquals("rentile-output-request-4\n${style.digest}\n14/3/5\n512$suffix".encodeUtf8().sha256().hex(),
+                    rasterizer.outputRequestKey(style, tile, options))
+                val batch = rasterizer.prepareBatch(style, listOf(tile), options)
+                try {
+                    assertEquals("rentile-output-5\n${style.digest}\n14/3/5\n512$suffix".encodeUtf8().sha256().hex(),
+                        batch.contentKeys.getValue(tile))
+                } finally { batch.close() }
+            }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun outputZoomRetryRetainsItsOriginalAcquisitionInsteadOfSwitchingToNative() = runTest {
+        var blocked = true
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests, unavailable = { blocked && it.startsWith("4/") || it.startsWith("5/") })
+        try {
+            val style = rasterizer.prepare(style(64))
+            val tile = TileId(4, 3, 5)
+            val options = RenderOptions(512, rasterAcquisitionDensity = RasterAcquisitionDensity.OUTPUT_ZOOM)
+            val batch = rasterizer.prepareBatch(style, listOf(tile), options, substitutionPolicy = TileSubstitutionPolicy(1))
+            try {
+                assertTrue(batch.substitutions.getValue(tile).isNotEmpty())
+                val before = batch.contentKeys.getValue(tile)
+                blocked = false
+                requests.clear()
+                val recovered = rasterizer.retryExact(batch)
+                assertEquals(setOf(tile), recovered.upgradedTiles)
+                assertTrue(recovered.remainingSubstitutedTiles.isEmpty())
+                assertEquals(listOf("4/3/5"), requests)
+                assertNotEquals(before, batch.contentKeys.getValue(tile))
+                assertPixels(rasterizer.render(batch).tiles.single().pngBytes, listOf(32 to 32), listOf(color(3, 5)))
+                val fresh = rasterizer.prepareBatch(style, listOf(tile), options, ResourceAccessMode.CACHE_ONLY)
+                try { assertEquals(fresh.contentKeys, batch.contentKeys) } finally { fresh.close() }
+            } finally { batch.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun outputZoomDoesNotEvaluateInactiveSourcePaintInPngOrRawOutput() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests)
+        try {
+            // Valid at source minzoom and above, deliberately out of range below it. 0.15.1
+            // excluded this raster layer before paint evaluation in both output transports.
+            val input = (style(64, sourceMinZoom = 10) as StyleInput.InlineJson).let {
+                StyleInput.InlineJson(it.json.replace("\"raster-resampling\":\"nearest\"",
+                    "\"raster-opacity\":[\"interpolate\",[\"linear\"],[\"zoom\"],0,2,10,1]"))
+            }
+            val style = rasterizer.prepare(input)
+            val options = RenderOptions(512, rasterAcquisitionDensity = RasterAcquisitionDensity.OUTPUT_ZOOM)
+            val batch = rasterizer.prepareBatch(style, listOf(TileId(9, 3, 5)), options)
+            try {
+                assertTrue(requests.isEmpty())
+                assertContentEquals(png(Color.TRANSPARENT, 512), rasterizer.render(batch).tiles.single().pngBytes)
+                assertTrue(rasterizer.renderRaw(batch).tiles.single().rgbaBytes.all { it == 0.toByte() })
+            } finally { batch.close() }
+        } finally { rasterizer.close(); rasterizer.awaitClosed() }
+    }
+
+    @Test
+    fun outputZoomInactiveRasterLayerDoesNotDisableLegacyPngPassthrough() = runTest {
+        val requests = mutableListOf<String>()
+        val rasterizer = renderer(requests, quadrantPayload = true, payloadSize = 512)
+        try {
+            val style = rasterizer.prepare(StyleInput.InlineJson("""{"version":8,"sources":{
+                "inactive":{"type":"raster","tileSize":64,"minzoom":10,"tiles":["https://raster.test/{z}/{x}/{y}.png"]},
+                "active":{"type":"raster","tileSize":512,"tiles":["https://raster.test/{z}/{x}/{y}.png"]}},
+                "layers":[{"id":"inactive","type":"raster","source":"inactive"},
+                {"id":"active","type":"raster","source":"active"}]}"""))
+            val options = RenderOptions(512, rasterAcquisitionDensity = RasterAcquisitionDensity.OUTPUT_ZOOM)
+            val batch = rasterizer.prepareBatch(style, listOf(TileId(9, 3, 5)), options)
+            try {
+                assertEquals(listOf("9/3/5"), requests)
+                val output = rasterizer.render(batch).tiles.single()
+                assertContentEquals(png(null, 512), output.pngBytes)
+                assertTrue(output.diagnostics.any { it.code == DiagnosticCode.RASTER_PASSTHROUGH_USED },
+                    "a below-minzoom source layer must be absent from the active-layer count as in 0.15.1")
             } finally { batch.close() }
         } finally { rasterizer.close(); rasterizer.awaitClosed() }
     }

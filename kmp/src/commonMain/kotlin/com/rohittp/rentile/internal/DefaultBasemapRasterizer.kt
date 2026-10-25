@@ -35,6 +35,7 @@ import com.rohittp.rentile.RawWarmSummary
 import com.rohittp.rentile.RenderBatch
 import com.rohittp.rentile.RenderDiagnostic
 import com.rohittp.rentile.RenderOptions
+import com.rohittp.rentile.RasterAcquisitionDensity
 import com.rohittp.rentile.RenderPriority
 import com.rohittp.rentile.RenderedTile
 import com.rohittp.rentile.ExactRecoveryResult
@@ -324,6 +325,9 @@ private class DefaultBasemapRasterizer(
             append('\n')
             append(options.outputSizePx)
             if (!options.includeHillshade) append("\nhillshade:omit")
+            if (options.rasterAcquisitionDensity == RasterAcquisitionDensity.OUTPUT_ZOOM) {
+                append("\nraster-acquisition:output-zoom")
+            }
         }.sha256Hex()
     }
 
@@ -1288,7 +1292,12 @@ private class DefaultBasemapRasterizer(
                     when (layer) {
                         is RasterDrawLayer -> if (!seenImagerySources.add(layer.source.idDigest)) emptyList() else {
                             val remaining = MAX_RASTER_SAMPLES_PER_BATCH - imagerySamples
-                            val samples = layer.source.imagerySamplesFor(tile, options.outputSizePx, remaining)
+                            val samples = when (options.rasterAcquisitionDensity) {
+                                RasterAcquisitionDensity.NATIVE ->
+                                    layer.source.imagerySamplesFor(tile, options.outputSizePx, remaining)
+                                RasterAcquisitionDensity.OUTPUT_ZOOM ->
+                                    listOfNotNull(layer.source.sampleFor(tile))
+                            }
                             imagerySamples += samples.size
                             if (imagerySamples > MAX_RASTER_SAMPLES_PER_BATCH) throw SafetyLimitException(
                                 "Raster imagery batch exceeds its source sample limit", "maxRasterSourceSamples",
@@ -1873,6 +1882,9 @@ private class DefaultBasemapRasterizer(
                 append('\n')
                 append(options.outputSizePx)
                 if (!options.includeHillshade) append("\nhillshade:omit")
+                if (options.rasterAcquisitionDensity == RasterAcquisitionDensity.OUTPUT_ZOOM) {
+                    append("\nraster-acquisition:output-zoom")
+                }
                 for (resource in resources.raster[tile].orEmpty().sortedBy { it.sample.identity }) {
                     append("\nraster:")
                     append(resource.sample.identity)
@@ -2005,12 +2017,20 @@ private class DefaultBasemapRasterizer(
         }
     }
 
+    /** 0.15.1 hid raster source-minzoom layers before paint evaluation and PNG pass-through. */
+    private fun activeDrawLayers(batch: DefaultPreparedBatch, tile: TileId): List<CompiledDrawLayer> =
+        batch.style.drawLayers.filter { layer ->
+            layer.isActiveAt(tile.z) &&
+                (batch.options.rasterAcquisitionDensity != RasterAcquisitionDensity.OUTPUT_ZOOM ||
+                    layer !is RasterDrawLayer || tile.z >= layer.source.minZoom)
+        }
+
     private fun renderTile(
         batch: DefaultPreparedBatch,
         resources: PreparedResources,
         tile: TileId,
     ): TileRender {
-        val activeLayers = batch.style.drawLayers.filter { it.isActiveAt(tile.z) }
+        val activeLayers = activeDrawLayers(batch, tile)
         val rasterResources = resources.raster[tile].orEmpty()
         val vectorResources = resources.vector[tile].orEmpty()
         val passThroughLayer = activeLayers.singleOrNull() as? RasterDrawLayer
@@ -2070,7 +2090,7 @@ private class DefaultBasemapRasterizer(
         resources: PreparedResources,
         tile: TileId,
     ): RawTileRender {
-        val activeLayers = batch.style.drawLayers.filter { it.isActiveAt(tile.z) }
+        val activeLayers = activeDrawLayers(batch, tile)
         val renderDiagnostics = mutableListOf<RenderDiagnostic>()
         val size = batch.options.outputSizePx
         val rgba = renderCompositedTileRaw(

@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -34,6 +35,7 @@ import java.nio.file.StandardOpenOption
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -45,9 +47,11 @@ import kotlin.test.assertTrue
 class MapCatalogCorpusSmokeTest {
     @Test
     fun liveCatalogHostExtrusionsPreserveAuthoredLayers(): Unit = runBlocking {
-        if (environmentPath("RENTILE_COVERAGE_MANIFEST") == null) return@runBlocking
+        val coveragePath = environmentPath("RENTILE_COVERAGE_MANIFEST") ?: return@runBlocking
         val transport = smokeTransport()
-        val styles = loadMapCatalog(transport, PUBLIC_MAP_CATALOG_URL)
+        val selection = selectCorpusStyles(loadMapCatalog(transport, PUBLIC_MAP_CATALOG_URL), loadCoverageManifest(coveragePath))
+        writeExclusions(corpusReportDirectory(), selection.exclusions)
+        val styles = selection.styles
         val rasterizer = Rentile.create(RentileConfiguration(transport, SmokeRawResourceStore()))
         var stylesWithBuildings = 0
         try {
@@ -71,25 +75,30 @@ class MapCatalogCorpusSmokeTest {
     @Test
     fun rendersPublicCatalogCoverageThroughPublicInterface(): Unit = runBlocking {
         val coveragePath = environmentPath("RENTILE_COVERAGE_MANIFEST") ?: return@runBlocking
-        val outputDirectory = environmentPath("RENTILE_CORPUS_REPORT_DIR")
-            ?: Path.of("build", "reports", "rentile-corpus")
+        val outputDirectory = corpusReportDirectory()
         Files.createDirectories(outputDirectory)
 
-        val transport = GlyphClosureRecordingTransport(smokeTransport())
+        val comparison = LegacyCorpusComparison.fromEnvironment(outputDirectory)
+        val transport = GlyphClosureRecordingTransport(comparison?.wrap(smokeTransport()) ?: smokeTransport())
         val styles = loadMapCatalog(transport, PUBLIC_MAP_CATALOG_URL)
         val coverage = loadCoverageManifest(coveragePath)
-        validateInputs(styles, coverage)
+        val selection = selectCorpusStyles(styles, coverage)
+        writeExclusions(outputDirectory, selection.exclusions)
         val selectedStyleId = System.getenv("RENTILE_CORPUS_STYLE_ID")?.takeIf(String::isNotBlank)
         val selectedStyles = selectedStyleId?.let { id ->
-            styles.filter { style -> style.id == id }.also { matches ->
+            require(selection.exclusions.excludedStyles.none { it.id == id }) {
+                "Requested corpus style is explicitly excluded; inspect exclusions.json"
+            }
+            selection.styles.filter { style -> style.id == id }.also { matches ->
                 require(matches.size == 1) { "Requested corpus style id is not present in the public catalog" }
             }
-        } ?: styles
+        } ?: selection.styles
 
         val rasterizer = Rentile.create(
             RentileConfiguration(
                 transport = transport,
                 rawResourceStore = SmokeRawResourceStore(),
+                clock = comparison?.clock ?: RentileClock.System,
             ),
         )
         // Every profile the manifest covers, each over the same styles and cases: the manifest's
@@ -107,6 +116,7 @@ class MapCatalogCorpusSmokeTest {
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
+            comparison?.finish()
         }
         val results = profileResults.map { it.second }
 
@@ -179,6 +189,7 @@ class MapCatalogCorpusSmokeTest {
                 append("; inspect ${outputDirectory.resolve("index.html")}")
             },
         )
+        comparison?.complete(results.size)
     }
 
     /**
@@ -314,6 +325,26 @@ class MapCatalogCorpusSmokeTest {
         val outcomes = uniqueTiles.associateWith { tile ->
             renderTile(rasterizer, prepared, style.id, tile, outputDirectory)
         }
+        // The normal gate remains the manifest's full 512px coverage. Compatibility runs add
+        // raster-only output-size/hillshade cases without multiplying the vector corpus.
+        val extraFailures = mutableListOf<String>()
+        if (LegacyCorpusComparison.enabled() && styleJson["sources"]?.jsonObject?.values?.any {
+                it.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "raster"
+            } == true
+        ) {
+            val samples = uniqueTiles.filter { it.z in setOf(0, 1, 12, 18, 19, 22) }.groupBy(TileId::z)
+                .values.map { it.first() }
+            for (size in listOf(256, 512)) for (hillshade in listOf(false, true)) for (tile in samples) {
+                val result = renderTile(
+                    rasterizer, prepared, style.id, tile,
+                    outputDirectory.resolve("legacy-samples/$size-$hillshade"),
+                    LegacyCorpusComparison.options(size, hillshade),
+                )
+                if (result.status != SmokeStatus.RENDERED) {
+                    extraFailures += "LEGACY_SAMPLE_FAILED: size=$size hillshade=$hillshade z=${tile.z} code=${result.errorCode}"
+                }
+            }
+        }
         val mosaics = createMosaics(style.id, coverage, outcomes, outputDirectory)
         val labelResults = acquireLabelSmoke(rasterizer, prepared, style, styleJson, transport, coverage)
         // A symbol layer the host profile cannot represent at all is a loss the profile accepts by
@@ -336,7 +367,7 @@ class MapCatalogCorpusSmokeTest {
                 "sampled low/high-zoom cases; layerIdDigests=" +
                 missing.sorted().take(MAX_REPORTED_LAYER_DIGESTS).joinToString(",") { it.sha256Hex() }
         }
-        val fidelityErrors = preparationFidelityErrors + if (
+        val fidelityErrors = preparationFidelityErrors + extraFailures + if (
             coverage.fidelityPolicy.requireEveryDescriptorToContribute && contributionObservation != null
         ) {
             listOf(contributionObservation)
@@ -1024,6 +1055,63 @@ class MapCatalogCorpusSmokeTest {
     }
 
     @Test
+    fun explicitStyle71ExclusionValidatesTheWholeCatalogBeforeFiltering() {
+        val styles = listOf("59", "71", "80").map { id ->
+            CatalogStyleEntry(id, "Style$id", "https://styles.example.test/$id.json")
+        }
+        val coverage = exclusionTestCoverage(styles.map { it.id })
+        val selected = selectCorpusStyles(styles, coverage)
+        assertEquals(listOf("59", "80"), selected.styles.map { it.id })
+        assertEquals(listOf("71"), selected.exclusions.excludedStyles.map { it.id })
+        assertFailsWith<IllegalArgumentException> {
+            selectCorpusStyles(styles.filterNot { it.id == "71" }, coverage)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            selectCorpusStyles(styles + styles.single { it.id == "71" }, coverage)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            selectCorpusStyles(styles.map { if (it.id == "71") it.copy(url = "http://invalid.example.test/style") else it }, coverage)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            selectCorpusStyles(styles + CatalogStyleEntry("72", "Unexpected", "https://styles.example.test/72.json"), coverage)
+        }
+    }
+
+    @Test
+    fun style71ExclusionReceiptKeepsOriginalCountsAndTheExactAuthorizedReason() {
+        val styles = listOf("59", "71", "80").map { id ->
+            CatalogStyleEntry(id, "Style$id", "https://styles.example.test/$id.json")
+        }
+        val receipt = selectCorpusStyles(styles, exclusionTestCoverage(styles.map { it.id })).exclusions
+        val decoded = strictJson.decodeFromString<CorpusExclusionReport>(Json.encodeToString(receipt))
+        assertEquals(1, decoded.schema)
+        assertEquals(3, decoded.manifestStyleCount)
+        assertEquals(2, decoded.includedStyleCount)
+        assertEquals(listOf(CorpusStyleExclusion("71", "CDN_RETURNED_HTML_FOR_STYLE_DOCUMENT",
+            "Coordinator-approved exclusion: the style endpoint returns CDN-cached DRF HTML while ignoring Vary: Accept; no valid style document is available.")), decoded.excludedStyles)
+        val unaffected = styles.filterNot { it.id == "71" }
+        val withoutExcludedId = selectCorpusStyles(unaffected, exclusionTestCoverage(unaffected.map { it.id }))
+        assertEquals(unaffected, withoutExcludedId.styles)
+        assertTrue(withoutExcludedId.exclusions.excludedStyles.isEmpty(), "Only the explicit ID may be excluded")
+    }
+
+    private fun exclusionTestCoverage(styleRefs: List<String>): CoverageManifest = CoverageManifest(
+        schemaVersion = 1,
+        profileId = "rentile-v1",
+        outputZoomRange = ZoomRange(0, 22),
+        styleRefs = styleRefs,
+        requiredCapabilities = listOf("fill"),
+        capabilityDispositions = mapOf("fill" to "rasterized"),
+        fidelityPolicy = FidelityPolicy(
+            forbiddenPreparationDiagnosticCodes = REQUIRED_FORBIDDEN_PREPARATION_DIAGNOSTICS.sorted(),
+            forbiddenLabelDiagnosticCodes = REQUIRED_FORBIDDEN_LABEL_DIAGNOSTICS.sorted(),
+            requireAllVisibleTextVectorSymbolsHaveDescriptors = true,
+            requireEveryDescriptorToContribute = false,
+        ),
+        cases = LABEL_SMOKE_CASE_IDS.map { CoverageCase(it, emptyList(), listOf(CoverageTile(14, 1, 1))) },
+    )
+
+    @Test
     fun catalogLoaderFollowsBoundedPagination(): Unit = runBlocking {
         val secondPage = "$PUBLIC_MAP_CATALOG_URL?page=2"
         val responses = mapOf(
@@ -1345,11 +1433,12 @@ class MapCatalogCorpusSmokeTest {
         styleId: String,
         tile: TileId,
         outputDirectory: Path,
+        options: RenderOptions = LegacyCorpusComparison.options(512, true),
     ): TileSmokeResult = try {
         val rendered = rasterizer.render(
             style = prepared,
             tiles = listOf(tile),
-            options = RenderOptions(512),
+            options = options,
         ).tiles.single()
         val relativePath = Path.of("tiles", styleId, "${tile.z}-${tile.x}-${tile.y}.png")
         val outputPath = outputDirectory.resolve(relativePath)
@@ -1500,6 +1589,29 @@ class MapCatalogCorpusSmokeTest {
             .filter(String::isNotEmpty)
             .map { parameter -> parameter.substringBefore('=').lowercase() }
         require(queryNames.all { it == "page" }) { "Map catalog pagination contains an unsupported query" }
+    }
+
+    private fun corpusReportDirectory(): Path = environmentPath("RENTILE_CORPUS_REPORT_DIR")
+        ?: Path.of("build", "reports", "rentile-corpus")
+
+    private fun selectCorpusStyles(styles: List<CatalogStyleEntry>, coverage: CoverageManifest): CorpusStyleSelection {
+        // Validate the unchanged complete catalog first: an excluded ID cannot hide a missing,
+        // duplicated, newly added or invalid catalog entry.
+        validateInputs(styles, coverage)
+        val excluded = LIVE_CORPUS_EXCLUSIONS.filter { exclusion -> styles.any { it.id == exclusion.id } }
+        val included = styles.filter { style -> excluded.none { it.id == style.id } }
+        return CorpusStyleSelection(included, CorpusExclusionReport(
+            schema = 1,
+            manifestStyleCount = coverage.styleRefs.size,
+            includedStyleCount = included.size,
+            excludedStyles = excluded,
+        ))
+    }
+
+    private fun writeExclusions(directory: Path, report: CorpusExclusionReport) {
+        Files.createDirectories(directory)
+        Files.writeString(directory.resolve("exclusions.json"), Json.encodeToString(report),
+            StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)
     }
 
     private fun loadCoverageManifest(path: Path): CoverageManifest =
@@ -1702,6 +1814,7 @@ class MapCatalogCorpusSmokeTest {
             appendLine("details{color:#cbd3dc}code{white-space:normal;color:#ffb4b4}a{color:#8dc8ff}")
             appendLine("</style></head><body>")
             appendLine("<h1>Rentile rolling map corpus</h1>")
+            appendLine("<p class=\"summary\">Explicit catalog exclusion: style 71. See <a href=\"exclusions.json\">exclusions.json</a> for the CDN HTML failure and original catalog counts.</p>")
             appendLine("<p class=\"summary\">$z0Rendered/${results.size} z0 maps and $complete/${results.size} complete style coverage runs succeeded. Failed cards are not substitute images.</p>")
             if (corpusFidelityErrors.isNotEmpty()) {
                 appendLine("<details open><summary>Corpus capability failures</summary><ul>")
@@ -1907,6 +2020,19 @@ class MapCatalogCorpusSmokeTest {
         val name: String,
         @SerialName("map_url") val mapUrl: String,
     )
+
+    @Serializable
+    private data class CorpusStyleExclusion(val id: String, val reasonCode: String, val reason: String)
+
+    @Serializable
+    private data class CorpusExclusionReport(
+        val schema: Int,
+        val manifestStyleCount: Int,
+        val includedStyleCount: Int,
+        val excludedStyles: List<CorpusStyleExclusion>,
+    )
+
+    private data class CorpusStyleSelection(val styles: List<CatalogStyleEntry>, val exclusions: CorpusExclusionReport)
 
     private data class CatalogStyleEntry(
         val id: String,
@@ -2198,6 +2324,14 @@ class MapCatalogCorpusSmokeTest {
          * supplies runtime evidence for the catalog's z9/z12 functional text-transform layers.
          * See `compatibility/README.md`.
          */
+        // Coordinator authorization, 2026-10-25: ONLY style71. The manifest and every remaining
+        // style/case/capability assertion stay intact; never replace this with an environment skip.
+        val LIVE_CORPUS_EXCLUSIONS: List<CorpusStyleExclusion> = listOf(CorpusStyleExclusion(
+            id = "71",
+            reasonCode = "CDN_RETURNED_HTML_FOR_STYLE_DOCUMENT",
+            reason = "Coordinator-approved exclusion: the style endpoint returns CDN-cached DRF HTML while ignoring Vary: Accept; no valid style document is available.",
+        ))
+
         val LABEL_SMOKE_CASE_IDS: List<String> = listOf("new-york-zoom-ladder", "tokyo-cjk-dense", "cairo-rtl")
         const val NEW_YORK_CASE_ID = "new-york-zoom-ladder"
         const val FUNCTIONAL_TEXT_SAMPLE_ZOOM = 14

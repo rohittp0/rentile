@@ -8,6 +8,23 @@ https://dashboard.lascade.com/travel_animator/v0/maps/
 
 The harness follows the catalog's `next` links, requires all pages to remain on the exact catalog origin and path, checks the declared count, rejects duplicate IDs, and requires the resulting ID set to match the committed Coverage Manifest. Style JSON and provider resources are fetched at test time and are never committed.
 
+## Explicit unavailable-style exclusion
+
+On 2026-10-25 the coordinator authorized exclusion of **only style71**: its style endpoint serves
+CDN-cached DRF HTML while ignoring `Vary: Accept`, including requests accepting JSON. The returned
+HTML is not a style document. Both live catalog loops (host-extrusion acquisition and complete
+corpus rendering) first validate the complete catalog against the unchanged Coverage Manifest,
+then exclude ID71 from rendering/assertions. Missing, duplicate, invalid or unexpected catalog
+entries still fail validation. No environment variable can add exclusions, and explicitly selecting
+style71 fails with the documented exclusion rather than silently producing an empty run.
+
+Every report records `exclusions.json`: original manifest style count, included style count, and
+ID71 with reason code `CDN_RETURNED_HTML_FOR_STYLE_DOCUMENT` and the fixed explanation. The HTML
+report links this receipt. The remaining33 styles run under both compatibility profiles, with all
+cases, source acquisitions, label checks and aggregate required-capability assertions unchanged.
+This exclusion is an upstream availability exception, not evidence that style71 renders correctly.
+Remove it only after the endpoint reliably returns a valid style document and rerun the full gate.
+
 ## Credential-free Coverage Manifest
 
 `rentile-v1-coverage.json` commits only stable map IDs, the supported z0–z22 range, XYZ cases, seam mosaics, overzoom gates, capability names and their expected dispositions, and the diagnostic policy that turns known omissions into gate failures. It contains no style JSON, style URL, provider URL, credential, or frozen layer count.
@@ -77,6 +94,63 @@ RENTILE_CORPUS_REPORT_DIR="$PWD/build/reports/rentile-corpus" \
 ```
 
 The report contains PNG tiles, available 3×3 mosaics, `results.tsv`, a capability ledger, and a contact sheet. The ledger separates `DECLARED_ONLY` from `EMITTED`: label capabilities reach `EMITTED` only through sampled candidate semantics, and its final column records credential-free evidence such as `text-fit:BOTH`, `placement:LINE,line-geometry`, `non-default:7.0`, or `differing-values`. Other dispositions retain `EXERCISED`/`MISSING`. `results.tsv` also carries one label-acquisition row per style per label case, tagged `label:<case-id>`, with the candidate count, atlas dimensions, glyph-range count and redacted diagnostic codes described above. It never contains catalog responses, style JSON, source caches, resource URLs, query strings, provider responses, or raw layer IDs — the label rows carry only counts and dimensions, never a glyphs URL or a font stack that could identify a provider account.
+
+## Comparing original raster acquisition
+
+The opt-in legacy comparison runs the same host harness against 0.15.1 and the current
+`RasterAcquisitionDensity.OUTPUT_ZOOM` implementation. The harness uses reflection only at this
+test boundary so its source can remain identical while the production API changes. Baseline mode
+rejects a library exposing the new acquisition setting; candidate mode requires it.
+
+Run `MapCatalogCorpusSmokeTest.rendersPublicCatalogCoverageThroughPublicInterface` first with
+the 0.15.1 production source and these additional environment variables:
+
+```shell
+RENTILE_CORPUS_SNAPSHOT_MODE=CAPTURE
+RENTILE_CORPUS_ACQUISITION=BASELINE
+RENTILE_CORPUS_PRIVATE_SNAPSHOT_DIR="$PWD/build/private-legacy-snapshot"
+RENTILE_CORPUS_REPORT_DIR="$PWD/build/reports/legacy-before"
+```
+
+Then run the identical harness against current source, changing the first two values to `REPLAY`
+and `OUTPUT_ZOOM`, and the report directory to `build/reports/legacy-after`. Keep the snapshot
+directory unchanged. Replay never calls the underlying transport: an uncaptured request or a
+modified response fails. Capture itself reuses its first response for repeated identical requests.
+Capture requires an empty snapshot directory and creates a clock-epoch file exclusively. Both
+runs inject that same constant `RentileClock`, so elapsed wall time cannot alter freshness or
+validator requests. Replay rejects a missing or malformed epoch; capture cannot reuse a snapshot.
+The ordinary native-density gate continues using the system clock and live transport.
+
+While the explicit style71 exclusion is active, the comparator requires the baseline to run in
+`REPLAY` / `BASELINE` mode too. Use the existing verified private capture, or first initialize a
+fresh capture as above, then rerender 0.15.1 into a **new** baseline report with `REPLAY` before
+running the candidate. A prior capture whose only failure was excluded style71 may supply the
+raw inputs; none of its PNGs or success assertions are reused. Every included style/profile is
+rendered again. A missing input or changed body fails without network fallback. Both exclusion
+receipts must name only71 with the exact documented reason and original/included catalog counts.
+
+Both runs render the full Coverage Manifest case matrix for every included style under both compatibility profiles at 512 pixels.
+Raster styles additionally sample 256/512 pixels, with and without hillshade, at z0/1/12/18/19/22;
+the ordinary native-density corpus gate remains unchanged.
+
+**The snapshot contains raw provider responses, including credential-bearing style/catalog
+documents and response headers. Keep it private, outside the report directory, never commit or
+publish it, and exclude it from public evidence archives.** Its filenames are hashes; report
+ledgers contain only request/response digests, classes, limits, status and lengths.
+
+Compare the completed reports with:
+
+```shell
+python3 tools/compare_legacy_corpus.py build/reports/legacy-before build/reports/legacy-after \
+  --result build/reports/legacy-comparison.json
+python3 -m unittest discover -s tools/tests -p 'test_compare_legacy_corpus.py'
+```
+
+The comparator requires successful full-profile coverage, checks every encoded output file against
+its manifest, requires the supplemental matrix, and compares acquisition request/response
+multisets and encoded output bytes exactly. It does not assert cache keys are identical: the
+explicit compatibility setting deliberately has a separate output-cache identity. Record source
+revisions and an identical harness digest alongside the result when temporarily switching source.
 
 ## GitHub Actions
 

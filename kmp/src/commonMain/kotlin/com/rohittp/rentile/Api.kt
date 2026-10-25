@@ -166,6 +166,19 @@ public enum class RenderPriority {
     NORMAL,
 }
 
+/** How raster imagery source coordinates are chosen for an output tile. */
+public enum class RasterAcquisitionDensity {
+    /** Match source texels to output pixels using the declared source tile size (since 0.16.0). */
+    NATIVE,
+
+    /**
+     * Use the output tile's zoom, bounded by source maxzoom, independently of pixel dimensions.
+     * Reproduces raster acquisition, source-minzoom availability and ancestor cropping from
+     * 0.15.1. A larger output magnifies the same source imagery rather than fetching finer tiles.
+     */
+    OUTPUT_ZOOM,
+}
+
 /**
  * Content-affecting controls for output-tile creation.
  *
@@ -187,6 +200,8 @@ public data class RenderOptions(
     public val outputSizePx: Int = DEFAULT_OUTPUT_SIZE_PX,
     /** Allows hosts to prepare temporary, separately cached map coverage before hillshade. */
     public val includeHillshade: Boolean = true,
+    /** Raster imagery acquisition only; vector, hillshade and DEM sampling are unaffected. */
+    public val rasterAcquisitionDensity: RasterAcquisitionDensity = RasterAcquisitionDensity.NATIVE,
 ) {
     init {
         require(outputSizePx in SUPPORTED_OUTPUT_SIZES) {
