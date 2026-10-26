@@ -33,6 +33,14 @@ independently of pixel dimensions, for consumers retaining that interactive cost
 output tile's zoom, and DEM/hillshade source sampling stays independent (ADR0038).
 _Avoid_: Output tile, Label Tile
 
+**Native Imagery Detail Ceiling**:
+A network-free report of the last supported Output Tile zoom needed to fetch a raster source's
+maximum level under the caller's Render Options and represent its observed payload texels at the
+output size. It stays unknown until every retained imagery source has a validated dimension and
+reports rasterized vector layers separately. Rentile reports this fact; the consumer owns output
+LOD policy and must preserve the finer output zoom needed by other layers. See ADR 0041.
+_Avoid_: Automatic maxzoom clamp, guaranteed provider resolution
+
 **Raw Resource**:
 The exact encoded style, source metadata, source tile, sprite, glyph range, or GeoJSON bytes acquired before compilation or decoding.
 _Avoid_: Decoded source data, output tile

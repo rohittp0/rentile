@@ -94,7 +94,26 @@ internal data class CompiledRasterSource(
     val bounds: SourceBounds? = null,
     val resourceClass: ResourceClass = ResourceClass.RASTER_TILE,
     val demEncoding: DemEncoding? = null,
-)
+) {
+    // Only a dimension is retained, never resource bytes or decoded pixels. Max is conservative
+    // for providers whose actual payload size varies; it cannot discard already observed detail.
+    @OptIn(ExperimentalAtomicApi::class)
+    private val observedPayloadDimension = AtomicReference<Int?>(null)
+
+    @OptIn(ExperimentalAtomicApi::class)
+    fun observePayloadDimensions(width: Int, height: Int) {
+        if (resourceClass != ResourceClass.RASTER_TILE) return
+        val dimension = maxOf(width, height)
+        while (true) {
+            val current = observedPayloadDimension.load()
+            if (current != null && current >= dimension) return
+            if (observedPayloadDimension.compareAndSet(current, dimension)) return
+        }
+    }
+
+    @OptIn(ExperimentalAtomicApi::class)
+    fun observedPayloadDimension(): Int? = observedPayloadDimension.load()
+}
 
 internal enum class DemEncoding {
     MAPBOX,

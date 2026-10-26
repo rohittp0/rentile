@@ -28,6 +28,7 @@ import com.rohittp.rentile.PngEncodingException
 import com.rohittp.rentile.PreparedBatch
 import com.rohittp.rentile.PreparedBatchClosedException
 import com.rohittp.rentile.PreparedStyle
+import com.rohittp.rentile.RasterImageryDetailCeiling
 import com.rohittp.rentile.RasterizationException
 import com.rohittp.rentile.RasterizerClosedException
 import com.rohittp.rentile.RawResourceKey
@@ -118,6 +119,7 @@ import com.rohittp.rentile.internal.style.IconDrawLayer
 import com.rohittp.rentile.internal.style.HillshadeDrawLayer
 import com.rohittp.rentile.internal.style.LineDrawLayer
 import com.rohittp.rentile.internal.style.RasterDrawLayer
+import com.rohittp.rentile.internal.style.VectorDrawLayer
 import com.rohittp.rentile.internal.style.RasterResampling
 import com.rohittp.rentile.internal.style.SymbolPlacement
 import com.rohittp.rentile.internal.style.StyleCompiler
@@ -706,6 +708,34 @@ private class DefaultBasemapRasterizer(
 
     override fun hasRasterImagery(style: PreparedStyle): Boolean =
         requireOwnedStyle(style).drawLayers.any { it is RasterDrawLayer }
+
+    override fun rasterImageryDetailCeiling(
+        style: PreparedStyle,
+        options: RenderOptions,
+    ): RasterImageryDetailCeiling? {
+        val compiled = requireOwnedStyle(style)
+        val imagery = compiled.drawLayers.filterIsInstance<RasterDrawLayer>().map { it.source }.distinct()
+        if (imagery.isEmpty()) return null
+        val dimensions = imagery.map { it.observedPayloadDimension() }
+        val maximumZoom = if (dimensions.any { it == null }) null else imagery.indices.maxOf { index ->
+            val source = imagery[index]
+            val declaredDelta = options.outputSizePx.countTrailingZeroBits() - source.tileSize.countTrailingZeroBits()
+            val densityDelta = if (options.rasterAcquisitionDensity == RasterAcquisitionDensity.OUTPUT_ZOOM) {
+                0
+            } else {
+                minOf(declaredDelta, options.maximumRasterSourceZoomDelta ?: declaredDelta)
+            }
+            val payloadDimension = requireNotNull(dimensions[index])
+            // ceil(log2(payload / output)); output sizes are powers of two, payloads need not be.
+            val payloadDelta = Int.SIZE_BITS - (payloadDimension - 1).countLeadingZeroBits() -
+                options.outputSizePx.countTrailingZeroBits()
+            maxOf(source.maxZoom - densityDelta, source.maxZoom + payloadDelta)
+        }.coerceIn(compiled.policy.minimumOutputZoom, compiled.policy.maximumOutputZoom)
+        return RasterImageryDetailCeiling(
+            maximumOutputZoom = maximumZoom,
+            hasRasterizedVectorLayers = compiled.drawLayers.any { it is VectorDrawLayer },
+        )
+    }
 
     override suspend fun warmRawResources(
         style: PreparedStyle,

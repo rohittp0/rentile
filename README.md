@@ -6,6 +6,12 @@ Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a
 
 Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
+`0.19.0` adds the network-free `rasterImageryDetailCeiling(style, options)` report. It combines
+source maxzoom, acquisition options and validated payload dimensions without changing rendering or
+choosing an output zoom. Its vector-layer flag lets consumers preserve mixed-style output detail.
+See the [0.19.0 migration guide](docs/migrations/0.19.0.md) and
+[ADR 0041](docs/adr/0041-report-observed-native-imagery-detail.md).
+
 `0.18.0` adds the optional `RenderOptions.maximumRasterSourceZoomDelta`. With native acquisition,
 set it to `1` to limit density-derived source zoom to at most output zoom + 1 and source maxzoom,
 without changing source declarations, output dimensions or layer evaluation. Null preserves the

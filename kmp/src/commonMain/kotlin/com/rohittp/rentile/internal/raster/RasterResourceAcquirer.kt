@@ -91,6 +91,7 @@ internal class RasterResourceAcquirer(
                     null
                 }
                 if (decoded != null) {
+                    sample.source.observePayloadDimensions(decoded.width, decoded.height)
                     val diagnostic = cacheDiagnostic(DiagnosticCode.RESOURCE_CACHE_HIT, sanitizedId, sample)
                     configuration.metricsSink.recordSafely(
                         RentileMetric(MetricName.RAW_CACHE_HIT, resourceClass = sample.source.resourceClass),
@@ -149,6 +150,7 @@ internal class RasterResourceAcquirer(
         }
         val decoded = shared.decoded?.takeIf { !retainPixels || it.rgba != null }
             ?: validateRasterOrThrow(shared.bytes, sanitizedId, sample, retainPixels)
+        sample.source.observePayloadDimensions(decoded.width, decoded.height)
         return RasterResource(
             sample = sample,
             bytes = shared.bytes,

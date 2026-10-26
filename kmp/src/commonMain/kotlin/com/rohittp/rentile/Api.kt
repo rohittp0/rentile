@@ -1208,10 +1208,41 @@ public data class RenderBatch(
     public val diagnostics: List<RenderDiagnostic> = emptyList(),
 )
 
+/**
+ * Observed native imagery detail, without choosing an output-tile policy for the consumer.
+ *
+ * [maximumOutputZoom] is unknown until every retained imagery source has a validated payload
+ * dimension. It is the last integer output zoom needed both to acquire the source's maximum
+ * data level under the queried options and to represent its observed texels at the output size.
+ * Larger observed payloads can raise it. This is not a promise about unseen provider payloads.
+ * [hasRasterizedVectorLayers] describes vector geometry or symbols retained in Output Tiles,
+ * including layers currently outside their zoom range; host-owned Label layers do not count.
+ */
+public data class RasterImageryDetailCeiling(
+    public val maximumOutputZoom: Int?,
+    public val hasRasterizedVectorLayers: Boolean,
+)
+
 /** Public renderer boundary. Implementations are process-local resource owners. */
 public interface BasemapRasterizer : AutoCloseable {
     /** Whether the prepared style retains visible raster imagery layers, excluding DEM/hillshade. */
     public fun hasRasterImagery(style: PreparedStyle): Boolean = false
+
+    /**
+     * Network-free imagery planning metadata, or null when no raster imagery is retained.
+     *
+     * Ordinary [prepareBatch] acquisition observes validated dimensions, including raw-store
+     * hits; raw warming alone does not decode and cannot establish them. Unknown dimensions yield
+     * a report with a null maximum zoom. DEM and hillshade are excluded. [options] affect the
+     * source-density saturation level, but this query never acquires, renders or changes a key.
+     * Existing implementations conservatively return null until they implement this report.
+     * Consumers must retain their output zoom where other output layers need it: this is a source
+     * detail report, not permission to change vector paint, label, or layer evaluation.
+     */
+    public fun rasterImageryDetailCeiling(
+        style: PreparedStyle,
+        options: RenderOptions = RenderOptions(),
+    ): RasterImageryDetailCeiling? = null
 
     /**
      * Selectively acquire source-backed scenery geometry from the authored extrusion sources.

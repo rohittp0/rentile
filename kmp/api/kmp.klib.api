@@ -396,6 +396,7 @@ abstract interface com.rohittp.rentile/BasemapRasterizer : kotlin/AutoCloseable 
     open fun extrusionLayerDescriptors(com.rohittp.rentile/PreparedStyle): kotlin.collections/List<com.rohittp.rentile/ExtrusionLayerDescriptor> // com.rohittp.rentile/BasemapRasterizer.extrusionLayerDescriptors|extrusionLayerDescriptors(com.rohittp.rentile.PreparedStyle){}[0]
     open fun hasRasterImagery(com.rohittp.rentile/PreparedStyle): kotlin/Boolean // com.rohittp.rentile/BasemapRasterizer.hasRasterImagery|hasRasterImagery(com.rohittp.rentile.PreparedStyle){}[0]
     open fun labelCandidateRequestKey(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions): kotlin/String // com.rohittp.rentile/BasemapRasterizer.labelCandidateRequestKey|labelCandidateRequestKey(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions){}[0]
+    open fun rasterImageryDetailCeiling(com.rohittp.rentile/PreparedStyle, com.rohittp.rentile/RenderOptions = ...): com.rohittp.rentile/RasterImageryDetailCeiling? // com.rohittp.rentile/BasemapRasterizer.rasterImageryDetailCeiling|rasterImageryDetailCeiling(com.rohittp.rentile.PreparedStyle;com.rohittp.rentile.RenderOptions){}[0]
     open suspend fun acquireExtrusionCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ExtrusionLimits = ..., com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/ExtrusionCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireExtrusionCandidates|acquireExtrusionCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ExtrusionLimits;com.rohittp.rentile.ResourceAccessMode){}[0]
     open suspend fun acquireLabelCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/LabelCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireLabelCandidates|acquireLabelCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions;com.rohittp.rentile.ResourceAccessMode){}[0]
     open suspend fun acquireSceneryCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, kotlin.collections/List<com.rohittp.rentile/SceneryLayerQuery>, com.rohittp.rentile/SceneryLimits = ..., com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/SceneryCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireSceneryCandidates|acquireSceneryCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;kotlin.collections.List<com.rohittp.rentile.SceneryLayerQuery>;com.rohittp.rentile.SceneryLimits;com.rohittp.rentile.ResourceAccessMode){}[0]
@@ -1482,6 +1483,22 @@ final class com.rohittp.rentile/ProviderCredential { // com.rohittp.rentile/Prov
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/ProviderCredential.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/ProviderCredential.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/ProviderCredential.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/RasterImageryDetailCeiling { // com.rohittp.rentile/RasterImageryDetailCeiling|null[0]
+    constructor <init>(kotlin/Int?, kotlin/Boolean) // com.rohittp.rentile/RasterImageryDetailCeiling.<init>|<init>(kotlin.Int?;kotlin.Boolean){}[0]
+
+    final val hasRasterizedVectorLayers // com.rohittp.rentile/RasterImageryDetailCeiling.hasRasterizedVectorLayers|{}hasRasterizedVectorLayers[0]
+        final fun <get-hasRasterizedVectorLayers>(): kotlin/Boolean // com.rohittp.rentile/RasterImageryDetailCeiling.hasRasterizedVectorLayers.<get-hasRasterizedVectorLayers>|<get-hasRasterizedVectorLayers>(){}[0]
+    final val maximumOutputZoom // com.rohittp.rentile/RasterImageryDetailCeiling.maximumOutputZoom|{}maximumOutputZoom[0]
+        final fun <get-maximumOutputZoom>(): kotlin/Int? // com.rohittp.rentile/RasterImageryDetailCeiling.maximumOutputZoom.<get-maximumOutputZoom>|<get-maximumOutputZoom>(){}[0]
+
+    final fun component1(): kotlin/Int? // com.rohittp.rentile/RasterImageryDetailCeiling.component1|component1(){}[0]
+    final fun component2(): kotlin/Boolean // com.rohittp.rentile/RasterImageryDetailCeiling.component2|component2(){}[0]
+    final fun copy(kotlin/Int? = ..., kotlin/Boolean = ...): com.rohittp.rentile/RasterImageryDetailCeiling // com.rohittp.rentile/RasterImageryDetailCeiling.copy|copy(kotlin.Int?;kotlin.Boolean){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RasterImageryDetailCeiling.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/RasterImageryDetailCeiling.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/RasterImageryDetailCeiling.toString|toString(){}[0]
 }
 
 final class com.rohittp.rentile/RasterizationException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/RasterizationException|null[0]

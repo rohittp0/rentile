@@ -252,6 +252,7 @@ class ApiContractTest {
             override val diagnostics: List<RenderDiagnostic> = emptyList()
         }
         assertFalse(legacy.hasRasterImagery(style))
+        assertEquals(null, legacy.rasterImageryDetailCeiling(style))
         assertEquals(RawWarmSummary(1, 2, 3), legacy.warmRawResources(
             style, listOf(TileId(0, 0, 0)), RenderOptions(1024), ResourceAccessMode.CACHE_ONLY,
         ))
