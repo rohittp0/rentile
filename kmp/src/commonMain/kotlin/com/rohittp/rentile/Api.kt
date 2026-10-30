@@ -242,7 +242,9 @@ public data class RenderOptions(
  * Rentile attaches no meaning to either string; the style author and the consumer agree on them.
  * Only `fill` layers (including flattened `fill-extrusion` footprints) and `line` layers drawn into
  * the Output Tile contribute. A matching layer that is hidden, outside its zoom range or of any
- * other type contributes nothing, and a non-string metadata value never matches.
+ * other type contributes nothing, and a non-string metadata value never matches. Background layers
+ * never contribute, so a style describes its material with explicit fills: a water-coloured
+ * background is not water. See [MaterialCoverage] for what later layers do to the result.
  */
 public data class MaterialCoverageRequest(
     public val metadataKey: String,
@@ -254,15 +256,24 @@ public data class MaterialCoverageRequest(
 }
 
 /**
- * The Material Coverage of one Output Tile, reported only when its [RenderOptions] requested one.
+ * The visible Material Coverage of one Output Tile, reported only when its [RenderOptions]
+ * requested one: how much of each output pixel shows the selected material in the finished tile.
  *
- * Coverage is geometric: how much of each output pixel the selected layers' filtered features
- * cover, drawn by the Output Tile's own draw code - same geometry, zoom, pixel ratio,
- * `fill-antialias`, `fill-translate`, outline, `line-width`, `line-gap-width`, `line-offset`,
- * `line-translate`, dashes, caps, joins and `line-blur`. Colour, opacity and pattern imagery do not
- * weaken it: a feature covering a pixel covers it fully even where its paint is translucent. The
- * mask is drawn by an 8-bit alpha blitter, so a value can differ by a rounding step per draw from
- * the alpha the same layer would leave painted opaque into an RGBA tile; its geometry does not.
+ * Layers apply in style order, drawn by the Output Tile's own draw code - same geometry, zoom,
+ * pixel ratio, `fill-antialias`, `fill-translate`, outline, `line-width`, `line-gap-width`,
+ * `line-offset`, `line-translate`, dashes, caps, joins and `line-blur`:
+ *
+ * - A selected layer adds its features' geometry at full strength. Its colour, opacity and pattern
+ *   do not weaken it: a translucent water fill still covers its pixels fully.
+ * - A later `fill` or `line` layer that is not selected - a bridge, road, pier or land patch over
+ *   water - hides what lies beneath it in proportion to the alpha it draws in the tile, paint
+ *   included: an opaque one to nothing, a half-transparent one by half. A selected layer after it
+ *   adds coverage back.
+ * - Layers before the first selected layer cannot hide anything above them, and background,
+ *   raster, hillshade, color-relief and icon layers never add or hide coverage.
+ *
+ * The mask is drawn by an 8-bit alpha blitter, so a value can differ by a rounding step per draw
+ * from the alpha the same layers would leave in an RGBA tile; its geometry does not.
  */
 public sealed interface MaterialCoverage {
     /** No pixel of the tile is covered, including when no layer matched the request. */

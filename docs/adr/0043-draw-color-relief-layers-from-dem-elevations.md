@@ -44,5 +44,11 @@ fails those as `UNSUPPORTED_RETAINED_CONSTRUCT` instead, as ADR 0026 does for au
 an author who wrote a `step` or a constant colour expects a relief, not an empty layer. Unknown
 paint or layout properties and a non-`raster-dem` source fail the same way.
 
+A DEM tile outside its source's bounds or zoom range is never fetched and the relief draws nothing
+there. A DEM tile that fails to load, `204` no-content included, fails the render with a typed
+`ResourceAcquisitionException`, exactly as hillshade always has. The relief's straight RGBA buffer
+and the copy Skia makes of it (eight bytes per output pixel) count against the output-surface safety
+ceiling when a tile has an active color-relief layer.
+
 `RenderOptions.includeHillshade = false` omits hillshade layers only. A color-relief layer is
 retained and still requires its DEM; `includeHillshade` keeps its literal meaning.

@@ -177,8 +177,147 @@ class ColorReliefTest {
         }
     }
 
-    private suspend fun renderRaw(rasterizer: BasemapRasterizer, style: PreparedStyle, size: Int): ByteArray =
-        rasterizer.prepareBatch(style, listOf(TileId(0, 0, 0)), RenderOptions(size)).use { batch ->
+    @Test
+    fun anOverzoomedTileSamplesItsQuadrantOfTheAncestorDem() = runTest {
+        val dem = halfAndHalfDem()
+        val requested = mutableListOf<String>()
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { request -> requested += request.url; TransportResponse(200, dem) },
+                rawResourceStore = InMemoryRawResourceStore(),
+            ),
+        )
+        try {
+            // DEM maxzoom 0: z1 tile x=0 reads the 0 m half of the z0 DEM, x=1 the 1000 m half.
+            val style = rasterizer.prepare(StyleInput.InlineJson(style(NEAREST, RAMP_RED_TO_BLUE)))
+            val west = renderRaw(rasterizer, style, 256, TileId(1, 0, 0))
+            val east = renderRaw(rasterizer, style, 256, TileId(1, 1, 1))
+            for (x in listOf(0, 64, 128, 192, 255)) {
+                assertPixel(west, 256, x, 100, 255, 0, 0, 255)
+                assertPixel(east, 256, x, 100, 0, 0, 255, 255)
+            }
+            assertEquals(setOf("https://dem.test/0/0/0.png"), requested.toSet())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun linearSamplesAtATileEdgeBlendWithTheRealNeighbourDem() = runTest {
+        val low = uniformDem(1, 134, 160) // 0 m
+        val high = uniformDem(1, 173, 176) // 1000 m
+        val requested = mutableListOf<String>()
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { request ->
+                    requested += request.url
+                    TransportResponse(200, if ("/1/1/" in request.url) high else low)
+                },
+                rawResourceStore = InMemoryRawResourceStore(),
+            ),
+        )
+        try {
+            val json = style(LINEAR, RAMP_RED_TO_BLUE).replace("\"maxzoom\":0", "\"maxzoom\":1")
+            val pixels = renderRaw(rasterizer, rasterizer.prepare(StyleInput.InlineJson(json)), 256, TileId(1, 0, 0))
+            // Mid-tile: all 0 m.
+            assertPixel(pixels, 256, 128, 128, 255, 0, 0, 255)
+            // Last column: source x 63.375, so 37.5% of the east neighbour's first texel, 375 m.
+            assertPixel(pixels, 256, 255, 128, 159, 0, 96, 255, tolerance = 1)
+            // First column: source x -0.375 wraps west across the antimeridian to the same 1000 m
+            // tile, again 37.5% of the way: the relief is seamless around the world.
+            assertPixel(pixels, 256, 0, 128, 159, 0, 96, 255, tolerance = 1)
+            assertTrue("https://dem.test/1/1/0.png" in requested, "the east neighbour must be acquired")
+            val nearest = renderRaw(
+                rasterizer,
+                rasterizer.prepare(StyleInput.InlineJson(json.replace(LINEAR, NEAREST))),
+                256,
+                TileId(1, 0, 0),
+            )
+            assertPixel(nearest, 256, 255, 128, 255, 0, 0, 255)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun anOutOfBoundsDemSkipsTheReliefAndAMissingOneFailsAsHillshadeDoes() = runTest {
+        var status = 204
+        var requests = 0
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { requests++; TransportResponse(status, ByteArray(0)) },
+                rawResourceStore = InMemoryRawResourceStore(),
+            ),
+        )
+        try {
+            val plain = """{"version":8,"layers":[{"id":"bg","type":"background","paint":{"background-color":"#ffffff"}}]}"""
+            fun withBackground(json: String) = json.replace("\"layers\":[", "\"layers\":[{\"id\":\"bg\",\"type\":\"background\",\"paint\":{\"background-color\":\"#ffffff\"}},")
+            // A DEM source whose bounds exclude the tile is never fetched; the relief draws nothing.
+            val bounded = withBackground(style(NEAREST, RAMP_RED_TO_BLUE))
+                .replace("\"maxzoom\":0", "\"maxzoom\":4,\"bounds\":[10,10,11,11]")
+            val far = TileId(4, 0, 0)
+            val skipped = renderRaw(rasterizer, rasterizer.prepare(StyleInput.InlineJson(bounded)), 256, far)
+            val reference = renderRaw(rasterizer, rasterizer.prepare(StyleInput.InlineJson(plain)), 256, far)
+            assertTrue(skipped.contentEquals(reference))
+            assertEquals(0, requests)
+
+            // A DEM the provider has no content or no tile for is typed absence, as for hillshade:
+            // drawing the tile without it would bake a gap into a validly keyed output tile.
+            for (code in listOf(204, 404)) {
+                status = code
+                for ((layer, json) in listOf(
+                    "color-relief" to """{"id":"relief","type":"color-relief","source":"dem","paint":{"color-relief-color":$RAMP_RED_TO_BLUE}}""",
+                    "hillshade" to """{"id":"hills","type":"hillshade","source":"dem"}""",
+                ).map { (name, layerJson) ->
+                    name to """{"version":8,"sources":{"dem":{"type":"raster-dem","tiles":["https://dem.test/$code/$name/{z}/{x}/{y}.png"],"tileSize":64,"maxzoom":0}},""" +
+                        """"layers":[{"id":"bg","type":"background","paint":{"background-color":"#ffffff"}},$layerJson]}"""
+                }) {
+                    val failure = assertFailsWith<ResourceAcquisitionException>("$layer $code") {
+                        renderRaw(rasterizer, rasterizer.prepare(StyleInput.InlineJson(json)), 256)
+                    }
+                    assertEquals(code, failure.statusCode, "$layer $code")
+                    assertEquals(ResourceClass.DEM_TILE, failure.resourceClass)
+                }
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun theOutputSurfaceCeilingCountsTheReliefBuffers() = runTest {
+        val dem = halfAndHalfDem()
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { TransportResponse(200, dem) },
+                rawResourceStore = InMemoryRawResourceStore(),
+                // Room for a 256 px RGBA surface, not for it plus the relief's RGBA buffer and copy.
+                resourceLimits = ResourceLimits(maxDecodedRasterBytes = 500_000L),
+            ),
+        )
+        try {
+            val hillshade = """{"version":8,"sources":{"dem":{"type":"raster-dem","tiles":["https://dem.test/{z}/{x}/{y}.png"],"tileSize":64,"maxzoom":0}},"layers":[{"id":"h","type":"hillshade","source":"dem"}]}"""
+            renderRaw(rasterizer, rasterizer.prepare(StyleInput.InlineJson(hillshade)), 256)
+            val failure = assertFailsWith<SafetyLimitException> {
+                renderRaw(rasterizer, rasterizer.prepare(StyleInput.InlineJson(style(NEAREST, RAMP_RED_TO_BLUE))), 256)
+            }
+            assertEquals(256L * 256L * 12L, failure.observed)
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    private suspend fun renderRaw(
+        rasterizer: BasemapRasterizer,
+        style: PreparedStyle,
+        size: Int,
+        tile: TileId = TileId(0, 0, 0),
+    ): ByteArray =
+        rasterizer.prepareBatch(style, listOf(tile), RenderOptions(size)).use { batch ->
             rasterizer.renderRaw(batch).tiles.single().rgbaBytes
         }
 
@@ -218,6 +357,27 @@ class ColorReliefTest {
         } finally {
             rasterizer.close()
             rasterizer.awaitClosed()
+        }
+    }
+
+    /** One Terrain-RGB colour across a 64 px DEM tile. */
+    private fun uniformDem(red: Int, green: Int, blue: Int): ByteArray {
+        val surface = Surface.makeRasterN32Premul(64, 64)
+        try {
+            surface.canvas.clear(Color.makeARGB(255, red, green, blue))
+            val image = surface.makeImageSnapshot()
+            try {
+                val encoded = image.encodeToData(EncodedImageFormat.PNG) ?: error("Skia could not encode the DEM")
+                try {
+                    return encoded.bytes
+                } finally {
+                    encoded.close()
+                }
+            } finally {
+                image.close()
+            }
+        } finally {
+            surface.close()
         }
     }
 

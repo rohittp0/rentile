@@ -214,6 +214,15 @@ private const val EARTH_CIRCUMFERENCE_METERS = 40_075_016.68557849
 private const val MAX_ANCESTOR_DISTANCE = 2
 /** Opaque ink for the Material Coverage pass, which records coverage alone (an A8 surface). */
 private const val COVERAGE_INK = Color.WHITE
+
+/** How a fill or line layer draws into a Material Coverage mask rather than the colour tile. */
+private enum class CoverageInk {
+    /** A selected layer: its geometry at full strength, whatever its paint. */
+    ADD,
+
+    /** A later unselected layer: its drawn alpha, paint included, removed from what lies beneath. */
+    ERASE,
+}
 // Bounds planning/queued encoded inputs before acquisition, including large declared64 mosaics.
 private const val MAX_RASTER_SAMPLES_PER_BATCH = 4096
 
@@ -2298,7 +2307,12 @@ private class DefaultBasemapRasterizer(
      * defaults - 8192 px and 256 MiB - clear every supported size with room to spare; a host that
      * has tightened them for a small device gets a diagnosable refusal.
      */
-    private fun enforceOutputSurfaceLimits(outputSizePx: Int, tile: TileId, withCoverage: Boolean) {
+    private fun enforceOutputSurfaceLimits(
+        outputSizePx: Int,
+        tile: TileId,
+        withCoverage: Boolean,
+        withColorRelief: Boolean,
+    ) {
         val maxDimension = configuration.resourceLimits.maxRasterDimensionPx
         if (outputSizePx > maxDimension) {
             throw SafetyLimitException(
@@ -2310,8 +2324,11 @@ private class DefaultBasemapRasterizer(
                 affectedTiles = listOf(tile),
             )
         }
-        // A requested Material Coverage mask is one more byte per pixel beside the RGBA surface.
-        val surfaceBytes = outputSizePx.toLong() * outputSizePx.toLong() * (if (withCoverage) 5L else 4L)
+        // A requested Material Coverage mask is one more byte per pixel beside the RGBA surface. A
+        // color-relief layer builds an output-sized straight RGBA buffer and Skia copies it into
+        // the image it draws: eight more. Neither adds anything when absent.
+        val bytesPerPixel = 4L + (if (withCoverage) 1L else 0L) + (if (withColorRelief) 8L else 0L)
+        val surfaceBytes = outputSizePx.toLong() * outputSizePx.toLong() * bytesPerPixel
         val decodedLimit = minOf(
             configuration.resourceLimits.maxDecodedRasterBytes,
             configuration.executionPolicy.maxResidentDecodedBytes,
@@ -2342,7 +2359,12 @@ private class DefaultBasemapRasterizer(
         finish: (Surface) -> T,
     ): DrawnTile<T> {
         val drawStarted = TimeSource.Monotonic.markNow()
-        enforceOutputSurfaceLimits(outputSizePx, tile, withCoverage = materialCoverage != null)
+        enforceOutputSurfaceLimits(
+            outputSizePx,
+            tile,
+            withCoverage = materialCoverage != null,
+            withColorRelief = layers.any { it is ColorReliefDrawLayer },
+        )
         val surface = try {
             Surface.makeRasterN32Premul(outputSizePx, outputSizePx)
         } catch (error: CancellationException) {
@@ -2437,10 +2459,16 @@ private class DefaultBasemapRasterizer(
     }
 
     /**
-     * The Material Coverage of one tile: the selected fill and line layers drawn again, in style
-     * order and through the same draw code as the colour pass, onto an 8-bit alpha surface with
-     * opaque ink. Same canvas transform, same geometry, same antialiasing, so every value aligns
-     * with the colour tile's pixel. Only layers already active in this tile are considered.
+     * The visible Material Coverage of one tile, drawn onto an 8-bit alpha surface through the same
+     * fill and line draw code as the colour pass, with the same canvas transform, geometry and
+     * antialiasing, so every value aligns with the colour tile's pixels.
+     *
+     * From the first selected layer onward, in style order, every fill and line layer active in
+     * this tile draws again: a selected one adds its geometry at full strength ([CoverageInk.ADD]),
+     * and an unselected one erases in proportion to the alpha it draws in the colour tile, paint
+     * included ([CoverageInk.ERASE]) - a bridge, road, pier or land patch over water hides it, a
+     * translucent one partly. Layers before the first selected one cannot hide anything above them.
+     * Background, raster, hillshade, color-relief and icon layers never add or erase.
      */
     private fun drawMaterialCoverage(
         request: MaterialCoverageRequest,
@@ -2450,15 +2478,13 @@ private class DefaultBasemapRasterizer(
         tile: TileId,
         sprites: SpriteRenderContext?,
     ): MaterialCoverage {
-        val selected = layers.filterIsInstance<VectorDrawLayer>().filter { layer ->
-            val metadata = when (layer) {
-                is FillDrawLayer -> layer.metadata
-                is LineDrawLayer -> layer.metadata
-                is IconDrawLayer -> null
-            }
-            metadata.declaresMaterial(request.metadataKey, request.metadataValue)
+        fun selected(layer: CompiledDrawLayer): Boolean = when (layer) {
+            is FillDrawLayer -> layer.metadata.declaresMaterial(request.metadataKey, request.metadataValue)
+            is LineDrawLayer -> layer.metadata.declaresMaterial(request.metadataKey, request.metadataValue)
+            else -> false
         }
-        if (selected.isEmpty()) return MaterialCoverage.None
+        val first = layers.indexOfFirst(::selected)
+        if (first < 0) return MaterialCoverage.None
         val info = ImageInfo.makeA8(outputSizePx, outputSizePx)
         val surface = try {
             Surface.makeRaster(info)
@@ -2476,13 +2502,19 @@ private class DefaultBasemapRasterizer(
             val styleScale = outputSizePx.toDouble() / STYLE_REFERENCE_TILE_SIZE_PX
             if (styleScale != 1.0) surface.canvas.scale(styleScale.toFloat(), styleScale.toFloat())
             val logicalSizePx = STYLE_REFERENCE_TILE_SIZE_PX
-            for (layer in selected) {
-                val resource = vectorResources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest }
-                    ?: continue
+            fun resourceFor(layer: VectorDrawLayer): VectorResource? =
+                vectorResources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest }
+            for (layer in layers.subList(first, layers.size)) {
+                val ink = if (selected(layer)) CoverageInk.ADD else CoverageInk.ERASE
                 when (layer) {
-                    is FillDrawLayer -> drawFill(surface, layer, resource, logicalSizePx, tile, sprites, coverageOnly = true)
-                    is LineDrawLayer -> drawLine(surface, layer, resource, logicalSizePx, tile, sprites, coverageOnly = true)
-                    is IconDrawLayer -> Unit
+                    is FillDrawLayer -> resourceFor(layer)?.let { resource ->
+                        drawFill(surface, layer, resource, logicalSizePx, tile, sprites, ink)
+                    }
+                    is LineDrawLayer -> resourceFor(layer)?.let { resource ->
+                        drawLine(surface, layer, resource, logicalSizePx, tile, sprites, ink)
+                    }
+                    is BackgroundDrawLayer, is RasterDrawLayer, is HillshadeDrawLayer,
+                    is ColorReliefDrawLayer, is IconDrawLayer -> Unit
                 }
             }
             val bitmap = Bitmap()
@@ -2972,18 +3004,20 @@ private class DefaultBasemapRasterizer(
         logicalSizePx: Int,
         tile: TileId,
         sprites: SpriteRenderContext?,
-        coverageOnly: Boolean = false,
+        coverageInk: CoverageInk? = null,
     ) {
         val sourceLayer = resource.tile.layers.singleOrNull { it.name == layer.sourceLayer } ?: return
         val fillPaint = Paint().apply {
             mode = PaintMode.FILL
             isAntiAlias = layer.antialias
+            if (coverageInk == CoverageInk.ERASE) blendMode = BlendMode.DST_OUT
         }
         val outlinePaint = layer.outlineColor?.let {
             Paint().apply {
                 mode = PaintMode.STROKE
                 strokeWidth = 1f
                 isAntiAlias = layer.antialias
+                if (coverageInk == CoverageInk.ERASE) blendMode = BlendMode.DST_OUT
             }
         }
         try {
@@ -2994,7 +3028,7 @@ private class DefaultBasemapRasterizer(
                 val opacity = evaluatedOpacity(layer.opacity.evaluate(context), "fill-opacity", tile)
                 val translation = evaluatedNumberArray(layer.translate.evaluate(context), "fill-translate", tile, 2)
                 val patternName = layer.pattern?.evaluate(context)?.let { evaluatePatternName(it, "fill-pattern", tile) }
-                if (coverageOnly) {
+                if (coverageInk == CoverageInk.ADD) {
                     fillPaint.color = COVERAGE_INK
                 } else if (patternName == null) {
                     fillPaint.color = paintColor(evaluatedColor(layer.color.evaluate(context), "fill-color", tile), opacity)
@@ -3025,14 +3059,17 @@ private class DefaultBasemapRasterizer(
                             // Coverage still skips a feature whose pattern is missing, because
                             // the colour pass draws nothing for it either.
                             val sprite = sprites?.image(patternName) ?: continue
-                            if (coverageOnly) {
+                            if (coverageInk == CoverageInk.ADD) {
                                 surface.canvas.drawPath(path, fillPaint)
                             } else {
-                                drawRepeatedPattern(surface, path, sprite, opacity, tile, logicalSizePx)
+                                drawRepeatedPattern(
+                                    surface, path, sprite, opacity, tile, logicalSizePx,
+                                    blendMode = if (coverageInk == CoverageInk.ERASE) BlendMode.DST_OUT else null,
+                                )
                             }
                         }
                         if (outlinePaint != null) {
-                            outlinePaint.color = if (coverageOnly) COVERAGE_INK else paintColor(evaluatedColor(
+                            outlinePaint.color = if (coverageInk == CoverageInk.ADD) COVERAGE_INK else paintColor(evaluatedColor(
                                 layer.outlineColor.evaluate(context),
                                 "fill-outline-color",
                                 tile,
@@ -3059,7 +3096,7 @@ private class DefaultBasemapRasterizer(
         logicalSizePx: Int,
         tile: TileId,
         sprites: SpriteRenderContext?,
-        coverageOnly: Boolean = false,
+        coverageInk: CoverageInk? = null,
     ) {
         val sourceLayer = resource.tile.layers.singleOrNull { it.name == layer.sourceLayer } ?: return
         val features = sourceLayer.features.withIndex()
@@ -3087,6 +3124,7 @@ private class DefaultBasemapRasterizer(
                 CompiledLineJoin.ROUND -> PaintStrokeJoin.ROUND
             }
             isAntiAlias = true
+            if (coverageInk == CoverageInk.ERASE) blendMode = BlendMode.DST_OUT
         }
         try {
             for ((_, feature) in features) {
@@ -3115,7 +3153,7 @@ private class DefaultBasemapRasterizer(
                 val patternShader = patternName?.let { name ->
                     // As for fills: a missing pattern skips the feature in both passes.
                     val sprite = sprites?.image(name) ?: continue
-                    if (coverageOnly) return@let null
+                    if (coverageInk == CoverageInk.ADD) return@let null
                     sprite.image.makeShader(
                         FilterTileMode.REPEAT,
                         FilterTileMode.REPEAT,
@@ -3126,7 +3164,7 @@ private class DefaultBasemapRasterizer(
                         ),
                     )
                 }
-                if (coverageOnly) {
+                if (coverageInk == CoverageInk.ADD) {
                     paint.color = COVERAGE_INK
                 } else if (patternShader == null) {
                     paint.color = paintColor(evaluatedColor(layer.color.evaluate(context), "line-color", tile), opacity)
@@ -3683,6 +3721,8 @@ private class DefaultBasemapRasterizer(
         opacity: Double,
         tile: TileId,
         logicalSizePx: Int,
+        /** Null draws as the colour pass always has; a Material Coverage erase passes DST_OUT. */
+        blendMode: BlendMode? = null,
     ) {
         val logicalWidth = sprite.entry.width / sprite.entry.pixelRatio
         val logicalHeight = sprite.entry.height / sprite.entry.pixelRatio
@@ -3694,7 +3734,10 @@ private class DefaultBasemapRasterizer(
         }
         val canvas = surface.canvas
         val saveCount = canvas.save()
-        val paint = Paint().apply { alpha = (opacity * 255.0).roundToInt().coerceIn(0, 255) }
+        val paint = Paint().apply {
+            alpha = (opacity * 255.0).roundToInt().coerceIn(0, 255)
+            blendMode?.let { this.blendMode = it }
+        }
         try {
             clipPath?.let { canvas.clipPath(it, ClipMode.INTERSECT, true) }
             val globalX = canonicalX(tile) * logicalSizePx.toDouble()
@@ -4239,14 +4282,23 @@ private fun drawLinePath(
     // Style space, like every other bound in the draw path: the canvas may be scaled by
     // `outputSizePx / STYLE_REFERENCE_TILE_SIZE_PX`, in which case the surface's own dimensions
     // are not the coordinates anything here is expressed in.
+    // A Material Coverage erase draws with DST_OUT. The replacement passes below build the line in
+    // this layer, so the layer must be built source-over and only composited with the paint's mode;
+    // the colour pass draws source-over and keeps its unpainted layer exactly as before.
+    val layerPaint = if (originalBlendMode != BlendMode.SRC_OVER) {
+        Paint().apply { blendMode = originalBlendMode }
+    } else {
+        null
+    }
     val layerSaveCount = canvas.saveLayer(
         0f,
         0f,
         logicalSizePx.toFloat(),
         logicalSizePx.toFloat(),
-        null,
+        layerPaint,
     )
     try {
+        paint.blendMode = BlendMode.SRC_OVER
         canvas.drawPath(path, paint)
         paint.strokeJoin = PaintStrokeJoin.MITER
         paint.strokeCap = PaintStrokeCap.BUTT
@@ -4285,6 +4337,7 @@ private fun drawLinePath(
         }
     } finally {
         canvas.restoreToCount(layerSaveCount)
+        layerPaint?.close()
         paint.pathEffect = originalPathEffect
         paint.blendMode = originalBlendMode
         paint.strokeMiter = originalMiter

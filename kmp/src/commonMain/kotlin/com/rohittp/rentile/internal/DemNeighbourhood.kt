@@ -22,12 +22,28 @@ internal class DemNeighbourhood(
     val height: Int get() = centerPixels.height
     private val sourceDimension = 1L shl center.sourceZ
 
+    /**
+     * The tile each of the nine offsets -1..1 resolves to, looked up once: [heightAt] runs per
+     * sample, and on the uncached path a map lookup there allocated a key for every one.
+     */
+    private val adjacent: Array<HillshadeDemPixels> = Array(9) { index ->
+        lookup(index % 3 - 1, index / 3 - 1)
+    }
+
+    private fun lookup(deltaX: Int, deltaY: Int): HillshadeDemPixels {
+        val sourceX = floorMod(center.sourceX.toLong() + deltaX, sourceDimension).toInt()
+        return decoded[sourceX to center.sourceY + deltaY] ?: centerPixels
+    }
+
     fun heightAt(sourcePixelX: Int, sourcePixelY: Int): Double {
         val deltaX = floor(sourcePixelX.toDouble() / width).toInt()
         val deltaY = floor(sourcePixelY.toDouble() / height).toInt()
-        val sourceX = floorMod(center.sourceX.toLong() + deltaX, sourceDimension).toInt()
         val sourceY = center.sourceY + deltaY
-        val bitmap = decoded[sourceX to sourceY] ?: centerPixels
+        val bitmap = if (deltaX in -1..1 && deltaY in -1..1) {
+            adjacent[(deltaY + 1) * 3 + deltaX + 1]
+        } else {
+            lookup(deltaX, deltaY)
+        }
         val localX = floorMod(sourcePixelX.toLong(), width.toLong()).toInt()
         val localY = sourcePixelY.coerceIn(0, height - 1)
             .let { value ->

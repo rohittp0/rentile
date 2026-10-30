@@ -238,6 +238,86 @@ class MaterialCoverageTest {
     }
 
     @Test
+    fun anOverzoomedTileCoversTheOverzoomedGeometry() = runTest {
+        val tile = sceneTile()
+        val requested = mutableListOf<String>()
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { request -> requested += request.url; TransportResponse(200, tile) },
+                rawResourceStore = InMemoryRawResourceStore(),
+            ),
+        )
+        try {
+            // Source maxzoom 0, output z2: the z0 tile's geometry is cut and scaled by four.
+            val output = TileId(2, 1, 1)
+            val layer = ALIGNMENT_LAYERS.getValue("plain fill")
+            val tagged = rasterizer.prepare(StyleInput.InlineJson(overzoomStyleWith(layer(true, "#3366ff", 0.35))))
+            val mask = assertIs<MaterialCoverage.Mask>(
+                rasterizer.render(tagged, listOf(output), RenderOptions(512, materialCoverage = WATER))
+                    .tiles.single().materialCoverage,
+            )
+            val opaque = rasterizer.prepare(StyleInput.InlineJson(overzoomStyleWith(layer(false, "#ffffff", 1.0))))
+            val reference = rasterizer.prepareBatch(opaque, listOf(output), RenderOptions(512)).use { batch ->
+                rasterizer.renderRaw(batch).tiles.single().rgbaBytes
+            }
+            // The lake interior at extent (1638, 1434) is at (0.6, 0.4) of tile 2/1/1, translated.
+            assertEquals(255, mask.at(0.6 to 0.4))
+            val worst = (0 until 512 * 512).maxOf { pixel ->
+                abs((mask.coverage[pixel].toInt() and 0xff) - (reference[pixel * 4 + 3].toInt() and 0xff))
+            }
+            assertTrue(worst <= 1, "overzoomed coverage differs from drawn alpha by $worst")
+            assertEquals(setOf("https://v.test/0/0/0.pbf"), requested.toSet())
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
+    fun anEmptyOrOutOfBoundsVectorTileReportsNoCoverageAndAMissingOneFailsAsWithoutARequest() = runTest {
+        var status = 204
+        var requests = 0
+        val rasterizer = Rentile.create(
+            RentileConfiguration(
+                transport = ResourceTransport { requests++; TransportResponse(status, ByteArray(0)) },
+                rawResourceStore = InMemoryRawResourceStore(),
+            ),
+        )
+        try {
+            val tile = TileId(0, 0, 0)
+            // 204 No Content is an empty vector tile: the colour tile renders, nothing is covered.
+            val empty = rasterizer.prepare(StyleInput.InlineJson(SCENE_STYLE))
+            val rendered = rasterizer.render(empty, listOf(tile), RenderOptions(256, materialCoverage = WATER)).tiles.single()
+            assertTrue(rendered.pngBytes.isNotEmpty())
+            assertSame(MaterialCoverage.None, rendered.materialCoverage)
+
+            // A source whose bounds exclude the tile is never fetched and covers nothing.
+            val before = requests
+            val bounded = rasterizer.prepare(
+                StyleInput.InlineJson(SCENE_STYLE.replace("\"maxzoom\":14", "\"maxzoom\":14,\"bounds\":[10,10,11,11]")),
+            )
+            val far = TileId(4, 0, 0)
+            val outside = rasterizer.render(bounded, listOf(far), RenderOptions(256, materialCoverage = WATER)).tiles.single()
+            assertSame(MaterialCoverage.None, outside.materialCoverage)
+            assertEquals(before, requests)
+
+            // A missing tile is a typed acquisition failure, exactly as for the colour tile alone:
+            // a mask must never report "no water" for data it could not read.
+            status = 404
+            val missing = rasterizer.prepare(StyleInput.InlineJson(SCENE_STYLE.replace("https://v.test/", "https://v.test/missing/")))
+            for (options in listOf(RenderOptions(256), RenderOptions(256, materialCoverage = WATER))) {
+                val failure = assertFailsWith<ResourceAcquisitionException> {
+                    rasterizer.render(missing, listOf(tile), options)
+                }
+                assertEquals(404, failure.statusCode)
+            }
+        } finally {
+            rasterizer.close()
+            rasterizer.awaitClosed()
+        }
+    }
+
+    @Test
     fun theOutputSurfaceCeilingCountsTheCoverageMask() = runTest {
         val tile = sceneTile()
         // Room for a 512 px RGBA surface (1 MiB) but not for it plus a one-byte-per-pixel mask.
@@ -365,6 +445,9 @@ class MaterialCoverageTest {
         val RIVER_POINT = fraction(900) to fraction(3500)
 
         private fun fraction(coordinate: Int): Double = (coordinate + 0.5) / EXTENT
+
+        fun overzoomStyleWith(vararg layers: String): String =
+            styleWith(*layers).replace("\"maxzoom\":14", "\"maxzoom\":0")
 
         fun styleWith(vararg layers: String): String =
             """{"version":8,"sources":{"v":{"type":"vector","tiles":["https://v.test/{z}/{x}/{y}.pbf"],"maxzoom":14}},""" +
