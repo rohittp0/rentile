@@ -12,6 +12,7 @@ import com.rohittp.rentile.internal.sprite.CompiledSpriteAtlas
 import com.rohittp.rentile.internal.sprite.SpriteAtlasEntry
 import com.rohittp.rentile.internal.sprite.SpriteReference
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.math.PI
@@ -187,6 +188,38 @@ internal data class HillshadeDrawLayer(
         zoom >= minZoom && zoom < maxZoom && zoom >= source.minZoom
 }
 
+/**
+ * A `color-relief` layer: each output pixel coloured by the elevation its DEM neighbourhood decodes
+ * to, through [stops]. Only the stop colours of the authored `interpolate` are used and the ramp is
+ * linear between them, as MapLibre GL builds its colour-ramp texture; see ADR 0043.
+ */
+internal data class ColorReliefDrawLayer(
+    val source: CompiledRasterSource,
+    val opacity: CompiledStyleProperty,
+    val stops: List<ColorReliefStop>,
+    val resampling: RasterResampling,
+    override val minZoom: Double,
+    override val maxZoom: Double,
+) : CompiledDrawLayer {
+    override fun isActiveAt(zoom: Int): Boolean =
+        zoom >= minZoom && zoom < maxZoom && zoom >= source.minZoom
+}
+
+/** One `color-relief-color` stop: an elevation in metres and the colour authored for it. */
+internal data class ColorReliefStop(
+    val elevation: Double,
+    val color: CompiledStyleProperty,
+)
+
+/**
+ * Whether a layer's `metadata` maps [key] to the JSON string [value], the one rule that selects a
+ * layer for a [com.rohittp.rentile.MaterialCoverageRequest].
+ */
+internal fun JsonObject?.declaresMaterial(key: String, value: String): Boolean {
+    val element = this?.get(key) as? JsonPrimitive ?: return false
+    return element.isString && element.content == value
+}
+
 internal sealed interface VectorDrawLayer : CompiledDrawLayer {
     val source: CompiledVectorSource
     val sourceLayer: String
@@ -206,6 +239,8 @@ internal data class FillDrawLayer(
     val translateAnchor: TranslateAnchor,
     override val minZoom: Double,
     override val maxZoom: Double,
+    /** The layer's `metadata` object, read only by Material Coverage selection. */
+    val metadata: JsonObject? = null,
 ) : VectorDrawLayer
 
 internal enum class CompiledLineCap {
@@ -374,6 +409,8 @@ internal data class LineDrawLayer(
     val translate: CompiledStyleProperty,
     override val minZoom: Double,
     override val maxZoom: Double,
+    /** The layer's `metadata` object, read only by Material Coverage selection. */
+    val metadata: JsonObject? = null,
 ) : VectorDrawLayer
 
 internal data class IconDrawLayer(

@@ -39,6 +39,8 @@ import com.rohittp.rentile.RenderOptions
 import com.rohittp.rentile.RasterAcquisitionDensity
 import com.rohittp.rentile.RenderPriority
 import com.rohittp.rentile.RenderedTile
+import com.rohittp.rentile.MaterialCoverage
+import com.rohittp.rentile.MaterialCoverageRequest
 import com.rohittp.rentile.ExactRecoveryResult
 import com.rohittp.rentile.ResourceSubstitution
 import com.rohittp.rentile.ResourceLimits
@@ -117,6 +119,9 @@ import com.rohittp.rentile.internal.style.DemEncoding
 import com.rohittp.rentile.internal.style.FillDrawLayer
 import com.rohittp.rentile.internal.style.IconDrawLayer
 import com.rohittp.rentile.internal.style.HillshadeDrawLayer
+import com.rohittp.rentile.internal.style.ColorReliefDrawLayer
+import com.rohittp.rentile.internal.style.CompiledRasterSource
+import com.rohittp.rentile.internal.style.declaresMaterial
 import com.rohittp.rentile.internal.style.LineDrawLayer
 import com.rohittp.rentile.internal.style.RasterDrawLayer
 import com.rohittp.rentile.internal.style.VectorDrawLayer
@@ -129,6 +134,8 @@ import com.rohittp.rentile.internal.style.spriteAnchoring
 import com.rohittp.rentile.RawRenderBatch
 import com.rohittp.rentile.RawRenderedTile
 import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -205,6 +212,8 @@ internal fun createBasemapRasterizer(
 
 private const val EARTH_CIRCUMFERENCE_METERS = 40_075_016.68557849
 private const val MAX_ANCESTOR_DISTANCE = 2
+/** Opaque ink for the Material Coverage pass, which records coverage alone (an A8 surface). */
+private const val COVERAGE_INK = Color.WHITE
 // Bounds planning/queued encoded inputs before acquisition, including large declared64 mosaics.
 private const val MAX_RASTER_SAMPLES_PER_BATCH = 4096
 
@@ -328,7 +337,22 @@ private class DefaultBasemapRasterizer(
             append(options.outputSizePx)
             if (!options.includeHillshade) append("\nhillshade:omit")
             appendRasterAcquisitionIdentity(options)
+            appendMaterialCoverageIdentity(options)
         }.sha256Hex()
+    }
+
+    /**
+     * A Material Coverage request is more output, so it joins both Output Tile keys; with none,
+     * nothing is appended and every existing key is unchanged. The pair is encoded as a JSON array
+     * so no key or value text can collide with another pair or with a later key part.
+     */
+    private fun StringBuilder.appendMaterialCoverageIdentity(options: RenderOptions) {
+        val request = options.materialCoverage ?: return
+        append("\nmaterial-coverage:")
+        append(
+            JsonArray(listOf(JsonPrimitive(request.metadataKey), JsonPrimitive(request.metadataValue)))
+                .canonicalJson(),
+        )
     }
 
     private fun StringBuilder.appendRasterAcquisitionIdentity(options: RenderOptions) {
@@ -1115,6 +1139,7 @@ private class DefaultBasemapRasterizer(
                     pngBytes = result.png,
                     contentKey = lease.state.contentKeys.getValue(result.tile),
                     diagnostics = lease.state.diagnostics + result.diagnostics,
+                    materialCoverage = result.materialCoverage,
                 )
             }
             RenderBatch(rendered, lease.state.diagnostics + tileResults.flatMap { it.diagnostics })
@@ -1158,6 +1183,7 @@ private class DefaultBasemapRasterizer(
                         heightPx = result.heightPx,
                         contentKey = lease.state.contentKeys.getValue(result.tile),
                         diagnostics = lease.state.diagnostics + result.diagnostics,
+                        materialCoverage = result.materialCoverage,
                     )
                 }
                 RawRenderBatch(rendered, lease.state.diagnostics)
@@ -1325,7 +1351,7 @@ private class DefaultBasemapRasterizer(
         return tiles.associateWith { tile ->
             val seenImagerySources = mutableSetOf<String>()
             style.drawLayers
-                .filter { it is RasterDrawLayer || it is HillshadeDrawLayer }
+                .filter { it is RasterDrawLayer || it is HillshadeDrawLayer || it is ColorReliefDrawLayer }
                 .filter { it.isActiveAt(tile.z) }
                 .flatMap { layer ->
                     when (layer) {
@@ -1349,17 +1375,32 @@ private class DefaultBasemapRasterizer(
                             if (checkDecodedBudget) enforceRasterWorkingBytes(declaredDecodedBytes + outputBytes, byteLimit, tile)
                             samples
                         }
-                        is HillshadeDrawLayer -> layer.source.sampleFor(tile)?.let { center ->
-                            (-1..1).flatMap { deltaY ->
-                                (-1..1).mapNotNull { deltaX -> center.neighbor(deltaX, deltaY) }
-                            }
-                        }.orEmpty()
+                        is HillshadeDrawLayer -> demNeighbourhoodSamples(layer.source, tile)
+                        is ColorReliefDrawLayer -> demNeighbourhoodSamples(layer.source, tile)
                         else -> emptyList()
                     }
                 }
                 .distinctBy { it.identity }
         }
     }
+
+    /** The prepared DEM tile directly under [tile] among one source's [resources], if acquired. */
+    private fun demCenter(source: CompiledRasterSource, resources: List<RasterResource>, tile: TileId): RasterResource? {
+        val centerSample = source.sampleFor(tile) ?: return null
+        return resources.singleOrNull {
+            it.sample.sourceZ == centerSample.sourceZ &&
+                it.sample.sourceX == centerSample.sourceX &&
+                it.sample.sourceY == centerSample.sourceY
+        }
+    }
+
+    /** The centre DEM sample under [tile] and its eight neighbours, as hillshade has always read. */
+    private fun demNeighbourhoodSamples(source: CompiledRasterSource, tile: TileId): List<RasterSample> =
+        source.sampleFor(tile)?.let { center ->
+            (-1..1).flatMap { deltaY ->
+                (-1..1).mapNotNull { deltaX -> center.neighbor(deltaX, deltaY) }
+            }
+        }.orEmpty()
 
     /** Which vector source samples each output tile needs; see [rasterSamplesByTile]. */
     private fun vectorSamplesByTile(
@@ -1480,6 +1521,7 @@ private class DefaultBasemapRasterizer(
                 is LineDrawLayer -> required += layer.source.idDigest
                 is RasterDrawLayer -> required += layer.source.idDigest
                 is HillshadeDrawLayer -> required += layer.source.idDigest
+                is ColorReliefDrawLayer -> required += layer.source.idDigest
                 is BackgroundDrawLayer -> Unit
             }
         }
@@ -1923,6 +1965,7 @@ private class DefaultBasemapRasterizer(
                 append(options.outputSizePx)
                 if (!options.includeHillshade) append("\nhillshade:omit")
                 appendRasterAcquisitionIdentity(options)
+                appendMaterialCoverageIdentity(options)
                 for (resource in resources.raster[tile].orEmpty().sortedBy { it.sample.identity }) {
                     append("\nraster:")
                     append(resource.sample.identity)
@@ -2091,7 +2134,13 @@ private class DefaultBasemapRasterizer(
                     affectedTiles = listOf(tile),
                 )
                 configuration.diagnosticSink.recordSafely(diagnostic)
-                return TileRender(tile, resource.bytes.copyOf(), listOf(diagnostic))
+                // A lone raster layer is neither a fill nor a line, so nothing it draws is coverage.
+                return TileRender(
+                    tile,
+                    resource.bytes.copyOf(),
+                    listOf(diagnostic),
+                    batch.options.materialCoverage?.let { MaterialCoverage.None },
+                )
             }
         }
 
@@ -2101,7 +2150,7 @@ private class DefaultBasemapRasterizer(
         // always-available per-tile list that becomes RenderedTile.diagnostics, the way
         // RASTER_PASSTHROUGH_USED above reaches both.
         val renderDiagnostics = mutableListOf<RenderDiagnostic>()
-        val png = renderCompositedTile(
+        val drawn = renderCompositedTile(
             style = batch.style,
             layers = activeLayers,
             rasterResources = rasterResources,
@@ -2111,8 +2160,9 @@ private class DefaultBasemapRasterizer(
             sprites = batch.sharedSpriteAtlas(),
             sourceTiles = batch.sharedSourceTiles,
             diagnostics = renderDiagnostics,
+            materialCoverage = batch.options.materialCoverage,
         )
-        return TileRender(tile, png, renderDiagnostics.toList())
+        return TileRender(tile, drawn.value, renderDiagnostics.toList(), drawn.materialCoverage)
     }
 
     private class RawTileRender(
@@ -2121,6 +2171,7 @@ private class DefaultBasemapRasterizer(
         val widthPx: Int,
         val heightPx: Int,
         val diagnostics: List<RenderDiagnostic>,
+        val materialCoverage: MaterialCoverage?,
     )
 
     private fun renderTileRaw(
@@ -2131,7 +2182,7 @@ private class DefaultBasemapRasterizer(
         val activeLayers = activeDrawLayers(batch, tile)
         val renderDiagnostics = mutableListOf<RenderDiagnostic>()
         val size = batch.options.outputSizePx
-        val rgba = renderCompositedTileRaw(
+        val drawn = renderCompositedTileRaw(
             style = batch.style,
             layers = activeLayers,
             rasterResources = resources.raster[tile].orEmpty(),
@@ -2141,8 +2192,9 @@ private class DefaultBasemapRasterizer(
             sprites = batch.sharedSpriteAtlas(),
             sourceTiles = batch.sharedSourceTiles,
             diagnostics = renderDiagnostics,
+            materialCoverage = batch.options.materialCoverage,
         )
-        return RawTileRender(tile, rgba, size, size, renderDiagnostics.toList())
+        return RawTileRender(tile, drawn.value, size, size, renderDiagnostics.toList(), drawn.materialCoverage)
     }
 
     /** PNG output: draws once, then encodes. */
@@ -2156,8 +2208,10 @@ private class DefaultBasemapRasterizer(
         sprites: SharedSpriteAtlas?,
         sourceTiles: SharedSourceTileImages,
         diagnostics: MutableList<RenderDiagnostic>,
-    ): ByteArray = drawCompositedTile(
+        materialCoverage: MaterialCoverageRequest?,
+    ): DrawnTile<ByteArray> = drawCompositedTile(
         style, layers, rasterResources, vectorResources, outputSizePx, tile, sprites, sourceTiles, diagnostics,
+        materialCoverage,
     ) { surface ->
         val encodeStarted = TimeSource.Monotonic.markNow()
         val image = surface.makeImageSnapshot()
@@ -2196,8 +2250,10 @@ private class DefaultBasemapRasterizer(
         sprites: SharedSpriteAtlas?,
         sourceTiles: SharedSourceTileImages,
         diagnostics: MutableList<RenderDiagnostic>,
-    ): ByteArray = drawCompositedTile(
+        materialCoverage: MaterialCoverageRequest?,
+    ): DrawnTile<ByteArray> = drawCompositedTile(
         style, layers, rasterResources, vectorResources, outputSizePx, tile, sprites, sourceTiles, diagnostics,
+        materialCoverage,
     ) { surface ->
         val image = surface.makeImageSnapshot()
         try {
@@ -2242,7 +2298,7 @@ private class DefaultBasemapRasterizer(
      * defaults - 8192 px and 256 MiB - clear every supported size with room to spare; a host that
      * has tightened them for a small device gets a diagnosable refusal.
      */
-    private fun enforceOutputSurfaceLimits(outputSizePx: Int, tile: TileId) {
+    private fun enforceOutputSurfaceLimits(outputSizePx: Int, tile: TileId, withCoverage: Boolean) {
         val maxDimension = configuration.resourceLimits.maxRasterDimensionPx
         if (outputSizePx > maxDimension) {
             throw SafetyLimitException(
@@ -2254,7 +2310,8 @@ private class DefaultBasemapRasterizer(
                 affectedTiles = listOf(tile),
             )
         }
-        val surfaceBytes = outputSizePx.toLong() * outputSizePx.toLong() * 4L
+        // A requested Material Coverage mask is one more byte per pixel beside the RGBA surface.
+        val surfaceBytes = outputSizePx.toLong() * outputSizePx.toLong() * (if (withCoverage) 5L else 4L)
         val decodedLimit = minOf(
             configuration.resourceLimits.maxDecodedRasterBytes,
             configuration.executionPolicy.maxResidentDecodedBytes,
@@ -2281,10 +2338,11 @@ private class DefaultBasemapRasterizer(
         sprites: SharedSpriteAtlas?,
         sourceTiles: SharedSourceTileImages,
         diagnostics: MutableList<RenderDiagnostic>,
+        materialCoverage: MaterialCoverageRequest?,
         finish: (Surface) -> T,
-    ): T {
+    ): DrawnTile<T> {
         val drawStarted = TimeSource.Monotonic.markNow()
-        enforceOutputSurfaceLimits(outputSizePx, tile)
+        enforceOutputSurfaceLimits(outputSizePx, tile, withCoverage = materialCoverage != null)
         val surface = try {
             Surface.makeRasterN32Premul(outputSizePx, outputSizePx)
         } catch (error: CancellationException) {
@@ -2334,14 +2392,14 @@ private class DefaultBasemapRasterizer(
                         }
                     }
                     is HillshadeDrawLayer -> {
-                        val centerSample = layer.source.sampleFor(tile) ?: continue
                         val resources = rasterResources.filter { it.sample.source.idDigest == layer.source.idDigest }
-                        val center = resources.singleOrNull {
-                            it.sample.sourceZ == centerSample.sourceZ &&
-                                it.sample.sourceX == centerSample.sourceX &&
-                                it.sample.sourceY == centerSample.sourceY
-                        } ?: continue
+                        val center = demCenter(layer.source, resources, tile) ?: continue
                         drawHillshade(surface, layer, center, resources, logicalSizePx, tile, sourceTiles)
+                    }
+                    is ColorReliefDrawLayer -> {
+                        val resources = rasterResources.filter { it.sample.source.idDigest == layer.source.idDigest }
+                        val center = demCenter(layer.source, resources, tile) ?: continue
+                        drawColorRelief(surface, layer, center, resources, logicalSizePx, outputSizePx, tile, sourceTiles)
                     }
                     is FillDrawLayer -> {
                         val resource = vectorResources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest }
@@ -2356,10 +2414,14 @@ private class DefaultBasemapRasterizer(
                     is IconDrawLayer -> drawIcons(surface, placedIcons[layer.layerOrder].orEmpty())
                 }
             }
+            // Drawn before the draw metric closes, because it is draw work the caller asked for.
+            val coverage = materialCoverage?.let { request ->
+                drawMaterialCoverage(request, layers, vectorResources, outputSizePx, tile, spriteContext)
+            }
             configuration.metricsSink.recordSafely(
                 RentileMetric(MetricName.TILE_DRAW_NANOS, value = drawStarted.elapsedNow().inWholeNanoseconds),
             )
-            return finish(surface)
+            return DrawnTile(finish(surface), coverage)
         } catch (error: CancellationException) {
             throw error
         } catch (error: PngEncodingException) {
@@ -2371,6 +2433,151 @@ private class DefaultBasemapRasterizer(
         } finally {
             spriteContext?.close()
             surface.close()
+        }
+    }
+
+    /**
+     * The Material Coverage of one tile: the selected fill and line layers drawn again, in style
+     * order and through the same draw code as the colour pass, onto an 8-bit alpha surface with
+     * opaque ink. Same canvas transform, same geometry, same antialiasing, so every value aligns
+     * with the colour tile's pixel. Only layers already active in this tile are considered.
+     */
+    private fun drawMaterialCoverage(
+        request: MaterialCoverageRequest,
+        layers: List<CompiledDrawLayer>,
+        vectorResources: List<VectorResource>,
+        outputSizePx: Int,
+        tile: TileId,
+        sprites: SpriteRenderContext?,
+    ): MaterialCoverage {
+        val selected = layers.filterIsInstance<VectorDrawLayer>().filter { layer ->
+            val metadata = when (layer) {
+                is FillDrawLayer -> layer.metadata
+                is LineDrawLayer -> layer.metadata
+                is IconDrawLayer -> null
+            }
+            metadata.declaresMaterial(request.metadataKey, request.metadataValue)
+        }
+        if (selected.isEmpty()) return MaterialCoverage.None
+        val info = ImageInfo.makeA8(outputSizePx, outputSizePx)
+        val surface = try {
+            Surface.makeRaster(info)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            throw RasterizationException(
+                message = "Could not allocate a ${outputSizePx}x$outputSizePx coverage surface",
+                affectedTiles = listOf(tile),
+                cause = error,
+            )
+        }
+        try {
+            surface.canvas.clear(Color.TRANSPARENT)
+            val styleScale = outputSizePx.toDouble() / STYLE_REFERENCE_TILE_SIZE_PX
+            if (styleScale != 1.0) surface.canvas.scale(styleScale.toFloat(), styleScale.toFloat())
+            val logicalSizePx = STYLE_REFERENCE_TILE_SIZE_PX
+            for (layer in selected) {
+                val resource = vectorResources.singleOrNull { it.sample.source.idDigest == layer.source.idDigest }
+                    ?: continue
+                when (layer) {
+                    is FillDrawLayer -> drawFill(surface, layer, resource, logicalSizePx, tile, sprites, coverageOnly = true)
+                    is LineDrawLayer -> drawLine(surface, layer, resource, logicalSizePx, tile, sprites, coverageOnly = true)
+                    is IconDrawLayer -> Unit
+                }
+            }
+            val bitmap = Bitmap()
+            try {
+                if (!bitmap.allocPixels(info) || !surface.readPixels(bitmap, 0, 0)) {
+                    throw RasterizationException("Coverage pixels cannot be read", affectedTiles = listOf(tile))
+                }
+                val coverage = bitmap.readPixels(info, outputSizePx, 0, 0)
+                    ?: throw RasterizationException("Coverage pixels cannot be read", affectedTiles = listOf(tile))
+                return if (coverage.all { it == 0.toByte() }) {
+                    MaterialCoverage.None
+                } else {
+                    MaterialCoverage.Mask(outputSizePx, outputSizePx, coverage)
+                }
+            } finally {
+                bitmap.close()
+            }
+        } finally {
+            surface.close()
+        }
+    }
+
+    /**
+     * Colours every output pixel by its elevation through the layer's ramp, as MapLibre GL's
+     * `color-relief` does (ADR 0043): elevation sampled from the DEM neighbourhood with the layer's
+     * `resampling` (bilinear across tile edges by default), the stop colours interpolated linearly
+     * in straight RGBA and clamped beyond the end stops, then alpha scaled by
+     * `color-relief-opacity` and composited source-over.
+     *
+     * Unlike hillshade, which shades the 512 style-pixel grid and lets the canvas magnify it, this
+     * computes one sample per *output* pixel and draws it 1:1 through the inverse of the canvas
+     * scale, so a 2048 px tile gets a smooth ramp rather than 4x4 blocks.
+     */
+    private fun drawColorRelief(
+        surface: Surface,
+        layer: ColorReliefDrawLayer,
+        center: RasterResource,
+        resources: List<RasterResource>,
+        logicalSizePx: Int,
+        outputSizePx: Int,
+        tile: TileId,
+        sourceTiles: SharedSourceTileImages,
+    ) {
+        val context = StyleEvaluationContext(zoom = tile.z.toDouble())
+        val opacity = evaluatedOpacity(layer.opacity.evaluate(context), "color-relief-opacity", tile)
+        val stopElevations = DoubleArray(layer.stops.size) { layer.stops[it].elevation }
+        val stopColors = layer.stops.map { evaluatedColor(it.color.evaluate(context), "color-relief-color", tile) }
+        if (opacity == 0.0) return
+        val dem = decodeDemNeighbourhood(layer.source, center, resources, tile, sourceTiles) ?: return
+        val sample = center.sample
+        val linear = layer.resampling == RasterResampling.LINEAR
+        fun sourceCoordinate(outputPixel: Int, sourceExtent: Int, childOffset: Int): Double =
+            (childOffset + (outputPixel + 0.5) / outputSizePx) * sourceExtent / sample.childScale - 0.5
+        val columns = DoubleArray(outputSizePx) { sourceCoordinate(it, dem.width, sample.childX) }
+        val rows = DoubleArray(outputSizePx) { sourceCoordinate(it, dem.height, sample.childY) }
+        val baseColumns = IntArray(outputSizePx) { if (linear) floor(columns[it]).toInt() else columns[it].roundToInt() }
+        val baseRows = IntArray(outputSizePx) { if (linear) floor(rows[it]).toInt() else rows[it].roundToInt() }
+        // The cache window already reaches one texel past the largest base index, which is exactly
+        // the far corner a bilinear sample reads.
+        val heightAt = cachedHillshadeHeights(baseColumns, baseRows, outputSizePx, dem::heightAt)
+        val rgba = ByteArray(outputSizePx * outputSizePx * 4)
+        for (y in 0 until outputSizePx) {
+            val sourceY = baseRows[y]
+            val fractionY = if (linear) rows[y] - sourceY else 0.0
+            for (x in 0 until outputSizePx) {
+                val sourceX = baseColumns[x]
+                val elevation = if (linear) {
+                    val fractionX = columns[x] - sourceX
+                    val top = heightAt(sourceX, sourceY) * (1.0 - fractionX) + heightAt(sourceX + 1, sourceY) * fractionX
+                    val bottom = heightAt(sourceX, sourceY + 1) * (1.0 - fractionX) +
+                        heightAt(sourceX + 1, sourceY + 1) * fractionX
+                    top * (1.0 - fractionY) + bottom * fractionY
+                } else {
+                    heightAt(sourceX, sourceY)
+                }
+                writeColorReliefPixel(rgba, (y * outputSizePx + x) * 4, elevation, stopElevations, stopColors, opacity)
+            }
+        }
+        val relief = Image.makeRaster(
+            ImageInfo(outputSizePx, outputSizePx, ColorType.RGBA_8888, ColorAlphaType.UNPREMUL),
+            rgba,
+            outputSizePx * 4,
+        )
+        try {
+            // The canvas is in style space; this destination maps the image 1:1 onto output pixels.
+            surface.canvas.drawImageRect(
+                relief,
+                Rect.makeWH(outputSizePx.toFloat(), outputSizePx.toFloat()),
+                Rect.makeWH(logicalSizePx.toFloat(), logicalSizePx.toFloat()),
+                SamplingMode.DEFAULT,
+                null,
+                true,
+            )
+        } finally {
+            relief.close()
         }
     }
 
@@ -2516,125 +2723,121 @@ private class DefaultBasemapRasterizer(
         val accent = evaluatedColor(layer.accentColor.evaluate(context), "hillshade-accent-color", tile)
         val highlight = evaluatedColor(layer.highlightColor.evaluate(context), "hillshade-highlight-color", tile)
         val shadow = evaluatedColor(layer.shadowColor.evaluate(context), "hillshade-shadow-color", tile)
-        val encoding = layer.source.demEncoding ?: DemEncoding.MAPBOX
+        val dem = decodeDemNeighbourhood(layer.source, center, resources, tile, sourceTiles) ?: return
+        val sourceWidth = dem.width
+        val sourceHeight = dem.height
+        val sourceDimension = 1L shl center.sample.sourceZ
 
+        val sourceXs = IntArray(logicalSizePx) { outputX ->
+            ((center.sample.childX + (outputX + 0.5) / logicalSizePx) * sourceWidth /
+                center.sample.childScale - 0.5).roundToInt()
+        }
+        val sourceYs = IntArray(logicalSizePx) { outputY ->
+            ((center.sample.childY + (outputY + 0.5) / logicalSizePx) * sourceHeight /
+                center.sample.childScale - 0.5).roundToInt()
+        }
+        val heightAt = cachedHillshadeHeights(sourceXs, sourceYs, logicalSizePx, dem::heightAt)
+        val lightAltitude = PI / 4.0
+        val lightAzimuth = 335.0 * PI / 180.0
+        val flatIllumination = sin(lightAltitude)
+        var previousSourceY = Int.MIN_VALUE
+        var metersPerPixel = 0.0
+        val rgba = rasterizeHillshadeSamples(sourceXs, sourceYs) { sourceX, sourceY ->
+            if (sourceY != previousSourceY) {
+                previousSourceY = sourceY
+                val globalSourceY = center.sample.sourceY.toDouble() * sourceHeight + sourceY
+                val worldY = (globalSourceY + 0.5) / (sourceDimension * sourceHeight)
+                val latitude = atan(sinh(PI * (1.0 - 2.0 * worldY)))
+                metersPerPixel = max(
+                    0.01,
+                    EARTH_CIRCUMFERENCE_METERS * cos(latitude) / (sourceDimension * sourceWidth),
+                )
+            }
+            val left = heightAt(sourceX - 1, sourceY)
+            val right = heightAt(sourceX + 1, sourceY)
+            val up = heightAt(sourceX, sourceY - 1)
+            val down = heightAt(sourceX, sourceY + 1)
+            val gradientX = (right - left) / (2.0 * metersPerPixel)
+            val gradientY = (down - up) / (2.0 * metersPerPixel)
+            val slope = atan(exaggeration * hypot(gradientX, gradientY))
+            val aspect = atan2(gradientY, -gradientX)
+            val illumination = sin(lightAltitude) * cos(slope) +
+                cos(lightAltitude) * sin(slope) * cos(lightAzimuth - aspect)
+            val delta = illumination - flatIllumination
+            val accentAlpha = (sin(slope) * 0.28).coerceIn(0.0, 1.0)
+            val shadeColor: CompiledColor
+            val shadeAlpha: Double
+            if (delta >= 0.0) {
+                shadeColor = highlight
+                shadeAlpha = (delta / (1.0 - flatIllumination)).coerceIn(0.0, 1.0)
+            } else {
+                shadeColor = shadow
+                shadeAlpha = (-delta / (1.0 + flatIllumination)).coerceIn(0.0, 1.0)
+            }
+            compositeHillshade(accent, accentAlpha, shadeColor, shadeAlpha)
+        }
+        val imageInfo = ImageInfo(logicalSizePx, logicalSizePx, ColorType.RGBA_8888, ColorAlphaType.UNPREMUL)
+        val hillshade = Image.makeRaster(imageInfo, rgba, logicalSizePx * 4)
+        try {
+            surface.canvas.drawImageRect(
+                hillshade,
+                Rect.makeWH(logicalSizePx.toFloat(), logicalSizePx.toFloat()),
+                Rect.makeWH(logicalSizePx.toFloat(), logicalSizePx.toFloat()),
+                SamplingMode.DEFAULT,
+                null,
+                true,
+            )
+        } finally {
+            hillshade.close()
+        }
+    }
+
+    /**
+     * The decoded DEM neighbourhood around [center]: the heights hillshade and color-relief read,
+     * in source pixels relative to the centre tile, reaching into whichever neighbours [resources]
+     * holds. Null when the centre itself is not among them.
+     */
+    private fun decodeDemNeighbourhood(
+        source: CompiledRasterSource,
+        center: RasterResource,
+        resources: List<RasterResource>,
+        tile: TileId,
+        sourceTiles: SharedSourceTileImages,
+    ): DemNeighbourhood? {
         // Copy each source once. Per-sample Bitmap.getColor, width and height cross into native
         // code millions of times per output tile on Android; the managed sampler below preserves
         // those exact N32-decoded colours without native work in the pixel loop.
         val decoded = mutableMapOf<Pair<Int, Int>, HillshadeDemPixels>()
-        try {
-            for (resource in resources) {
-                // Shared only when this batch's draws read the same DEM more than once, which is
-                // the ordinary case: neighbourhoods overlap, so one DEM tile is read by up to nine
-                // output tiles. The shared image is raster-backed — its decode is already done —
-                // because a *lazy* image memoises its decode for a draw and not for `readPixels`,
-                // so sharing one of those would save nothing at all here.
-                val shared = sourceTiles.shareDem(resource) { decodedDemImage(resource, tile) }
-                // A DEM only this draw reads keeps the lazy image it always had: forcing that one
-                // into a raster image would buy a copy nobody reads twice.
-                val image = shared ?: demImage(resource, tile)
-                    .also { sourceTileDecodeRecorderForTest?.invoke(ResourceClass.DEM_TILE) }
-                try {
-                    val bitmap = demPixels(image, resource, tile)
-                    try {
-                        decoded[resource.sample.sourceX to resource.sample.sourceY] =
-                            HillshadeDemPixels.read(bitmap) ?: throw ResourceDecodeException(
-                                message = "Prepared DEM pixels cannot be read",
-                                resourceClass = ResourceClass.DEM_TILE,
-                                sanitizedResourceId = resource.sample.identity.sha256Hex(),
-                                affectedTiles = listOf(tile),
-                            )
-                    } finally {
-                        bitmap.close()
-                    }
-                } finally {
-                    if (shared == null) image.close()
-                }
-            }
-
-            val centerBitmap = decoded[center.sample.sourceX to center.sample.sourceY] ?: return
-            val sourceWidth = centerBitmap.width
-            val sourceHeight = centerBitmap.height
-            val sourceDimension = 1L shl center.sample.sourceZ
-
-            fun sourceHeightAt(sourcePixelX: Int, sourcePixelY: Int): Double {
-                val deltaX = floor(sourcePixelX.toDouble() / sourceWidth).toInt()
-                val deltaY = floor(sourcePixelY.toDouble() / sourceHeight).toInt()
-                val sourceX = floorMod(center.sample.sourceX.toLong() + deltaX, sourceDimension).toInt()
-                val sourceY = center.sample.sourceY + deltaY
-                val bitmap = decoded[sourceX to sourceY] ?: centerBitmap
-                val localX = floorMod(sourcePixelX.toLong(), sourceWidth.toLong()).toInt()
-                val localY = sourcePixelY.coerceIn(0, sourceHeight - 1)
-                    .let { value -> if (bitmap === centerBitmap && sourceY != center.sample.sourceY) value else floorMod(sourcePixelY.toLong(), sourceHeight.toLong()).toInt() }
-                return bitmap.heightAt(localX, localY, encoding)
-            }
-
-            val sourceXs = IntArray(logicalSizePx) { outputX ->
-                ((center.sample.childX + (outputX + 0.5) / logicalSizePx) * sourceWidth /
-                    center.sample.childScale - 0.5).roundToInt()
-            }
-            val sourceYs = IntArray(logicalSizePx) { outputY ->
-                ((center.sample.childY + (outputY + 0.5) / logicalSizePx) * sourceHeight /
-                    center.sample.childScale - 0.5).roundToInt()
-            }
-            val heightAt = cachedHillshadeHeights(sourceXs, sourceYs, logicalSizePx, ::sourceHeightAt)
-            val lightAltitude = PI / 4.0
-            val lightAzimuth = 335.0 * PI / 180.0
-            val flatIllumination = sin(lightAltitude)
-            var previousSourceY = Int.MIN_VALUE
-            var metersPerPixel = 0.0
-            val rgba = rasterizeHillshadeSamples(sourceXs, sourceYs) { sourceX, sourceY ->
-                if (sourceY != previousSourceY) {
-                    previousSourceY = sourceY
-                    val globalSourceY = center.sample.sourceY.toDouble() * sourceHeight + sourceY
-                    val worldY = (globalSourceY + 0.5) / (sourceDimension * sourceHeight)
-                    val latitude = atan(sinh(PI * (1.0 - 2.0 * worldY)))
-                    metersPerPixel = max(
-                        0.01,
-                        EARTH_CIRCUMFERENCE_METERS * cos(latitude) / (sourceDimension * sourceWidth),
-                    )
-                }
-                val left = heightAt(sourceX - 1, sourceY)
-                val right = heightAt(sourceX + 1, sourceY)
-                val up = heightAt(sourceX, sourceY - 1)
-                val down = heightAt(sourceX, sourceY + 1)
-                val gradientX = (right - left) / (2.0 * metersPerPixel)
-                val gradientY = (down - up) / (2.0 * metersPerPixel)
-                val slope = atan(exaggeration * hypot(gradientX, gradientY))
-                val aspect = atan2(gradientY, -gradientX)
-                val illumination = sin(lightAltitude) * cos(slope) +
-                    cos(lightAltitude) * sin(slope) * cos(lightAzimuth - aspect)
-                val delta = illumination - flatIllumination
-                val accentAlpha = (sin(slope) * 0.28).coerceIn(0.0, 1.0)
-                val shadeColor: CompiledColor
-                val shadeAlpha: Double
-                if (delta >= 0.0) {
-                    shadeColor = highlight
-                    shadeAlpha = (delta / (1.0 - flatIllumination)).coerceIn(0.0, 1.0)
-                } else {
-                    shadeColor = shadow
-                    shadeAlpha = (-delta / (1.0 + flatIllumination)).coerceIn(0.0, 1.0)
-                }
-                compositeHillshade(accent, accentAlpha, shadeColor, shadeAlpha)
-            }
-            val imageInfo = ImageInfo(logicalSizePx, logicalSizePx, ColorType.RGBA_8888, ColorAlphaType.UNPREMUL)
-            val hillshade = Image.makeRaster(imageInfo, rgba, logicalSizePx * 4)
+        for (resource in resources) {
+            // Shared only when this batch's draws read the same DEM more than once, which is
+            // the ordinary case: neighbourhoods overlap, so one DEM tile is read by up to nine
+            // output tiles. The shared image is raster-backed — its decode is already done —
+            // because a *lazy* image memoises its decode for a draw and not for `readPixels`,
+            // so sharing one of those would save nothing at all here.
+            val shared = sourceTiles.shareDem(resource) { decodedDemImage(resource, tile) }
+            // A DEM only this draw reads keeps the lazy image it always had: forcing that one
+            // into a raster image would buy a copy nobody reads twice.
+            val image = shared ?: demImage(resource, tile)
+                .also { sourceTileDecodeRecorderForTest?.invoke(ResourceClass.DEM_TILE) }
             try {
-                surface.canvas.drawImageRect(
-                    hillshade,
-                    Rect.makeWH(logicalSizePx.toFloat(), logicalSizePx.toFloat()),
-                    Rect.makeWH(logicalSizePx.toFloat(), logicalSizePx.toFloat()),
-                    SamplingMode.DEFAULT,
-                    null,
-                    true,
-                )
+                val bitmap = demPixels(image, resource, tile)
+                try {
+                    decoded[resource.sample.sourceX to resource.sample.sourceY] =
+                        HillshadeDemPixels.read(bitmap) ?: throw ResourceDecodeException(
+                            message = "Prepared DEM pixels cannot be read",
+                            resourceClass = ResourceClass.DEM_TILE,
+                            sanitizedResourceId = resource.sample.identity.sha256Hex(),
+                            affectedTiles = listOf(tile),
+                        )
+                } finally {
+                    bitmap.close()
+                }
             } finally {
-                hillshade.close()
+                if (shared == null) image.close()
             }
-        } finally {
-            // Bulk copies are ordinary managed arrays, owned only for this draw.
-            decoded.clear()
         }
+        val centerPixels = decoded[center.sample.sourceX to center.sample.sourceY] ?: return null
+        return DemNeighbourhood(center.sample, centerPixels, decoded, source.demEncoding ?: DemEncoding.MAPBOX)
     }
 
     /** One DEM tile as a lazy Skia image, failing the way this path has always failed. */
@@ -2769,6 +2972,7 @@ private class DefaultBasemapRasterizer(
         logicalSizePx: Int,
         tile: TileId,
         sprites: SpriteRenderContext?,
+        coverageOnly: Boolean = false,
     ) {
         val sourceLayer = resource.tile.layers.singleOrNull { it.name == layer.sourceLayer } ?: return
         val fillPaint = Paint().apply {
@@ -2790,7 +2994,9 @@ private class DefaultBasemapRasterizer(
                 val opacity = evaluatedOpacity(layer.opacity.evaluate(context), "fill-opacity", tile)
                 val translation = evaluatedNumberArray(layer.translate.evaluate(context), "fill-translate", tile, 2)
                 val patternName = layer.pattern?.evaluate(context)?.let { evaluatePatternName(it, "fill-pattern", tile) }
-                if (patternName == null) {
+                if (coverageOnly) {
+                    fillPaint.color = COVERAGE_INK
+                } else if (patternName == null) {
                     fillPaint.color = paintColor(evaluatedColor(layer.color.evaluate(context), "fill-color", tile), opacity)
                 }
                 val pathBuilder = PathBuilder(PathFillMode.EVEN_ODD)
@@ -2816,11 +3022,17 @@ private class DefaultBasemapRasterizer(
                         if (patternName == null) {
                             surface.canvas.drawPath(path, fillPaint)
                         } else {
+                            // Coverage still skips a feature whose pattern is missing, because
+                            // the colour pass draws nothing for it either.
                             val sprite = sprites?.image(patternName) ?: continue
-                            drawRepeatedPattern(surface, path, sprite, opacity, tile, logicalSizePx)
+                            if (coverageOnly) {
+                                surface.canvas.drawPath(path, fillPaint)
+                            } else {
+                                drawRepeatedPattern(surface, path, sprite, opacity, tile, logicalSizePx)
+                            }
                         }
                         if (outlinePaint != null) {
-                            outlinePaint.color = paintColor(evaluatedColor(
+                            outlinePaint.color = if (coverageOnly) COVERAGE_INK else paintColor(evaluatedColor(
                                 layer.outlineColor.evaluate(context),
                                 "fill-outline-color",
                                 tile,
@@ -2847,6 +3059,7 @@ private class DefaultBasemapRasterizer(
         logicalSizePx: Int,
         tile: TileId,
         sprites: SpriteRenderContext?,
+        coverageOnly: Boolean = false,
     ) {
         val sourceLayer = resource.tile.layers.singleOrNull { it.name == layer.sourceLayer } ?: return
         val features = sourceLayer.features.withIndex()
@@ -2900,7 +3113,9 @@ private class DefaultBasemapRasterizer(
                 val opacity = evaluatedOpacity(layer.opacity.evaluate(context), "line-opacity", tile)
                 val patternName = layer.pattern?.evaluate(context)?.let { evaluatePatternName(it, "line-pattern", tile) }
                 val patternShader = patternName?.let { name ->
+                    // As for fills: a missing pattern skips the feature in both passes.
                     val sprite = sprites?.image(name) ?: continue
+                    if (coverageOnly) return@let null
                     sprite.image.makeShader(
                         FilterTileMode.REPEAT,
                         FilterTileMode.REPEAT,
@@ -2911,7 +3126,9 @@ private class DefaultBasemapRasterizer(
                         ),
                     )
                 }
-                if (patternShader == null) {
+                if (coverageOnly) {
+                    paint.color = COVERAGE_INK
+                } else if (patternShader == null) {
                     paint.color = paintColor(evaluatedColor(layer.color.evaluate(context), "line-color", tile), opacity)
                 } else {
                     paint.shader = patternShader
@@ -3624,6 +3841,13 @@ private data class TileRender(
     val tile: TileId,
     val png: ByteArray,
     val diagnostics: List<RenderDiagnostic>,
+    val materialCoverage: MaterialCoverage? = null,
+)
+
+/** One drawn tile in its finished form, plus the Material Coverage drawn beside it, if requested. */
+private class DrawnTile<T>(
+    val value: T,
+    val materialCoverage: MaterialCoverage?,
 )
 
 private data class AcquiredStyle(

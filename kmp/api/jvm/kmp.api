@@ -796,6 +796,39 @@ public final class com/rohittp/rentile/MapSessionProvider$Companion {
 	public final fun getNone ()Lcom/rohittp/rentile/MapSessionProvider;
 }
 
+public abstract interface class com/rohittp/rentile/MaterialCoverage {
+}
+
+public final class com/rohittp/rentile/MaterialCoverage$Mask : com/rohittp/rentile/MaterialCoverage {
+	public fun <init> (II[B)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCoverage ()[B
+	public final fun getHeightPx ()I
+	public final fun getWidthPx ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/rohittp/rentile/MaterialCoverage$None : com/rohittp/rentile/MaterialCoverage {
+	public static final field INSTANCE Lcom/rohittp/rentile/MaterialCoverage$None;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/rohittp/rentile/MaterialCoverageRequest {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;)Lcom/rohittp/rentile/MaterialCoverageRequest;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/MaterialCoverageRequest;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/rohittp/rentile/MaterialCoverageRequest;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMetadataKey ()Ljava/lang/String;
+	public final fun getMetadataValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class com/rohittp/rentile/MetricName : java/lang/Enum {
 	public static final field BACKGROUND_REVALIDATION_FAILED Lcom/rohittp/rentile/MetricName;
 	public static final field BACKGROUND_REVALIDATION_NOT_MODIFIED Lcom/rohittp/rentile/MetricName;
@@ -929,21 +962,23 @@ public final class com/rohittp/rentile/RawRenderBatch {
 }
 
 public final class com/rohittp/rentile/RawRenderedTile {
-	public fun <init> (Lcom/rohittp/rentile/TileId;[BIILjava/lang/String;Ljava/util/List;)V
-	public synthetic fun <init> (Lcom/rohittp/rentile/TileId;[BIILjava/lang/String;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lcom/rohittp/rentile/TileId;[BIILjava/lang/String;Ljava/util/List;Lcom/rohittp/rentile/MaterialCoverage;)V
+	public synthetic fun <init> (Lcom/rohittp/rentile/TileId;[BIILjava/lang/String;Ljava/util/List;Lcom/rohittp/rentile/MaterialCoverage;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Lcom/rohittp/rentile/TileId;
 	public final fun component2 ()[B
 	public final fun component3 ()I
 	public final fun component4 ()I
 	public final fun component5 ()Ljava/lang/String;
 	public final fun component6 ()Ljava/util/List;
-	public final fun copy (Lcom/rohittp/rentile/TileId;[BIILjava/lang/String;Ljava/util/List;)Lcom/rohittp/rentile/RawRenderedTile;
-	public static synthetic fun copy$default (Lcom/rohittp/rentile/RawRenderedTile;Lcom/rohittp/rentile/TileId;[BIILjava/lang/String;Ljava/util/List;ILjava/lang/Object;)Lcom/rohittp/rentile/RawRenderedTile;
+	public final fun component7 ()Lcom/rohittp/rentile/MaterialCoverage;
+	public final fun copy (Lcom/rohittp/rentile/TileId;[BIILjava/lang/String;Ljava/util/List;Lcom/rohittp/rentile/MaterialCoverage;)Lcom/rohittp/rentile/RawRenderedTile;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/RawRenderedTile;Lcom/rohittp/rentile/TileId;[BIILjava/lang/String;Ljava/util/List;Lcom/rohittp/rentile/MaterialCoverage;ILjava/lang/Object;)Lcom/rohittp/rentile/RawRenderedTile;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getContentKey ()Ljava/lang/String;
 	public final fun getDiagnostics ()Ljava/util/List;
 	public final fun getHeightPx ()I
 	public final fun getId ()Lcom/rohittp/rentile/TileId;
+	public final fun getMaterialCoverage ()Lcom/rohittp/rentile/MaterialCoverage;
 	public final fun getRgbaBytes ()[B
 	public final fun getWidthPx ()I
 	public fun hashCode ()I
@@ -1049,16 +1084,18 @@ public final class com/rohittp/rentile/RenderOptions {
 	public static final field Companion Lcom/rohittp/rentile/RenderOptions$Companion;
 	public static final field DEFAULT_OUTPUT_SIZE_PX I
 	public fun <init> ()V
-	public fun <init> (IZLcom/rohittp/rentile/RasterAcquisitionDensity;Ljava/lang/Integer;)V
-	public synthetic fun <init> (IZLcom/rohittp/rentile/RasterAcquisitionDensity;Ljava/lang/Integer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (IZLcom/rohittp/rentile/RasterAcquisitionDensity;Ljava/lang/Integer;Lcom/rohittp/rentile/MaterialCoverageRequest;)V
+	public synthetic fun <init> (IZLcom/rohittp/rentile/RasterAcquisitionDensity;Ljava/lang/Integer;Lcom/rohittp/rentile/MaterialCoverageRequest;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()I
 	public final fun component2 ()Z
 	public final fun component3 ()Lcom/rohittp/rentile/RasterAcquisitionDensity;
 	public final fun component4 ()Ljava/lang/Integer;
-	public final fun copy (IZLcom/rohittp/rentile/RasterAcquisitionDensity;Ljava/lang/Integer;)Lcom/rohittp/rentile/RenderOptions;
-	public static synthetic fun copy$default (Lcom/rohittp/rentile/RenderOptions;IZLcom/rohittp/rentile/RasterAcquisitionDensity;Ljava/lang/Integer;ILjava/lang/Object;)Lcom/rohittp/rentile/RenderOptions;
+	public final fun component5 ()Lcom/rohittp/rentile/MaterialCoverageRequest;
+	public final fun copy (IZLcom/rohittp/rentile/RasterAcquisitionDensity;Ljava/lang/Integer;Lcom/rohittp/rentile/MaterialCoverageRequest;)Lcom/rohittp/rentile/RenderOptions;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/RenderOptions;IZLcom/rohittp/rentile/RasterAcquisitionDensity;Ljava/lang/Integer;Lcom/rohittp/rentile/MaterialCoverageRequest;ILjava/lang/Object;)Lcom/rohittp/rentile/RenderOptions;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getIncludeHillshade ()Z
+	public final fun getMaterialCoverage ()Lcom/rohittp/rentile/MaterialCoverageRequest;
 	public final fun getMaximumRasterSourceZoomDelta ()Ljava/lang/Integer;
 	public final fun getOutputSizePx ()I
 	public final fun getRasterAcquisitionDensity ()Lcom/rohittp/rentile/RasterAcquisitionDensity;
@@ -1079,18 +1116,20 @@ public final class com/rohittp/rentile/RenderPriority : java/lang/Enum {
 }
 
 public final class com/rohittp/rentile/RenderedTile {
-	public fun <init> (Lcom/rohittp/rentile/TileId;[BLjava/lang/String;Ljava/util/List;)V
-	public synthetic fun <init> (Lcom/rohittp/rentile/TileId;[BLjava/lang/String;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lcom/rohittp/rentile/TileId;[BLjava/lang/String;Ljava/util/List;Lcom/rohittp/rentile/MaterialCoverage;)V
+	public synthetic fun <init> (Lcom/rohittp/rentile/TileId;[BLjava/lang/String;Ljava/util/List;Lcom/rohittp/rentile/MaterialCoverage;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Lcom/rohittp/rentile/TileId;
 	public final fun component2 ()[B
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Ljava/util/List;
-	public final fun copy (Lcom/rohittp/rentile/TileId;[BLjava/lang/String;Ljava/util/List;)Lcom/rohittp/rentile/RenderedTile;
-	public static synthetic fun copy$default (Lcom/rohittp/rentile/RenderedTile;Lcom/rohittp/rentile/TileId;[BLjava/lang/String;Ljava/util/List;ILjava/lang/Object;)Lcom/rohittp/rentile/RenderedTile;
+	public final fun component5 ()Lcom/rohittp/rentile/MaterialCoverage;
+	public final fun copy (Lcom/rohittp/rentile/TileId;[BLjava/lang/String;Ljava/util/List;Lcom/rohittp/rentile/MaterialCoverage;)Lcom/rohittp/rentile/RenderedTile;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/RenderedTile;Lcom/rohittp/rentile/TileId;[BLjava/lang/String;Ljava/util/List;Lcom/rohittp/rentile/MaterialCoverage;ILjava/lang/Object;)Lcom/rohittp/rentile/RenderedTile;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getContentKey ()Ljava/lang/String;
 	public final fun getDiagnostics ()Ljava/util/List;
 	public final fun getId ()Lcom/rohittp/rentile/TileId;
+	public final fun getMaterialCoverage ()Lcom/rohittp/rentile/MaterialCoverage;
 	public final fun getPngBytes ()[B
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;

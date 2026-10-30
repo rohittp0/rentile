@@ -446,6 +446,29 @@ abstract interface com.rohittp.rentile/RawResourceStore { // com.rohittp.rentile
     open suspend fun metadata(com.rohittp.rentile/RawResourceKey): com.rohittp.rentile/RawResourceMetadata? // com.rohittp.rentile/RawResourceStore.metadata|metadata(com.rohittp.rentile.RawResourceKey){}[0]
 }
 
+sealed interface com.rohittp.rentile/MaterialCoverage { // com.rohittp.rentile/MaterialCoverage|null[0]
+    final class Mask : com.rohittp.rentile/MaterialCoverage { // com.rohittp.rentile/MaterialCoverage.Mask|null[0]
+        constructor <init>(kotlin/Int, kotlin/Int, kotlin/ByteArray) // com.rohittp.rentile/MaterialCoverage.Mask.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.ByteArray){}[0]
+
+        final val coverage // com.rohittp.rentile/MaterialCoverage.Mask.coverage|{}coverage[0]
+            final fun <get-coverage>(): kotlin/ByteArray // com.rohittp.rentile/MaterialCoverage.Mask.coverage.<get-coverage>|<get-coverage>(){}[0]
+        final val heightPx // com.rohittp.rentile/MaterialCoverage.Mask.heightPx|{}heightPx[0]
+            final fun <get-heightPx>(): kotlin/Int // com.rohittp.rentile/MaterialCoverage.Mask.heightPx.<get-heightPx>|<get-heightPx>(){}[0]
+        final val widthPx // com.rohittp.rentile/MaterialCoverage.Mask.widthPx|{}widthPx[0]
+            final fun <get-widthPx>(): kotlin/Int // com.rohittp.rentile/MaterialCoverage.Mask.widthPx.<get-widthPx>|<get-widthPx>(){}[0]
+
+        final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/MaterialCoverage.Mask.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // com.rohittp.rentile/MaterialCoverage.Mask.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // com.rohittp.rentile/MaterialCoverage.Mask.toString|toString(){}[0]
+    }
+
+    final object None : com.rohittp.rentile/MaterialCoverage { // com.rohittp.rentile/MaterialCoverage.None|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/MaterialCoverage.None.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // com.rohittp.rentile/MaterialCoverage.None.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // com.rohittp.rentile/MaterialCoverage.None.toString|toString(){}[0]
+    }
+}
+
 sealed interface com.rohittp.rentile/StyleInput { // com.rohittp.rentile/StyleInput|null[0]
     final class InlineJson : com.rohittp.rentile/StyleInput { // com.rohittp.rentile/StyleInput.InlineJson|null[0]
         constructor <init>(kotlin/String, kotlin/String? = ...) // com.rohittp.rentile/StyleInput.InlineJson.<init>|<init>(kotlin.String;kotlin.String?){}[0]
@@ -1458,6 +1481,22 @@ final class com.rohittp.rentile/MapSession { // com.rohittp.rentile/MapSession|n
     final fun toString(): kotlin/String // com.rohittp.rentile/MapSession.toString|toString(){}[0]
 }
 
+final class com.rohittp.rentile/MaterialCoverageRequest { // com.rohittp.rentile/MaterialCoverageRequest|null[0]
+    constructor <init>(kotlin/String, kotlin/String) // com.rohittp.rentile/MaterialCoverageRequest.<init>|<init>(kotlin.String;kotlin.String){}[0]
+
+    final val metadataKey // com.rohittp.rentile/MaterialCoverageRequest.metadataKey|{}metadataKey[0]
+        final fun <get-metadataKey>(): kotlin/String // com.rohittp.rentile/MaterialCoverageRequest.metadataKey.<get-metadataKey>|<get-metadataKey>(){}[0]
+    final val metadataValue // com.rohittp.rentile/MaterialCoverageRequest.metadataValue|{}metadataValue[0]
+        final fun <get-metadataValue>(): kotlin/String // com.rohittp.rentile/MaterialCoverageRequest.metadataValue.<get-metadataValue>|<get-metadataValue>(){}[0]
+
+    final fun component1(): kotlin/String // com.rohittp.rentile/MaterialCoverageRequest.component1|component1(){}[0]
+    final fun component2(): kotlin/String // com.rohittp.rentile/MaterialCoverageRequest.component2|component2(){}[0]
+    final fun copy(kotlin/String = ..., kotlin/String = ...): com.rohittp.rentile/MaterialCoverageRequest // com.rohittp.rentile/MaterialCoverageRequest.copy|copy(kotlin.String;kotlin.String){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/MaterialCoverageRequest.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/MaterialCoverageRequest.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/MaterialCoverageRequest.toString|toString(){}[0]
+}
+
 final class com.rohittp.rentile/PngEncodingException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/PngEncodingException|null[0]
     constructor <init>(kotlin/String, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ..., kotlin.collections/List<com.rohittp.rentile/TileId> = ..., kotlin/Throwable? = ...) // com.rohittp.rentile/PngEncodingException.<init>|<init>(kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>;kotlin.collections.List<com.rohittp.rentile.TileId>;kotlin.Throwable?){}[0]
 }
@@ -1526,7 +1565,7 @@ final class com.rohittp.rentile/RawRenderBatch { // com.rohittp.rentile/RawRende
 }
 
 final class com.rohittp.rentile/RawRenderedTile { // com.rohittp.rentile/RawRenderedTile|null[0]
-    constructor <init>(com.rohittp.rentile/TileId, kotlin/ByteArray, kotlin/Int, kotlin/Int, kotlin/String, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ...) // com.rohittp.rentile/RawRenderedTile.<init>|<init>(com.rohittp.rentile.TileId;kotlin.ByteArray;kotlin.Int;kotlin.Int;kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>){}[0]
+    constructor <init>(com.rohittp.rentile/TileId, kotlin/ByteArray, kotlin/Int, kotlin/Int, kotlin/String, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ..., com.rohittp.rentile/MaterialCoverage? = ...) // com.rohittp.rentile/RawRenderedTile.<init>|<init>(com.rohittp.rentile.TileId;kotlin.ByteArray;kotlin.Int;kotlin.Int;kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>;com.rohittp.rentile.MaterialCoverage?){}[0]
 
     final val contentKey // com.rohittp.rentile/RawRenderedTile.contentKey|{}contentKey[0]
         final fun <get-contentKey>(): kotlin/String // com.rohittp.rentile/RawRenderedTile.contentKey.<get-contentKey>|<get-contentKey>(){}[0]
@@ -1536,6 +1575,8 @@ final class com.rohittp.rentile/RawRenderedTile { // com.rohittp.rentile/RawRend
         final fun <get-heightPx>(): kotlin/Int // com.rohittp.rentile/RawRenderedTile.heightPx.<get-heightPx>|<get-heightPx>(){}[0]
     final val id // com.rohittp.rentile/RawRenderedTile.id|{}id[0]
         final fun <get-id>(): com.rohittp.rentile/TileId // com.rohittp.rentile/RawRenderedTile.id.<get-id>|<get-id>(){}[0]
+    final val materialCoverage // com.rohittp.rentile/RawRenderedTile.materialCoverage|{}materialCoverage[0]
+        final fun <get-materialCoverage>(): com.rohittp.rentile/MaterialCoverage? // com.rohittp.rentile/RawRenderedTile.materialCoverage.<get-materialCoverage>|<get-materialCoverage>(){}[0]
     final val rgbaBytes // com.rohittp.rentile/RawRenderedTile.rgbaBytes|{}rgbaBytes[0]
         final fun <get-rgbaBytes>(): kotlin/ByteArray // com.rohittp.rentile/RawRenderedTile.rgbaBytes.<get-rgbaBytes>|<get-rgbaBytes>(){}[0]
     final val widthPx // com.rohittp.rentile/RawRenderedTile.widthPx|{}widthPx[0]
@@ -1547,7 +1588,8 @@ final class com.rohittp.rentile/RawRenderedTile { // com.rohittp.rentile/RawRend
     final fun component4(): kotlin/Int // com.rohittp.rentile/RawRenderedTile.component4|component4(){}[0]
     final fun component5(): kotlin/String // com.rohittp.rentile/RawRenderedTile.component5|component5(){}[0]
     final fun component6(): kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> // com.rohittp.rentile/RawRenderedTile.component6|component6(){}[0]
-    final fun copy(com.rohittp.rentile/TileId = ..., kotlin/ByteArray = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/String = ..., kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ...): com.rohittp.rentile/RawRenderedTile // com.rohittp.rentile/RawRenderedTile.copy|copy(com.rohittp.rentile.TileId;kotlin.ByteArray;kotlin.Int;kotlin.Int;kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>){}[0]
+    final fun component7(): com.rohittp.rentile/MaterialCoverage? // com.rohittp.rentile/RawRenderedTile.component7|component7(){}[0]
+    final fun copy(com.rohittp.rentile/TileId = ..., kotlin/ByteArray = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/String = ..., kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ..., com.rohittp.rentile/MaterialCoverage? = ...): com.rohittp.rentile/RawRenderedTile // com.rohittp.rentile/RawRenderedTile.copy|copy(com.rohittp.rentile.TileId;kotlin.ByteArray;kotlin.Int;kotlin.Int;kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>;com.rohittp.rentile.MaterialCoverage?){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RawRenderedTile.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/RawRenderedTile.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/RawRenderedTile.toString|toString(){}[0]
@@ -1658,10 +1700,12 @@ final class com.rohittp.rentile/RenderDiagnostic { // com.rohittp.rentile/Render
 }
 
 final class com.rohittp.rentile/RenderOptions { // com.rohittp.rentile/RenderOptions|null[0]
-    constructor <init>(kotlin/Int = ..., kotlin/Boolean = ..., com.rohittp.rentile/RasterAcquisitionDensity = ..., kotlin/Int? = ...) // com.rohittp.rentile/RenderOptions.<init>|<init>(kotlin.Int;kotlin.Boolean;com.rohittp.rentile.RasterAcquisitionDensity;kotlin.Int?){}[0]
+    constructor <init>(kotlin/Int = ..., kotlin/Boolean = ..., com.rohittp.rentile/RasterAcquisitionDensity = ..., kotlin/Int? = ..., com.rohittp.rentile/MaterialCoverageRequest? = ...) // com.rohittp.rentile/RenderOptions.<init>|<init>(kotlin.Int;kotlin.Boolean;com.rohittp.rentile.RasterAcquisitionDensity;kotlin.Int?;com.rohittp.rentile.MaterialCoverageRequest?){}[0]
 
     final val includeHillshade // com.rohittp.rentile/RenderOptions.includeHillshade|{}includeHillshade[0]
         final fun <get-includeHillshade>(): kotlin/Boolean // com.rohittp.rentile/RenderOptions.includeHillshade.<get-includeHillshade>|<get-includeHillshade>(){}[0]
+    final val materialCoverage // com.rohittp.rentile/RenderOptions.materialCoverage|{}materialCoverage[0]
+        final fun <get-materialCoverage>(): com.rohittp.rentile/MaterialCoverageRequest? // com.rohittp.rentile/RenderOptions.materialCoverage.<get-materialCoverage>|<get-materialCoverage>(){}[0]
     final val maximumRasterSourceZoomDelta // com.rohittp.rentile/RenderOptions.maximumRasterSourceZoomDelta|{}maximumRasterSourceZoomDelta[0]
         final fun <get-maximumRasterSourceZoomDelta>(): kotlin/Int? // com.rohittp.rentile/RenderOptions.maximumRasterSourceZoomDelta.<get-maximumRasterSourceZoomDelta>|<get-maximumRasterSourceZoomDelta>(){}[0]
     final val outputSizePx // com.rohittp.rentile/RenderOptions.outputSizePx|{}outputSizePx[0]
@@ -1673,7 +1717,8 @@ final class com.rohittp.rentile/RenderOptions { // com.rohittp.rentile/RenderOpt
     final fun component2(): kotlin/Boolean // com.rohittp.rentile/RenderOptions.component2|component2(){}[0]
     final fun component3(): com.rohittp.rentile/RasterAcquisitionDensity // com.rohittp.rentile/RenderOptions.component3|component3(){}[0]
     final fun component4(): kotlin/Int? // com.rohittp.rentile/RenderOptions.component4|component4(){}[0]
-    final fun copy(kotlin/Int = ..., kotlin/Boolean = ..., com.rohittp.rentile/RasterAcquisitionDensity = ..., kotlin/Int? = ...): com.rohittp.rentile/RenderOptions // com.rohittp.rentile/RenderOptions.copy|copy(kotlin.Int;kotlin.Boolean;com.rohittp.rentile.RasterAcquisitionDensity;kotlin.Int?){}[0]
+    final fun component5(): com.rohittp.rentile/MaterialCoverageRequest? // com.rohittp.rentile/RenderOptions.component5|component5(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Boolean = ..., com.rohittp.rentile/RasterAcquisitionDensity = ..., kotlin/Int? = ..., com.rohittp.rentile/MaterialCoverageRequest? = ...): com.rohittp.rentile/RenderOptions // com.rohittp.rentile/RenderOptions.copy|copy(kotlin.Int;kotlin.Boolean;com.rohittp.rentile.RasterAcquisitionDensity;kotlin.Int?;com.rohittp.rentile.MaterialCoverageRequest?){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RenderOptions.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/RenderOptions.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/RenderOptions.toString|toString(){}[0]
@@ -1688,7 +1733,7 @@ final class com.rohittp.rentile/RenderOptions { // com.rohittp.rentile/RenderOpt
 }
 
 final class com.rohittp.rentile/RenderedTile { // com.rohittp.rentile/RenderedTile|null[0]
-    constructor <init>(com.rohittp.rentile/TileId, kotlin/ByteArray, kotlin/String, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ...) // com.rohittp.rentile/RenderedTile.<init>|<init>(com.rohittp.rentile.TileId;kotlin.ByteArray;kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>){}[0]
+    constructor <init>(com.rohittp.rentile/TileId, kotlin/ByteArray, kotlin/String, kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ..., com.rohittp.rentile/MaterialCoverage? = ...) // com.rohittp.rentile/RenderedTile.<init>|<init>(com.rohittp.rentile.TileId;kotlin.ByteArray;kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>;com.rohittp.rentile.MaterialCoverage?){}[0]
 
     final val contentKey // com.rohittp.rentile/RenderedTile.contentKey|{}contentKey[0]
         final fun <get-contentKey>(): kotlin/String // com.rohittp.rentile/RenderedTile.contentKey.<get-contentKey>|<get-contentKey>(){}[0]
@@ -1696,6 +1741,8 @@ final class com.rohittp.rentile/RenderedTile { // com.rohittp.rentile/RenderedTi
         final fun <get-diagnostics>(): kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> // com.rohittp.rentile/RenderedTile.diagnostics.<get-diagnostics>|<get-diagnostics>(){}[0]
     final val id // com.rohittp.rentile/RenderedTile.id|{}id[0]
         final fun <get-id>(): com.rohittp.rentile/TileId // com.rohittp.rentile/RenderedTile.id.<get-id>|<get-id>(){}[0]
+    final val materialCoverage // com.rohittp.rentile/RenderedTile.materialCoverage|{}materialCoverage[0]
+        final fun <get-materialCoverage>(): com.rohittp.rentile/MaterialCoverage? // com.rohittp.rentile/RenderedTile.materialCoverage.<get-materialCoverage>|<get-materialCoverage>(){}[0]
     final val pngBytes // com.rohittp.rentile/RenderedTile.pngBytes|{}pngBytes[0]
         final fun <get-pngBytes>(): kotlin/ByteArray // com.rohittp.rentile/RenderedTile.pngBytes.<get-pngBytes>|<get-pngBytes>(){}[0]
 
@@ -1703,7 +1750,8 @@ final class com.rohittp.rentile/RenderedTile { // com.rohittp.rentile/RenderedTi
     final fun component2(): kotlin/ByteArray // com.rohittp.rentile/RenderedTile.component2|component2(){}[0]
     final fun component3(): kotlin/String // com.rohittp.rentile/RenderedTile.component3|component3(){}[0]
     final fun component4(): kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> // com.rohittp.rentile/RenderedTile.component4|component4(){}[0]
-    final fun copy(com.rohittp.rentile/TileId = ..., kotlin/ByteArray = ..., kotlin/String = ..., kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ...): com.rohittp.rentile/RenderedTile // com.rohittp.rentile/RenderedTile.copy|copy(com.rohittp.rentile.TileId;kotlin.ByteArray;kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>){}[0]
+    final fun component5(): com.rohittp.rentile/MaterialCoverage? // com.rohittp.rentile/RenderedTile.component5|component5(){}[0]
+    final fun copy(com.rohittp.rentile/TileId = ..., kotlin/ByteArray = ..., kotlin/String = ..., kotlin.collections/List<com.rohittp.rentile/RenderDiagnostic> = ..., com.rohittp.rentile/MaterialCoverage? = ...): com.rohittp.rentile/RenderedTile // com.rohittp.rentile/RenderedTile.copy|copy(com.rohittp.rentile.TileId;kotlin.ByteArray;kotlin.String;kotlin.collections.List<com.rohittp.rentile.RenderDiagnostic>;com.rohittp.rentile.MaterialCoverage?){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/RenderedTile.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.rohittp.rentile/RenderedTile.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.rohittp.rentile/RenderedTile.toString|toString(){}[0]

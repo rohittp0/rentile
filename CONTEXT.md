@@ -41,6 +41,14 @@ reports rasterized vector layers separately. Rentile reports this fact; the cons
 LOD policy and must preserve the finer output zoom needed by other layers. See ADR 0041.
 _Avoid_: Automatic maxzoom clamp, guaranteed provider resolution
 
+**Material Coverage**:
+An optional 8-bit mask rendered beside an Output Tile: how much of each of its pixels the fill and
+line layers whose `metadata` maps a caller-named key to a caller-named string cover, drawn with the
+tile's own geometry and antialiasing and ignoring paint colour and opacity. Rentile gives the pair
+no meaning; the style author and consumer agree on it. A request joins the Output Tile's keys;
+`None` means nothing was covered. See ADR 0042.
+_Avoid_: Water mask, alpha channel, material ID, layer mask
+
 **Raw Resource**:
 The exact encoded style, source metadata, source tile, sprite, glyph range, or GeoJSON bytes acquired before compilation or decoding.
 _Avoid_: Decoded source data, output tile

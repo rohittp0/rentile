@@ -211,6 +211,14 @@ public data class RenderOptions(
      * Ignored by [RasterAcquisitionDensity.OUTPUT_ZOOM], including its output cache identities.
      */
     public val maximumRasterSourceZoomDelta: Int? = null,
+    /**
+     * Optional Material Coverage mask to render beside each Output Tile; null renders none.
+     *
+     * A request is part of the Output Tile's request and content keys, because a tile rendered
+     * with it carries more output than one rendered without. Null leaves both keys, the pixels and
+     * the work exactly as they were. See [MaterialCoverageRequest] and ADR 0042.
+     */
+    public val materialCoverage: MaterialCoverageRequest? = null,
 ) {
     init {
         require(outputSizePx in SUPPORTED_OUTPUT_SIZES) {
@@ -224,6 +232,65 @@ public data class RenderOptions(
     public companion object {
         public const val DEFAULT_OUTPUT_SIZE_PX: Int = 512
         public val SUPPORTED_OUTPUT_SIZES: Set<Int> = setOf(256, 512, 1024, 2048)
+    }
+}
+
+/**
+ * Selects the style layers whose Material Coverage a render reports: every layer whose `metadata`
+ * object maps [metadataKey] to the JSON string [metadataValue].
+ *
+ * Rentile attaches no meaning to either string; the style author and the consumer agree on them.
+ * Only `fill` layers (including flattened `fill-extrusion` footprints) and `line` layers drawn into
+ * the Output Tile contribute. A matching layer that is hidden, outside its zoom range or of any
+ * other type contributes nothing, and a non-string metadata value never matches.
+ */
+public data class MaterialCoverageRequest(
+    public val metadataKey: String,
+    public val metadataValue: String,
+) {
+    init {
+        require(metadataKey.isNotEmpty()) { "metadataKey must not be empty" }
+    }
+}
+
+/**
+ * The Material Coverage of one Output Tile, reported only when its [RenderOptions] requested one.
+ *
+ * Coverage is geometric: how much of each output pixel the selected layers' filtered features
+ * cover, drawn by the Output Tile's own draw code - same geometry, zoom, pixel ratio,
+ * `fill-antialias`, `fill-translate`, outline, `line-width`, `line-gap-width`, `line-offset`,
+ * `line-translate`, dashes, caps, joins and `line-blur`. Colour, opacity and pattern imagery do not
+ * weaken it: a feature covering a pixel covers it fully even where its paint is translucent. The
+ * mask is drawn by an 8-bit alpha blitter, so a value can differ by a rounding step per draw from
+ * the alpha the same layer would leave painted opaque into an RGBA tile; its geometry does not.
+ */
+public sealed interface MaterialCoverage {
+    /** No pixel of the tile is covered, including when no layer matched the request. */
+    public data object None : MaterialCoverage
+
+    /**
+     * One 8-bit coverage value per Output Tile pixel, 0 for uncovered and 255 for fully covered.
+     *
+     * Rows are top-down and tightly packed at [widthPx] bytes, aligned pixel for pixel with the
+     * tile's PNG or raw pixels: [widthPx] and [heightPx] always equal its `outputSizePx`.
+     */
+    public class Mask(
+        public val widthPx: Int,
+        public val heightPx: Int,
+        public val coverage: ByteArray,
+    ) : MaterialCoverage {
+        init {
+            require(widthPx > 0 && heightPx > 0) { "Coverage dimensions must be positive" }
+            require(coverage.size == widthPx * heightPx) { "Coverage must hold one byte per pixel" }
+        }
+
+        override fun equals(other: Any?): Boolean =
+            other is Mask && widthPx == other.widthPx && heightPx == other.heightPx &&
+                coverage.contentEquals(other.coverage)
+
+        override fun hashCode(): Int = (31 * widthPx + heightPx) * 31 + coverage.contentHashCode()
+
+        override fun toString(): String = "MaterialCoverage.Mask(widthPx=$widthPx, heightPx=$heightPx)"
     }
 }
 
@@ -1174,6 +1241,8 @@ public data class RenderedTile(
     public val pngBytes: ByteArray,
     public val contentKey: String,
     public val diagnostics: List<RenderDiagnostic> = emptyList(),
+    /** Null unless [RenderOptions.materialCoverage] was requested; see [MaterialCoverage]. */
+    public val materialCoverage: MaterialCoverage? = null,
 )
 
 /**
@@ -1194,6 +1263,8 @@ public data class RawRenderedTile(
     public val heightPx: Int,
     public val contentKey: String,
     public val diagnostics: List<RenderDiagnostic> = emptyList(),
+    /** Null unless [RenderOptions.materialCoverage] was requested; see [MaterialCoverage]. */
+    public val materialCoverage: MaterialCoverage? = null,
 )
 
 /** All-or-error result for a raw-pixel render operation. */

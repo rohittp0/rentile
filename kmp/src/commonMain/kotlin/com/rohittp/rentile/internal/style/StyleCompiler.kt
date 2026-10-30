@@ -482,6 +482,18 @@ internal class StyleCompiler(
                     )
                     continue
                 }
+                if (type == "color-relief") {
+                    drawLayers += compileColorReliefLayer(
+                        layer,
+                        sources,
+                        compiledRasterSources,
+                        secretContext,
+                        baseUri,
+                        index,
+                        layerId,
+                    )
+                    continue
+                }
                 if (type == "fill") {
                     drawLayers += compileFillLayer(
                         layer,
@@ -549,6 +561,7 @@ internal class StyleCompiler(
             when (layer) {
                 is RasterDrawLayer -> layer.source.metadataDigest
                 is HillshadeDrawLayer -> layer.source.metadataDigest
+                is ColorReliefDrawLayer -> layer.source.metadataDigest
                 is FillDrawLayer -> layer.source.metadataDigest
                 is LineDrawLayer -> layer.source.metadataDigest
                 is IconDrawLayer -> layer.source.metadataDigest
@@ -792,6 +805,7 @@ internal class StyleCompiler(
             translateAnchor = translateAnchor,
             minZoom = layer["minzoom"]?.asPrimitive()?.doubleOrNull ?: 0.0,
             maxZoom = layer["maxzoom"]?.asPrimitive()?.doubleOrNull ?: 31.0,
+            metadata = layer["metadata"] as? JsonObject,
         )
     }
 
@@ -899,6 +913,7 @@ internal class StyleCompiler(
             translateAnchor = TranslateAnchor.MAP,
             minZoom = layer["minzoom"]?.asPrimitive()?.doubleOrNull ?: 0.0,
             maxZoom = layer["maxzoom"]?.asPrimitive()?.doubleOrNull ?: 31.0,
+            metadata = layer["metadata"] as? JsonObject,
         )
     }
 
@@ -1021,6 +1036,7 @@ internal class StyleCompiler(
             ),
             minZoom = layer["minzoom"]?.asPrimitive()?.doubleOrNull ?: 0.0,
             maxZoom = layer["maxzoom"]?.asPrimitive()?.doubleOrNull ?: 31.0,
+            metadata = layer["metadata"] as? JsonObject,
         )
     }
 
@@ -1892,6 +1908,108 @@ internal class StyleCompiler(
         )
     }
 
+    /**
+     * A MapLibre `color-relief` layer over a `raster-dem` source; see ADR 0043.
+     *
+     * `color-relief-color` must be an `interpolate` (or `interpolate-hcl` / `interpolate-lab`)
+     * whose input is `["elevation"]`, with strictly ascending numeric stops. MapLibre GL builds its
+     * ramp texture from exactly that form and silently draws nothing for any other; here any other
+     * form, an absent colour included, fails as an unsupported retained construct instead of
+     * shipping an empty layer the author did not intend.
+     */
+    private suspend fun compileColorReliefLayer(
+        layer: JsonObject,
+        sources: JsonObject,
+        compiledSources: MutableMap<String, CompiledRasterSource>,
+        secretContext: SecretContext,
+        baseUri: String?,
+        index: Int,
+        layerId: String,
+    ): ColorReliefDrawLayer {
+        val knownLayerKeys =
+            setOf("id", "type", "source", "minzoom", "maxzoom", "layout", "paint", "metadata") +
+                FEATURELESS_LAYER_IGNORED_KEYS
+        if ((layer.keys - knownLayerKeys).isNotEmpty()) {
+            failRetained(index, layerId, "a color-relief layer property is unsupported")
+        }
+        val layout = objectOrEmpty(layer, "layout", index, layerId)
+        if ((layout.keys - setOf("visibility")).isNotEmpty()) {
+            failRetained(index, layerId, "a color-relief layout property is unsupported")
+        }
+        val paint = objectOrEmpty(layer, "paint", index, layerId)
+        if ((paint.keys - setOf("color-relief-color", "color-relief-opacity", "resampling")).isNotEmpty()) {
+            failRetained(index, layerId, "a color-relief paint property is unsupported")
+        }
+        val sourceId = layer["source"]?.asPrimitive()?.takeIf { it.isString }?.content
+            ?: failRetained(index, layerId, "A color-relief layer must name its source")
+        val source = compiledSources[sourceId] ?: compileRasterSource(
+            sourceId,
+            sources,
+            secretContext,
+            baseUri,
+            index,
+            layerId,
+            expectedType = "raster-dem",
+        ).also { compiledSources[sourceId] = it }
+        val resampling = paint["resampling"]?.let { value ->
+            when (value.asPrimitive()?.takeIf { it.isString }?.content) {
+                "linear" -> RasterResampling.LINEAR
+                "nearest" -> RasterResampling.NEAREST
+                else -> failRetained(index, layerId, "resampling must currently be linear or nearest")
+            }
+        } ?: RasterResampling.LINEAR
+        return ColorReliefDrawLayer(
+            source = source,
+            opacity = compileProperty(
+                paint["color-relief-opacity"] ?: JsonPrimitive(1.0),
+                StyleType.NUMBER,
+                index,
+                layerId,
+                "color-relief-opacity",
+            ),
+            stops = compileColorReliefStops(paint["color-relief-color"], index, layerId),
+            resampling = resampling,
+            minZoom = layer["minzoom"]?.asPrimitive()?.doubleOrNull ?: 0.0,
+            maxZoom = layer["maxzoom"]?.asPrimitive()?.doubleOrNull ?: 31.0,
+        )
+    }
+
+    private fun compileColorReliefStops(
+        element: JsonElement?,
+        index: Int,
+        layerId: String,
+    ): List<ColorReliefStop> {
+        val unsupported = "color-relief-color must be an interpolate expression over [\"elevation\"]"
+        val expression = element as? JsonArray ?: failRetained(index, layerId, unsupported)
+        val operator = expression.firstOrNull()?.asPrimitive()?.takeIf { it.isString }?.content
+        if (operator !in COLOR_RELIEF_INTERPOLATE_OPERATORS || expression.size < 5 || expression.size % 2 == 0) {
+            failRetained(index, layerId, unsupported)
+        }
+        val interpolation = expression[1] as? JsonArray
+        val interpolationType = interpolation?.firstOrNull()?.asPrimitive()?.takeIf { it.isString }?.content
+        if (interpolationType !in setOf("linear", "exponential", "cubic-bezier")) {
+            failRetained(index, layerId, "color-relief-color interpolation type is unsupported")
+        }
+        val input = expression[2] as? JsonArray
+        if (input == null || input.size != 1 || input.single().asPrimitive()?.content != "elevation") {
+            failRetained(index, layerId, unsupported)
+        }
+        var previous = Double.NEGATIVE_INFINITY
+        return (3 until expression.size step 2).map { position ->
+            val elevation = expression[position].asPrimitive()?.takeUnless { it.isString }?.doubleOrNull
+                ?.takeIf { it.isFinite() }
+                ?: failRetained(index, layerId, "color-relief-color stops must be finite numbers")
+            if (elevation <= previous) {
+                failRetained(index, layerId, "color-relief-color stops must be strictly ascending")
+            }
+            previous = elevation
+            ColorReliefStop(
+                elevation = elevation,
+                color = compileColorProperty(expression[position + 1], index, layerId, "color-relief-color"),
+            )
+        }
+    }
+
     private suspend fun compileRasterSource(
         sourceId: String,
         sources: JsonObject,
@@ -2397,7 +2515,7 @@ internal class StyleCompiler(
 
     private companion object {
         const val RENDERER_SEMANTIC_VERSION = "rentile-renderer-4"
-        val SUPPORTED_LAYER_TYPES = setOf("background", "fill", "line", "raster", "hillshade")
+        val SUPPORTED_LAYER_TYPES = setOf("background", "fill", "line", "raster", "hillshade", "color-relief")
 
         /**
          * Keys accepted and ignored on the layer types that have no features to filter -- raster,
@@ -2417,6 +2535,7 @@ internal class StyleCompiler(
          * large.
          */
         val FEATURELESS_LAYER_IGNORED_KEYS = setOf("filter")
+        val COLOR_RELIEF_INTERPOLATE_OPERATORS = setOf("interpolate", "interpolate-hcl", "interpolate-lab")
         val LEGACY_PLACE_NAME_SOURCE_LAYERS = setOf(
             "place",
             "continent_label",
