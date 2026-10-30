@@ -52,6 +52,14 @@ agree on it. A request joins the Output Tile's keys; `None` means nothing is vis
 ADR 0042.
 _Avoid_: Water mask, alpha channel, material ID, layer mask
 
+**Style Metadata Descriptor**:
+A network-free report of a Prepared Style's root `metadata` and the `metadata` of each layer drawn
+into the Output Tile, as JSON text in style order, with each layer's zoom range and whether
+Material Coverage can select it. It is how a host that never holds the style document reads the
+style's renderer metadata. Undrawn layers (hidden, excluded, Label, host-owned extrusion) are never
+listed, so it never names a material coverage would not read. See ADR 0044.
+_Avoid_: Style JSON, layer JSON, raw metadata
+
 **Raw Resource**:
 The exact encoded style, source metadata, source tile, sprite, glyph range, or GeoJSON bytes acquired before compilation or decoding.
 _Avoid_: Decoded source data, output tile

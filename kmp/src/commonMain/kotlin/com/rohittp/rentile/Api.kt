@@ -1305,6 +1305,41 @@ public data class RasterImageryDetailCeiling(
     public val hasRasterizedVectorLayers: Boolean,
 )
 
+/**
+ * A prepared style's renderer metadata, for a host that never holds the style document itself.
+ *
+ * [rootMetadataJson] is the style's root `metadata` value and each [LayerMetadataDescriptor] is
+ * one layer's `metadata`, both as compact JSON text in the order the style wrote them, or null at
+ * the root when the style declares none. String values have authentication query values redacted
+ * exactly as they are for [PreparedStyle.digest]. See ADR 0044.
+ */
+public data class StyleMetadataDescriptor(
+    public val rootMetadataJson: String?,
+    /** Layers drawn into the Output Tile that declare `metadata`, in style order. */
+    public val layers: List<LayerMetadataDescriptor>,
+)
+
+/**
+ * The `metadata` of one style layer Rentile draws into the Output Tile under the prepared
+ * compatibility profile. Hidden layers, layers the profile excludes and layers it hands to the
+ * host (Label layers, host-owned extrusions) are not drawn and are never listed.
+ *
+ * [type] is the authored layer type. [materialCoverageEligible] is true exactly for the layers a
+ * [MaterialCoverageRequest] can select (fill layers, flattened fill-extrusion footprints and line
+ * layers): such a layer is selected for a tile at zoom `z` when `minimumZoom <= z < maximumZoom`
+ * and its `metadata` object maps the request's key to its string value. No other listed layer ever
+ * adds Material Coverage, whatever its metadata says.
+ */
+public data class LayerMetadataDescriptor(
+    public val id: String,
+    public val styleLayerIndex: Int,
+    public val type: String,
+    public val metadataJson: String,
+    public val minimumZoom: Double,
+    public val maximumZoom: Double,
+    public val materialCoverageEligible: Boolean,
+)
+
 /** Public renderer boundary. Implementations are process-local resource owners. */
 public interface BasemapRasterizer : AutoCloseable {
     /** Whether the prepared style retains visible raster imagery layers, excluding DEM/hillshade. */
@@ -1558,6 +1593,13 @@ public interface BasemapRasterizer : AutoCloseable {
         if (options.textFieldOverride != null) throw UnsupportedOperationException(OPTIONS_UNSUPPORTED)
         return acquireLabelCandidates(style, tiles, resourceAccess)
     }
+
+    /**
+     * The style's root and drawn-layer `metadata`. Network-free, and computed only when called:
+     * nothing about preparation, keys or rendering depends on it. See [StyleMetadataDescriptor].
+     */
+    public fun styleMetadataDescriptor(style: PreparedStyle): StyleMetadataDescriptor =
+        throw UnsupportedOperationException("Style metadata is unsupported by this implementation")
 
     /** Returns null when the prepared style does not select a raster-dem terrain source. */
     public fun terrainSourceDescriptor(style: PreparedStyle): TerrainSourceDescriptor?

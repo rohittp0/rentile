@@ -198,6 +198,7 @@ internal class StyleCompiler(
         val drawLayers = mutableListOf<CompiledDrawLayer>()
         val labelLayers = mutableListOf<CompiledLabelLayer>()
         val extrusionLayers = mutableListOf<CompiledExtrusionLayer>()
+        val layerMetadata = mutableListOf<CompiledLayerMetadata>()
 
         for ((index, element) in layers.withIndex()) {
             val layer = element as? JsonObject
@@ -224,6 +225,7 @@ internal class StyleCompiler(
                 "layerIndex" to index.toString(),
                 "layerIdDigest" to layerId.sha256Hex(),
             )
+            val drawLayersBefore = drawLayers.size
 
             try {
                 if (type == "symbol") {
@@ -538,6 +540,14 @@ internal class StyleCompiler(
                         details = identity,
                     )
                 }
+            } finally {
+                // Every path above that keeps this layer in the Output Tile adds exactly one draw
+                // layer, and every `continue` passes through here, so this sees exactly the drawn
+                // layers: hidden, excluded and host-owned ones add none. Kept by reference only.
+                val metadata = layer["metadata"]
+                if (metadata != null && drawLayers.size == drawLayersBefore + 1) {
+                    layerMetadata += CompiledLayerMetadata(index, layerId, type, metadata, drawLayers.last())
+                }
             }
         }
 
@@ -587,6 +597,7 @@ internal class StyleCompiler(
             secretContext = secretContext,
             spriteReference = spriteReferenceOf(root, baseUri, secretContext),
             extrusionLayers = extrusionLayers.toList(),
+            styleMetadata = CompiledStyleMetadata(root["metadata"], layerMetadata.toList()),
         )
     }
 

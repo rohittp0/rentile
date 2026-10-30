@@ -6,6 +6,12 @@ Rentile is a headless Kotlin Multiplatform basemap tile rasterizer. It accepts a
 
 Rentile is published to the public repository at `https://maven.rohittp.com`. Every push to `main` that changes anything outside documentation publishes a new release, taking the highest version already public and advancing its patch component. Set `VERSION_NAME` in the root `gradle.properties` above every published version to cut a deliberate minor or major release instead. Releases cannot overwrite an existing coordinate.
 
+`0.21.0` adds `styleMetadataDescriptor(style)`: the prepared style's root `metadata` and the
+`metadata` of every layer drawn into the Output Tile, as JSON text in style order, with each
+layer's zoom range and whether Material Coverage can select it. It is network-free and changes no
+key or pixel. See the [0.21.0 migration guide](docs/migrations/0.21.0.md) and
+[ADR 0044](docs/adr/0044-describe-style-metadata-for-hosts.md).
+
 `0.20.0` adds Material Coverage and `color-relief` layers. `RenderOptions.materialCoverage`
 names a layer `metadata` key and value; each rendered tile then carries an 8-bit mask of where the
 matching fill and line layers are visible (later non-matching fills and lines hide them), aligned

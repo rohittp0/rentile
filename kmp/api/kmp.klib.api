@@ -397,6 +397,7 @@ abstract interface com.rohittp.rentile/BasemapRasterizer : kotlin/AutoCloseable 
     open fun hasRasterImagery(com.rohittp.rentile/PreparedStyle): kotlin/Boolean // com.rohittp.rentile/BasemapRasterizer.hasRasterImagery|hasRasterImagery(com.rohittp.rentile.PreparedStyle){}[0]
     open fun labelCandidateRequestKey(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions): kotlin/String // com.rohittp.rentile/BasemapRasterizer.labelCandidateRequestKey|labelCandidateRequestKey(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions){}[0]
     open fun rasterImageryDetailCeiling(com.rohittp.rentile/PreparedStyle, com.rohittp.rentile/RenderOptions = ...): com.rohittp.rentile/RasterImageryDetailCeiling? // com.rohittp.rentile/BasemapRasterizer.rasterImageryDetailCeiling|rasterImageryDetailCeiling(com.rohittp.rentile.PreparedStyle;com.rohittp.rentile.RenderOptions){}[0]
+    open fun styleMetadataDescriptor(com.rohittp.rentile/PreparedStyle): com.rohittp.rentile/StyleMetadataDescriptor // com.rohittp.rentile/BasemapRasterizer.styleMetadataDescriptor|styleMetadataDescriptor(com.rohittp.rentile.PreparedStyle){}[0]
     open suspend fun acquireExtrusionCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/ExtrusionLimits = ..., com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/ExtrusionCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireExtrusionCandidates|acquireExtrusionCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.ExtrusionLimits;com.rohittp.rentile.ResourceAccessMode){}[0]
     open suspend fun acquireLabelCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, com.rohittp.rentile/LabelCandidateOptions, com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/LabelCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireLabelCandidates|acquireLabelCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;com.rohittp.rentile.LabelCandidateOptions;com.rohittp.rentile.ResourceAccessMode){}[0]
     open suspend fun acquireSceneryCandidates(com.rohittp.rentile/PreparedStyle, kotlin.collections/List<com.rohittp.rentile/TileId>, kotlin.collections/List<com.rohittp.rentile/SceneryLayerQuery>, com.rohittp.rentile/SceneryLimits = ..., com.rohittp.rentile/ResourceAccessMode = ...): com.rohittp.rentile/SceneryCandidateBatch // com.rohittp.rentile/BasemapRasterizer.acquireSceneryCandidates|acquireSceneryCandidates(com.rohittp.rentile.PreparedStyle;kotlin.collections.List<com.rohittp.rentile.TileId>;kotlin.collections.List<com.rohittp.rentile.SceneryLayerQuery>;com.rohittp.rentile.SceneryLimits;com.rohittp.rentile.ResourceAccessMode){}[0]
@@ -1465,6 +1466,37 @@ final class com.rohittp.rentile/LabelSymbolSize { // com.rohittp.rentile/LabelSy
     final fun toString(): kotlin/String // com.rohittp.rentile/LabelSymbolSize.toString|toString(){}[0]
 }
 
+final class com.rohittp.rentile/LayerMetadataDescriptor { // com.rohittp.rentile/LayerMetadataDescriptor|null[0]
+    constructor <init>(kotlin/String, kotlin/Int, kotlin/String, kotlin/String, kotlin/Double, kotlin/Double, kotlin/Boolean) // com.rohittp.rentile/LayerMetadataDescriptor.<init>|<init>(kotlin.String;kotlin.Int;kotlin.String;kotlin.String;kotlin.Double;kotlin.Double;kotlin.Boolean){}[0]
+
+    final val id // com.rohittp.rentile/LayerMetadataDescriptor.id|{}id[0]
+        final fun <get-id>(): kotlin/String // com.rohittp.rentile/LayerMetadataDescriptor.id.<get-id>|<get-id>(){}[0]
+    final val materialCoverageEligible // com.rohittp.rentile/LayerMetadataDescriptor.materialCoverageEligible|{}materialCoverageEligible[0]
+        final fun <get-materialCoverageEligible>(): kotlin/Boolean // com.rohittp.rentile/LayerMetadataDescriptor.materialCoverageEligible.<get-materialCoverageEligible>|<get-materialCoverageEligible>(){}[0]
+    final val maximumZoom // com.rohittp.rentile/LayerMetadataDescriptor.maximumZoom|{}maximumZoom[0]
+        final fun <get-maximumZoom>(): kotlin/Double // com.rohittp.rentile/LayerMetadataDescriptor.maximumZoom.<get-maximumZoom>|<get-maximumZoom>(){}[0]
+    final val metadataJson // com.rohittp.rentile/LayerMetadataDescriptor.metadataJson|{}metadataJson[0]
+        final fun <get-metadataJson>(): kotlin/String // com.rohittp.rentile/LayerMetadataDescriptor.metadataJson.<get-metadataJson>|<get-metadataJson>(){}[0]
+    final val minimumZoom // com.rohittp.rentile/LayerMetadataDescriptor.minimumZoom|{}minimumZoom[0]
+        final fun <get-minimumZoom>(): kotlin/Double // com.rohittp.rentile/LayerMetadataDescriptor.minimumZoom.<get-minimumZoom>|<get-minimumZoom>(){}[0]
+    final val styleLayerIndex // com.rohittp.rentile/LayerMetadataDescriptor.styleLayerIndex|{}styleLayerIndex[0]
+        final fun <get-styleLayerIndex>(): kotlin/Int // com.rohittp.rentile/LayerMetadataDescriptor.styleLayerIndex.<get-styleLayerIndex>|<get-styleLayerIndex>(){}[0]
+    final val type // com.rohittp.rentile/LayerMetadataDescriptor.type|{}type[0]
+        final fun <get-type>(): kotlin/String // com.rohittp.rentile/LayerMetadataDescriptor.type.<get-type>|<get-type>(){}[0]
+
+    final fun component1(): kotlin/String // com.rohittp.rentile/LayerMetadataDescriptor.component1|component1(){}[0]
+    final fun component2(): kotlin/Int // com.rohittp.rentile/LayerMetadataDescriptor.component2|component2(){}[0]
+    final fun component3(): kotlin/String // com.rohittp.rentile/LayerMetadataDescriptor.component3|component3(){}[0]
+    final fun component4(): kotlin/String // com.rohittp.rentile/LayerMetadataDescriptor.component4|component4(){}[0]
+    final fun component5(): kotlin/Double // com.rohittp.rentile/LayerMetadataDescriptor.component5|component5(){}[0]
+    final fun component6(): kotlin/Double // com.rohittp.rentile/LayerMetadataDescriptor.component6|component6(){}[0]
+    final fun component7(): kotlin/Boolean // com.rohittp.rentile/LayerMetadataDescriptor.component7|component7(){}[0]
+    final fun copy(kotlin/String = ..., kotlin/Int = ..., kotlin/String = ..., kotlin/String = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Boolean = ...): com.rohittp.rentile/LayerMetadataDescriptor // com.rohittp.rentile/LayerMetadataDescriptor.copy|copy(kotlin.String;kotlin.Int;kotlin.String;kotlin.String;kotlin.Double;kotlin.Double;kotlin.Boolean){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/LayerMetadataDescriptor.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/LayerMetadataDescriptor.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/LayerMetadataDescriptor.toString|toString(){}[0]
+}
+
 final class com.rohittp.rentile/MapSession { // com.rohittp.rentile/MapSession|null[0]
     constructor <init>(kotlin/String, kotlin/Long) // com.rohittp.rentile/MapSession.<init>|<init>(kotlin.String;kotlin.Long){}[0]
 
@@ -2148,6 +2180,22 @@ final class com.rohittp.rentile/StoredRawResource { // com.rohittp.rentile/Store
         final fun <get-metadata>(): com.rohittp.rentile/RawResourceMetadata // com.rohittp.rentile/StoredRawResource.metadata.<get-metadata>|<get-metadata>(){}[0]
 
     final fun toString(): kotlin/String // com.rohittp.rentile/StoredRawResource.toString|toString(){}[0]
+}
+
+final class com.rohittp.rentile/StyleMetadataDescriptor { // com.rohittp.rentile/StyleMetadataDescriptor|null[0]
+    constructor <init>(kotlin/String?, kotlin.collections/List<com.rohittp.rentile/LayerMetadataDescriptor>) // com.rohittp.rentile/StyleMetadataDescriptor.<init>|<init>(kotlin.String?;kotlin.collections.List<com.rohittp.rentile.LayerMetadataDescriptor>){}[0]
+
+    final val layers // com.rohittp.rentile/StyleMetadataDescriptor.layers|{}layers[0]
+        final fun <get-layers>(): kotlin.collections/List<com.rohittp.rentile/LayerMetadataDescriptor> // com.rohittp.rentile/StyleMetadataDescriptor.layers.<get-layers>|<get-layers>(){}[0]
+    final val rootMetadataJson // com.rohittp.rentile/StyleMetadataDescriptor.rootMetadataJson|{}rootMetadataJson[0]
+        final fun <get-rootMetadataJson>(): kotlin/String? // com.rohittp.rentile/StyleMetadataDescriptor.rootMetadataJson.<get-rootMetadataJson>|<get-rootMetadataJson>(){}[0]
+
+    final fun component1(): kotlin/String? // com.rohittp.rentile/StyleMetadataDescriptor.component1|component1(){}[0]
+    final fun component2(): kotlin.collections/List<com.rohittp.rentile/LayerMetadataDescriptor> // com.rohittp.rentile/StyleMetadataDescriptor.component2|component2(){}[0]
+    final fun copy(kotlin/String? = ..., kotlin.collections/List<com.rohittp.rentile/LayerMetadataDescriptor> = ...): com.rohittp.rentile/StyleMetadataDescriptor // com.rohittp.rentile/StyleMetadataDescriptor.copy|copy(kotlin.String?;kotlin.collections.List<com.rohittp.rentile.LayerMetadataDescriptor>){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // com.rohittp.rentile/StyleMetadataDescriptor.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // com.rohittp.rentile/StyleMetadataDescriptor.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // com.rohittp.rentile/StyleMetadataDescriptor.toString|toString(){}[0]
 }
 
 final class com.rohittp.rentile/StylePreparationException : com.rohittp.rentile/RentileException { // com.rohittp.rentile/StylePreparationException|null[0]

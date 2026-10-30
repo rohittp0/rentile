@@ -11,6 +11,7 @@ import com.rohittp.rentile.internal.SecretContext
 import com.rohittp.rentile.internal.sprite.CompiledSpriteAtlas
 import com.rohittp.rentile.internal.sprite.SpriteAtlasEntry
 import com.rohittp.rentile.internal.sprite.SpriteReference
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.concurrent.atomics.AtomicReference
@@ -218,6 +219,44 @@ internal data class ColorReliefStop(
 internal fun JsonObject?.declaresMaterial(key: String, value: String): Boolean {
     val element = this?.get(key) as? JsonPrimitive ?: return false
     return element.isString && element.content == value
+}
+
+/**
+ * Whether Material Coverage reads this layer at all: fills (flattened extrusion footprints
+ * included) and lines, which add coverage when selected and erase it otherwise. The one rule both
+ * the coverage pass and [com.rohittp.rentile.LayerMetadataDescriptor.materialCoverageEligible] use.
+ */
+internal val CompiledDrawLayer.takesPartInMaterialCoverage: Boolean
+    get() = this is FillDrawLayer || this is LineDrawLayer
+
+/** The `metadata` object Material Coverage selects this layer by, or null when it has none. */
+internal val CompiledDrawLayer.materialCoverageMetadata: JsonObject?
+    get() = when (this) {
+        is FillDrawLayer -> metadata
+        is LineDrawLayer -> metadata
+        else -> null
+    }
+
+/**
+ * One drawn layer's authored `metadata`, held by reference so preparation pays nothing for it;
+ * [com.rohittp.rentile.StyleMetadataDescriptor] is built from these only when a host asks.
+ */
+internal class CompiledLayerMetadata(
+    val styleLayerIndex: Int,
+    val id: String,
+    val type: String,
+    val metadata: JsonElement,
+    val drawLayer: CompiledDrawLayer,
+)
+
+/** A prepared style's root `metadata` and its drawn layers' metadata, in style order. */
+internal class CompiledStyleMetadata(
+    val root: JsonElement?,
+    val layers: List<CompiledLayerMetadata>,
+) {
+    companion object {
+        val Empty = CompiledStyleMetadata(null, emptyList())
+    }
 }
 
 internal sealed interface VectorDrawLayer : CompiledDrawLayer {
@@ -608,6 +647,7 @@ internal class CompiledPreparedStyle(
     /** The root `sprite` key as `acquireSpriteAtlas` needs it; see [SpriteReference]. */
     val spriteReference: SpriteReference = SpriteReference.Absent,
     val extrusionLayers: List<CompiledExtrusionLayer> = emptyList(),
+    val styleMetadata: CompiledStyleMetadata = CompiledStyleMetadata.Empty,
 ) : PreparedStyle {
     /** Draw-only variant; labels, terrain acquisition and the original style remain unchanged. */
     fun withoutHillshade(): CompiledPreparedStyle = CompiledPreparedStyle(
@@ -624,6 +664,7 @@ internal class CompiledPreparedStyle(
         secretContext = secretContext,
         spriteReference = spriteReference,
         extrusionLayers = extrusionLayers,
+        styleMetadata = styleMetadata,
     )
 
     /**

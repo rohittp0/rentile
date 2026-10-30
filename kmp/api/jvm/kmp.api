@@ -42,6 +42,7 @@ public abstract interface class com/rohittp/rentile/BasemapRasterizer : java/lan
 	public abstract fun renderRaw (Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun renderRaw$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun retryExact (Lcom/rohittp/rentile/PreparedBatch;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun styleMetadataDescriptor (Lcom/rohittp/rentile/PreparedStyle;)Lcom/rohittp/rentile/StyleMetadataDescriptor;
 	public abstract fun terrainSourceDescriptor (Lcom/rohittp/rentile/PreparedStyle;)Lcom/rohittp/rentile/TerrainSourceDescriptor;
 	public fun warmRawResources (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun warmRawResources (Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -76,6 +77,7 @@ public final class com/rohittp/rentile/BasemapRasterizer$DefaultImpls {
 	public static synthetic fun render$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun render$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lcom/rohittp/rentile/TileSubstitutionPolicy;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun renderRaw$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedBatch;Ljava/util/List;Lcom/rohittp/rentile/RenderPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static fun styleMetadataDescriptor (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;)Lcom/rohittp/rentile/StyleMetadataDescriptor;
 	public static fun warmRawResources (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun warmRawResources$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/RenderOptions;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun warmRawResources$default (Lcom/rohittp/rentile/BasemapRasterizer;Lcom/rohittp/rentile/PreparedStyle;Ljava/util/List;Lcom/rohittp/rentile/ResourceAccessMode;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
@@ -771,6 +773,29 @@ public final class com/rohittp/rentile/LabelSymbolSize {
 	public final fun getUpperZoom ()D
 	public fun hashCode ()I
 	public final fun sizeAt (D)D
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/rohittp/rentile/LayerMetadataDescriptor {
+	public fun <init> (Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;DDZ)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()I
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()D
+	public final fun component6 ()D
+	public final fun component7 ()Z
+	public final fun copy (Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;DDZ)Lcom/rohittp/rentile/LayerMetadataDescriptor;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/LayerMetadataDescriptor;Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;DDZILjava/lang/Object;)Lcom/rohittp/rentile/LayerMetadataDescriptor;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getId ()Ljava/lang/String;
+	public final fun getMaterialCoverageEligible ()Z
+	public final fun getMaximumZoom ()D
+	public final fun getMetadataJson ()Ljava/lang/String;
+	public final fun getMinimumZoom ()D
+	public final fun getStyleLayerIndex ()I
+	public final fun getType ()Ljava/lang/String;
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -1549,6 +1574,19 @@ public final class com/rohittp/rentile/StyleInput$Prefetched : com/rohittp/renti
 public final class com/rohittp/rentile/StyleInput$Remote : com/rohittp/rentile/StyleInput {
 	public fun <init> (Ljava/lang/String;)V
 	public final fun getUrl ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/rohittp/rentile/StyleMetadataDescriptor {
+	public fun <init> (Ljava/lang/String;Ljava/util/List;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/util/List;
+	public final fun copy (Ljava/lang/String;Ljava/util/List;)Lcom/rohittp/rentile/StyleMetadataDescriptor;
+	public static synthetic fun copy$default (Lcom/rohittp/rentile/StyleMetadataDescriptor;Ljava/lang/String;Ljava/util/List;ILjava/lang/Object;)Lcom/rohittp/rentile/StyleMetadataDescriptor;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getLayers ()Ljava/util/List;
+	public final fun getRootMetadataJson ()Ljava/lang/String;
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 

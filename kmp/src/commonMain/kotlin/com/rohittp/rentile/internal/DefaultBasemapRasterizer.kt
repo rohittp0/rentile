@@ -122,6 +122,10 @@ import com.rohittp.rentile.internal.style.HillshadeDrawLayer
 import com.rohittp.rentile.internal.style.ColorReliefDrawLayer
 import com.rohittp.rentile.internal.style.CompiledRasterSource
 import com.rohittp.rentile.internal.style.declaresMaterial
+import com.rohittp.rentile.internal.style.materialCoverageMetadata
+import com.rohittp.rentile.internal.style.takesPartInMaterialCoverage
+import com.rohittp.rentile.StyleMetadataDescriptor
+import com.rohittp.rentile.LayerMetadataDescriptor
 import com.rohittp.rentile.internal.style.LineDrawLayer
 import com.rohittp.rentile.internal.style.RasterDrawLayer
 import com.rohittp.rentile.internal.style.VectorDrawLayer
@@ -1052,6 +1056,26 @@ private class DefaultBasemapRasterizer(
         } finally {
             plan.close()
         }
+    }
+
+    override fun styleMetadataDescriptor(style: PreparedStyle): StyleMetadataDescriptor {
+        val metadata = requireOwnedStyle(style).styleMetadata
+        // Redacted as the style digest is, so a credential written into metadata never leaves
+        // through it. Compact JSON keeps the author's key order, unlike a canonical identity.
+        return StyleMetadataDescriptor(
+            rootMetadataJson = metadata.root?.redactedForIdentity()?.toString(),
+            layers = metadata.layers.map { layer ->
+                LayerMetadataDescriptor(
+                    id = layer.id,
+                    styleLayerIndex = layer.styleLayerIndex,
+                    type = layer.type,
+                    metadataJson = layer.metadata.redactedForIdentity().toString(),
+                    minimumZoom = layer.drawLayer.minZoom,
+                    maximumZoom = layer.drawLayer.maxZoom,
+                    materialCoverageEligible = layer.drawLayer.takesPartInMaterialCoverage,
+                )
+            },
+        )
     }
 
     override fun terrainSourceDescriptor(style: PreparedStyle): TerrainSourceDescriptor? =
@@ -2478,11 +2502,8 @@ private class DefaultBasemapRasterizer(
         tile: TileId,
         sprites: SpriteRenderContext?,
     ): MaterialCoverage {
-        fun selected(layer: CompiledDrawLayer): Boolean = when (layer) {
-            is FillDrawLayer -> layer.metadata.declaresMaterial(request.metadataKey, request.metadataValue)
-            is LineDrawLayer -> layer.metadata.declaresMaterial(request.metadataKey, request.metadataValue)
-            else -> false
-        }
+        fun selected(layer: CompiledDrawLayer): Boolean =
+            layer.materialCoverageMetadata.declaresMaterial(request.metadataKey, request.metadataValue)
         val first = layers.indexOfFirst(::selected)
         if (first < 0) return MaterialCoverage.None
         val info = ImageInfo.makeA8(outputSizePx, outputSizePx)
